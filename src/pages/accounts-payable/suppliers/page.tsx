@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -18,64 +16,7 @@ export default function SuppliersPage() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<any>(null);
 
-  const [suppliers, setSuppliers] = useState([
-    {
-      id: 1,
-      name: 'Proveedor Industrial SA',
-      rnc: '101234567',
-      phone: '(809) 555-0101',
-      email: 'ventas@proveedorindustrial.com',
-      address: 'Av. Industrial No. 123, Santo Domingo',
-      category: 'Materiales',
-      creditLimit: 500000,
-      balance: 350000,
-      status: 'Activo',
-      paymentTerms: '30 días',
-      contact: 'Juan Rodríguez'
-    },
-    {
-      id: 2,
-      name: 'Distribuidora Nacional SRL',
-      rnc: '201234567',
-      phone: '(809) 555-0202',
-      email: 'compras@distribuidoranacional.com',
-      address: 'Calle Principal No. 456, Santiago',
-      category: 'Distribución',
-      creditLimit: 300000,
-      balance: 280000,
-      status: 'Activo',
-      paymentTerms: '15 días',
-      contact: 'María García'
-    },
-    {
-      id: 3,
-      name: 'Servicios Técnicos EIRL',
-      rnc: '301234567',
-      phone: '(829) 555-0303',
-      email: 'info@serviciotecnico.com',
-      address: 'Zona Industrial, La Vega',
-      category: 'Servicios',
-      creditLimit: 200000,
-      balance: 195000,
-      status: 'Activo',
-      paymentTerms: '21 días',
-      contact: 'Pedro Martínez'
-    },
-    {
-      id: 4,
-      name: 'Materiales Construcción SA',
-      rnc: '401234567',
-      phone: '(849) 555-0404',
-      email: 'ventas@materialesconstruccion.com',
-      address: 'Autopista Duarte Km 15, Santo Domingo Norte',
-      category: 'Construcción',
-      creditLimit: 400000,
-      balance: 165000,
-      status: 'Inactivo',
-      paymentTerms: '45 días',
-      contact: 'Ana López'
-    }
-  ]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -86,7 +27,8 @@ export default function SuppliersPage() {
     category: 'Materiales',
     creditLimit: '',
     paymentTerms: '30 días',
-    contact: ''
+    contact: '',
+    status: 'Activo'
   });
 
   const categories = ['Materiales', 'Distribución', 'Servicios', 'Construcción', 'Tecnología'];
@@ -140,7 +82,8 @@ export default function SuppliersPage() {
       category: 'Materiales',
       creditLimit: '',
       paymentTerms: '30 días',
-      contact: ''
+      contact: '',
+      status: 'Activo'
     });
     setEditingSupplier(null);
     setShowModal(false);
@@ -157,7 +100,8 @@ export default function SuppliersPage() {
       category: supplier.category,
       creditLimit: supplier.creditLimit.toString(),
       paymentTerms: supplier.paymentTerms,
-      contact: supplier.contact
+      contact: supplier.contact,
+      status: supplier.status || 'Activo'
     });
     setShowModal(true);
   };
@@ -169,15 +113,11 @@ export default function SuppliersPage() {
     }
   };
 
-  const toggleStatus = (id: number) => {
-    setSuppliers(suppliers.map(supplier => 
-      supplier.id === id 
-        ? { ...supplier, status: supplier.status === 'Activo' ? 'Inactivo' : 'Activo' }
-        : supplier
-    ));
-  };
+  
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
+    const { default: jsPDF } = await import('jspdf');
+    await import('jspdf-autotable');
     const doc = new jsPDF();
     
     // Título
@@ -230,7 +170,7 @@ export default function SuppliersPage() {
         ['Total Balance Actual:', `RD$ ${totalBalance.toLocaleString()}`],
         ['Proveedores Activos:', `${activeSuppliers} de ${filteredSuppliers.length}`]
       ],
-      startY: doc.lastAutoTable.finalY + 20,
+      startY: ((doc as any).lastAutoTable?.finalY ?? 70) + 20,
       theme: 'plain',
       styles: { fontStyle: 'bold' }
     });
@@ -366,7 +306,7 @@ export default function SuppliersPage() {
 
         {/* Filters */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Buscar</label>
               <div className="relative">
@@ -379,6 +319,19 @@ export default function SuppliersPage() {
                 />
                 <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Categoría</label>
+              <select 
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="all">Todas las Categorías</option>
+                {categories.map(category => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Estado</label>

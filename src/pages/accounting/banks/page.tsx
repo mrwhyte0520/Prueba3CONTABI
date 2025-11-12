@@ -68,91 +68,8 @@ export default function BanksPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Datos de ejemplo para bancos
-      const banksData: Bank[] = [
-        {
-          id: '1',
-          name: 'Banco Popular Dominicano',
-          account_number: '1234567890',
-          account_type: 'checking',
-          balance: 2500000,
-          currency: 'DOP',
-          is_active: true,
-          bank_code: 'BPD',
-          swift_code: 'BPOPDOMM',
-          contact_info: 'Sucursal Principal - Tel: 809-544-5000',
-          created_at: new Date().toISOString()
-        },
-        {
-          id: '2',
-          name: 'Banco de Reservas',
-          account_number: '0987654321',
-          account_type: 'savings',
-          balance: 1800000,
-          currency: 'DOP',
-          is_active: true,
-          bank_code: 'BANRESERVAS',
-          swift_code: 'BRESDOMM',
-          contact_info: 'Sucursal Zona Colonial - Tel: 809-960-2121',
-          created_at: new Date().toISOString()
-        },
-        {
-          id: '3',
-          name: 'Banco BHD León',
-          account_number: '5555666677',
-          account_type: 'checking',
-          balance: 3200000,
-          currency: 'DOP',
-          is_active: true,
-          bank_code: 'BHD',
-          swift_code: 'BHDLDOMM',
-          contact_info: 'Sucursal Piantini - Tel: 809-243-3232',
-          created_at: new Date().toISOString()
-        }
-      ];
-
-      // Datos de ejemplo para transacciones
-      const transactionsData: BankTransaction[] = [
-        {
-          id: '1',
-          bank_id: '1',
-          transaction_date: '2024-01-15',
-          description: 'Depósito de ventas del día',
-          reference: 'DEP-001',
-          debit_amount: 0,
-          credit_amount: 150000,
-          balance: 2500000,
-          transaction_type: 'deposit',
-          status: 'completed'
-        },
-        {
-          id: '2',
-          bank_id: '1',
-          transaction_date: '2024-01-14',
-          description: 'Pago a proveedor ABC',
-          reference: 'CHK-001',
-          debit_amount: 85000,
-          credit_amount: 0,
-          balance: 2350000,
-          transaction_type: 'withdrawal',
-          status: 'completed'
-        },
-        {
-          id: '3',
-          bank_id: '2',
-          transaction_date: '2024-01-13',
-          description: 'Transferencia recibida',
-          reference: 'TRF-001',
-          debit_amount: 0,
-          credit_amount: 200000,
-          balance: 1800000,
-          transaction_type: 'transfer',
-          status: 'completed'
-        }
-      ];
-
-      setBanks(banksData);
-      setTransactions(transactionsData);
+      setBanks([]);
+      setTransactions([]);
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -276,9 +193,9 @@ export default function BanksPage() {
       csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
       csvContent += 'Banco,Número de Cuenta,Tipo,Saldo,Estado\n';
       
-      filteredBanks.forEach(bank => {
+      banks.forEach((bank: Bank) => {
         const row = [
-          `"${bank.bank_name}"`,
+          `"${bank.name}"`,
           bank.account_number,
           bank.account_type === 'checking' ? 'Corriente' :
           bank.account_type === 'savings' ? 'Ahorros' : 'Línea de Crédito',
@@ -290,9 +207,9 @@ export default function BanksPage() {
 
       // Agregar resumen
       csvContent += '\nResumen:\n';
-      csvContent += `Total Cuentas:,${filteredBanks.length}\n`;
-      csvContent += `Cuentas Activas:,${filteredBanks.filter(b => b.is_active).length}\n`;
-      csvContent += `Saldo Total:,RD$${filteredBanks.reduce((sum, bank) => sum + bank.balance, 0).toLocaleString()}\n`;
+      csvContent += `Total Cuentas:,${banks.length}\n`;
+      csvContent += `Cuentas Activas:,${banks.filter((b: Bank) => b.is_active).length}\n`;
+      csvContent += `Saldo Total:,RD$${banks.reduce((sum: number, bank: Bank) => sum + bank.balance, 0).toLocaleString()}\n`;
 
       // Crear y descargar archivo
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

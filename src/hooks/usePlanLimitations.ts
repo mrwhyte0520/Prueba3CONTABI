@@ -181,7 +181,7 @@ export function usePlanLimitations() {
     return names[feature] || feature;
   };
 
-  const getUpgradeMessage = (feature: string): string => {
+  const getUpgradeMessage = (): string => {
     const currentPlanName = currentPlan?.name || 'actual';
     
     if (!currentPlan?.active) {

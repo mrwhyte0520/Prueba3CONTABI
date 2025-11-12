@@ -69,188 +69,7 @@ const AccountingPeriodsPage: React.FC = () => {
   };
 
   const loadMockPeriods = () => {
-    const mockPeriods: AccountingPeriod[] = [
-      {
-        id: '1',
-        name: 'Enero 2024',
-        start_date: '2024-01-01',
-        end_date: '2024-01-31',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-01-01T00:00:00Z',
-        closed_at: '2024-02-05T10:30:00Z',
-        closed_by: 'Admin',
-        entries_count: 45,
-        total_debits: 1250000,
-        total_credits: 1250000
-      },
-      {
-        id: '2',
-        name: 'Febrero 2024',
-        start_date: '2024-02-01',
-        end_date: '2024-02-29',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-02-01T00:00:00Z',
-        closed_at: '2024-03-05T09:15:00Z',
-        closed_by: 'Admin',
-        entries_count: 52,
-        total_debits: 1380000,
-        total_credits: 1380000
-      },
-      {
-        id: '3',
-        name: 'Marzo 2024',
-        start_date: '2024-03-01',
-        end_date: '2024-03-31',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-03-01T00:00:00Z',
-        closed_at: '2024-04-03T14:20:00Z',
-        closed_by: 'Admin',
-        entries_count: 67,
-        total_debits: 1520000,
-        total_credits: 1520000
-      },
-      {
-        id: '4',
-        name: 'Abril 2024',
-        start_date: '2024-04-01',
-        end_date: '2024-04-30',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-04-01T00:00:00Z',
-        closed_at: '2024-05-02T11:45:00Z',
-        closed_by: 'Admin',
-        entries_count: 58,
-        total_debits: 1420000,
-        total_credits: 1420000
-      },
-      {
-        id: '5',
-        name: 'Mayo 2024',
-        start_date: '2024-05-01',
-        end_date: '2024-05-31',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-05-01T00:00:00Z',
-        closed_at: '2024-06-04T16:30:00Z',
-        closed_by: 'Admin',
-        entries_count: 73,
-        total_debits: 1680000,
-        total_credits: 1680000
-      },
-      {
-        id: '6',
-        name: 'Junio 2024',
-        start_date: '2024-06-01',
-        end_date: '2024-06-30',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-06-01T00:00:00Z',
-        closed_at: '2024-07-03T13:15:00Z',
-        closed_by: 'Admin',
-        entries_count: 61,
-        total_debits: 1550000,
-        total_credits: 1550000
-      },
-      {
-        id: '7',
-        name: 'Julio 2024',
-        start_date: '2024-07-01',
-        end_date: '2024-07-31',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-07-01T00:00:00Z',
-        closed_at: '2024-08-02T10:00:00Z',
-        closed_by: 'Admin',
-        entries_count: 69,
-        total_debits: 1620000,
-        total_credits: 1620000
-      },
-      {
-        id: '8',
-        name: 'Agosto 2024',
-        start_date: '2024-08-01',
-        end_date: '2024-08-31',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-08-01T00:00:00Z',
-        closed_at: '2024-09-03T15:45:00Z',
-        closed_by: 'Admin',
-        entries_count: 76,
-        total_debits: 1750000,
-        total_credits: 1750000
-      },
-      {
-        id: '9',
-        name: 'Septiembre 2024',
-        start_date: '2024-09-01',
-        end_date: '2024-09-30',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-09-01T00:00:00Z',
-        closed_at: '2024-10-04T12:20:00Z',
-        closed_by: 'Admin',
-        entries_count: 64,
-        total_debits: 1480000,
-        total_credits: 1480000
-      },
-      {
-        id: '10',
-        name: 'Octubre 2024',
-        start_date: '2024-10-01',
-        end_date: '2024-10-31',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-10-01T00:00:00Z',
-        closed_at: '2024-11-05T09:30:00Z',
-        closed_by: 'Admin',
-        entries_count: 71,
-        total_debits: 1650000,
-        total_credits: 1650000
-      },
-      {
-        id: '11',
-        name: 'Noviembre 2024',
-        start_date: '2024-11-01',
-        end_date: '2024-11-30',
-        status: 'closed',
-        fiscal_year: '2024',
-        created_at: '2024-11-01T00:00:00Z',
-        closed_at: '2024-12-03T14:15:00Z',
-        closed_by: 'Admin',
-        entries_count: 68,
-        total_debits: 1580000,
-        total_credits: 1580000
-      },
-      {
-        id: '12',
-        name: 'Diciembre 2024',
-        start_date: '2024-12-01',
-        end_date: '2024-12-31',
-        status: 'open',
-        fiscal_year: '2024',
-        created_at: '2024-12-01T00:00:00Z',
-        entries_count: 23,
-        total_debits: 850000,
-        total_credits: 850000
-      },
-      {
-        id: '13',
-        name: 'Enero 2025',
-        start_date: '2025-01-01',
-        end_date: '2025-01-31',
-        status: 'open',
-        fiscal_year: '2025',
-        created_at: '2025-01-01T00:00:00Z',
-        entries_count: 0,
-        total_debits: 0,
-        total_credits: 0
-      }
-    ];
-    
-    setPeriods(mockPeriods);
+    setPeriods([]);
   };
 
   const downloadExcel = () => {
@@ -470,8 +289,8 @@ const AccountingPeriodsPage: React.FC = () => {
     try {
       const updatedPeriod = { 
         status: 'open' as const,
-        closed_at: null,
-        closed_by: null
+        closed_at: undefined as unknown as string | undefined,
+        closed_by: undefined as unknown as string | undefined
       };
 
       try {
@@ -559,7 +378,7 @@ const AccountingPeriodsPage: React.FC = () => {
           </div>
         </div>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={() => setShowCreateModal(true)}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
           <i className="ri-add-line"></i>

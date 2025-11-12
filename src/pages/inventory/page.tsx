@@ -3,147 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { inventoryService } from '../../services/database';
 import { useNavigate } from 'react-router-dom';
 
-// Datos de ejemplo para cuando no hay datos en la base de datos
-const sampleItems = [
-  {
-    id: 'sample-1',
-    sku: 'LAPTOP001',
-    name: 'Laptop Dell Inspiron 15',
-    description: 'Laptop para oficina con procesador Intel i5',
-    category: 'Electrónicos',
-    unit_of_measure: 'unit',
-    current_stock: 15,
-    minimum_stock: 5,
-    maximum_stock: 50,
-    cost_price: 25000,
-    selling_price: 35000,
-    is_active: true,
-    warehouse_id: '1'
-  },
-  {
-    id: 'sample-2',
-    sku: 'MOUSE001',
-    name: 'Mouse Inalámbrico Logitech',
-    description: 'Mouse inalámbrico ergonómico',
-    category: 'Electrónicos',
-    unit_of_measure: 'unit',
-    current_stock: 3,
-    minimum_stock: 10,
-    maximum_stock: 100,
-    cost_price: 800,
-    selling_price: 1200,
-    is_active: true,
-    warehouse_id: '1'
-  },
-  {
-    id: 'sample-3',
-    sku: 'DESK001',
-    name: 'Escritorio de Oficina',
-    description: 'Escritorio ejecutivo de madera',
-    category: 'Muebles',
-    unit_of_measure: 'unit',
-    current_stock: 8,
-    minimum_stock: 3,
-    maximum_stock: 20,
-    cost_price: 8500,
-    selling_price: 12000,
-    is_active: true,
-    warehouse_id: '2'
-  },
-  {
-    id: 'sample-4',
-    sku: 'CHAIR001',
-    name: 'Silla Ergonómica',
-    description: 'Silla de oficina con soporte lumbar',
-    category: 'Muebles',
-    unit_of_measure: 'unit',
-    current_stock: 12,
-    minimum_stock: 5,
-    maximum_stock: 30,
-    cost_price: 4500,
-    selling_price: 6500,
-    is_active: true,
-    warehouse_id: '2'
-  },
-  {
-    id: 'sample-5',
-    sku: 'PAPER001',
-    name: 'Papel Bond Tamaño Carta',
-    description: 'Resma de papel bond blanco',
-    category: 'Papelería',
-    unit_of_measure: 'pack',
-    current_stock: 25,
-    minimum_stock: 10,
-    maximum_stock: 100,
-    cost_price: 180,
-    selling_price: 250,
-    is_active: true,
-    warehouse_id: '1'
-  }
-];
-
-const sampleMovements = [
-  {
-    id: 'mov-1',
-    item_id: 'sample-1',
-    movement_type: 'entry',
-    quantity: 10,
-    unit_cost: 25000,
-    total_cost: 250000,
-    movement_date: '2024-01-15',
-    reference: 'Compra #001',
-    notes: 'Compra inicial de laptops',
-    inventory_items: { name: 'Laptop Dell Inspiron 15', sku: 'LAPTOP001' }
-  },
-  {
-    id: 'mov-2',
-    item_id: 'sample-2',
-    movement_type: 'exit',
-    quantity: 5,
-    unit_cost: 800,
-    total_cost: 4000,
-    movement_date: '2024-01-14',
-    reference: 'Venta #002',
-    notes: 'Venta a cliente corporativo',
-    inventory_items: { name: 'Mouse Inalámbrico Logitech', sku: 'MOUSE001' }
-  },
-  {
-    id: 'mov-3',
-    item_id: 'sample-3',
-    movement_type: 'entry',
-    quantity: 5,
-    unit_cost: 8500,
-    total_cost: 42500,
-    movement_date: '2024-01-13',
-    reference: 'Compra #003',
-    notes: 'Reposición de escritorios',
-    inventory_items: { name: 'Escritorio de Oficina', sku: 'DESK001' }
-  },
-  {
-    id: 'mov-4',
-    item_id: 'sample-4',
-    movement_type: 'adjustment',
-    quantity: 2,
-    unit_cost: 4500,
-    total_cost: 9000,
-    movement_date: '2024-01-12',
-    reference: 'Ajuste #001',
-    notes: 'Ajuste por inventario físico',
-    inventory_items: { name: 'Silla Ergonómica', sku: 'CHAIR001' }
-  },
-  {
-    id: 'mov-5',
-    item_id: 'sample-5',
-    movement_type: 'transfer',
-    quantity: 10,
-    unit_cost: 180,
-    total_cost: 1800,
-    movement_date: '2024-01-11',
-    reference: 'Transfer #001',
-    notes: 'Transferencia entre almacenes',
-    inventory_items: { name: 'Papel Bond Tamaño Carta', sku: 'PAPER001' }
-  }
-];
+// Eliminados datos de ejemplo: la vista se alimenta solo de la base de datos
 
 export default function InventoryPage() {
   const navigate = useNavigate();
@@ -171,9 +31,9 @@ export default function InventoryPage() {
       loadData();
       loadWarehouses();
     } else {
-      // Si no hay usuario, usar datos de ejemplo
-      setItems(sampleItems);
-      setMovements(sampleMovements);
+      // Sin usuario: limpiar datos (no usar datos de ejemplo)
+      setItems([]);
+      setMovements([]);
       setLoading(false);
     }
   }, [user, activeTab]);
@@ -188,13 +48,13 @@ export default function InventoryPage() {
       if (activeTab === 'items' || activeTab === 'dashboard') {
         try {
           itemsData = await inventoryService.getItems(user.id);
-          // Si no hay datos en la base de datos, usar datos de ejemplo
+          // Si no hay datos, dejar vacío
           if (!itemsData || itemsData.length === 0) {
-            itemsData = sampleItems;
+            itemsData = [];
           }
         } catch (error) {
-          console.warn('Error loading items, using sample data:', error);
-          itemsData = sampleItems;
+          console.warn('Error loading items:', error);
+          itemsData = [];
         }
         setItems(itemsData);
       }
@@ -202,21 +62,21 @@ export default function InventoryPage() {
       if (activeTab === 'movements' || activeTab === 'dashboard') {
         try {
           movementsData = await inventoryService.getMovements(user.id);
-          // Si no hay datos en la base de datos, usar datos de ejemplo
+          // Si no hay datos, dejar vacío
           if (!movementsData || movementsData.length === 0) {
-            movementsData = sampleMovements;
+            movementsData = [];
           }
         } catch (error) {
-          console.warn('Error loading movements, using sample data:', error);
-          movementsData = sampleMovements;
+          console.warn('Error loading movements:', error);
+          movementsData = [];
         }
         setMovements(movementsData);
       }
     } catch (error) {
       console.error('Error loading data:', error);
-      // En caso de error, usar datos de ejemplo
-      setItems(sampleItems);
-      setMovements(sampleMovements);
+      // En caso de error, dejar vacío
+      setItems([]);
+      setMovements([]);
     } finally {
       setLoading(false);
     }
@@ -224,14 +84,11 @@ export default function InventoryPage() {
 
   const loadWarehouses = async () => {
     try {
-      // Simulamos almacenes por ahora
-      setWarehouses([
-        { id: '1', name: 'Almacén Principal', location: 'Zona Norte', description: 'Almacén principal de productos' },
-        { id: '2', name: 'Almacén Secundario', location: 'Zona Sur', description: 'Almacén de respaldo' },
-        { id: '3', name: 'Almacén de Productos Terminados', location: 'Centro', description: 'Productos listos para venta' }
-      ]);
+      // No hay datos de ejemplo; mantener vacío hasta implementar backend de almacenes
+      setWarehouses([]);
     } catch (error) {
       console.error('Error loading warehouses:', error);
+      setWarehouses([]);
     }
   };
 
@@ -273,23 +130,6 @@ export default function InventoryPage() {
               is_active: formData.is_active !== false
             });
           }
-        } else {
-          // Si no hay usuario, simular la operación
-          if (selectedItem) {
-            const updatedItems = items.map(item => 
-              item.id === selectedItem.id ? { ...item, ...formData } : item
-            );
-            setItems(updatedItems);
-          } else {
-            const newItem = {
-              ...formData,
-              id: `item-${Date.now()}`,
-              sku: formData.sku || `SKU${Date.now()}`,
-              current_stock: formData.current_stock || 0,
-              is_active: formData.is_active !== false
-            };
-            setItems([...items, newItem]);
-          }
         }
       } else if (modalType === 'movement') {
         if (user) {
@@ -298,17 +138,6 @@ export default function InventoryPage() {
             movement_date: formData.movement_date || new Date().toISOString().split('T')[0],
             total_cost: (formData.quantity || 0) * (formData.unit_cost || 0)
           });
-        } else {
-          // Simular creación de movimiento
-          const selectedItemData = items.find(item => item.id === formData.item_id);
-          const newMovement = {
-            ...formData,
-            id: `mov-${Date.now()}`,
-            movement_date: formData.movement_date || new Date().toISOString().split('T')[0],
-            total_cost: (formData.quantity || 0) * (formData.unit_cost || 0),
-            inventory_items: selectedItemData ? { name: selectedItemData.name, sku: selectedItemData.sku } : null
-          };
-          setMovements([newMovement, ...movements]);
         }
       } else if (modalType === 'warehouse') {
         // Aquí se implementaría la creación de almacenes
@@ -333,10 +162,6 @@ export default function InventoryPage() {
       if (user) {
         await inventoryService.deleteItem(id);
         loadData();
-      } else {
-        // Simular eliminación
-        const updatedItems = items.filter(item => item.id !== id);
-        setItems(updatedItems);
       }
     } catch (error) {
       console.error('Error deleting:', error);

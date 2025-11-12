@@ -52,108 +52,42 @@ export default function AccountsPayablePage() {
   const apStats = [
     {
       title: 'Total A/P Balance',
-      value: 'RD$ 1,850,000',
-      change: '+3.8%',
+      value: 'RD$ 0',
+      change: '0%',
       icon: 'ri-file-list-3-line',
       color: 'red'
     },
     {
       title: 'Due This Week',
-      value: 'RD$ 450,000',
-      change: '+12%',
+      value: 'RD$ 0',
+      change: '0%',
       icon: 'ri-calendar-line',
       color: 'orange'
     },
     {
       title: 'Overdue Payments',
-      value: 'RD$ 125,000',
-      change: '-8.5%',
+      value: 'RD$ 0',
+      change: '0%',
       icon: 'ri-alert-line',
       color: 'red'
     },
     {
       title: 'Active Suppliers',
-      value: '156',
-      change: '+5',
+      value: '0',
+      change: '0',
       icon: 'ri-truck-line',
       color: 'blue'
     }
   ];
 
-  const topSuppliers = [
-    {
-      name: 'Proveedor Industrial SA',
-      rnc: '101234567',
-      balance: 'RD$ 350,000',
-      dueDate: '20/01/2024',
-      status: 'Due Soon'
-    },
-    {
-      name: 'Distribuidora Nacional SRL',
-      rnc: '201234567',
-      balance: 'RD$ 280,000',
-      dueDate: '25/01/2024',
-      status: 'Current'
-    },
-    {
-      name: 'Servicios Técnicos EIRL',
-      rnc: '301234567',
-      balance: 'RD$ 195,000',
-      dueDate: '10/01/2024',
-      status: 'Overdue'
-    },
-    {
-      name: 'Materiales de Construcción SA',
-      rnc: '401234567',
-      balance: 'RD$ 165,000',
-      dueDate: '30/01/2024',
-      status: 'Current'
-    }
-  ];
+  const topSuppliers: Array<{ name: string; rnc: string; balance: string; dueDate: string; status: string; }> = [];
 
-  const recentPurchases = [
-    {
-      type: 'Purchase Order',
-      supplier: 'Proveedor Industrial SA',
-      amount: 'RD$ 85,000',
-      reference: 'PO-2024-045',
-      date: '15/01/2024'
-    },
-    {
-      type: 'Payment',
-      supplier: 'Distribuidora Nacional SRL',
-      amount: 'RD$ 125,000',
-      reference: 'PAY-2024-089',
-      date: '14/01/2024'
-    },
-    {
-      type: 'Invoice Received',
-      supplier: 'Servicios Técnicos EIRL',
-      amount: 'RD$ 45,000',
-      reference: 'INV-SUP-156',
-      date: '13/01/2024'
-    }
-  ];
+  const recentPurchases: Array<{ type: string; supplier: string; amount: string; reference: string; date: string; }> = [];
 
-  const pendingApprovals = [
-    {
-      type: 'Purchase Order',
-      supplier: 'Nuevo Proveedor XYZ',
-      amount: 'RD$ 125,000',
-      requestedBy: 'Juan Pérez',
-      date: '15/01/2024'
-    },
-    {
-      type: 'Payment Request',
-      supplier: 'Servicios Urgentes SA',
-      amount: 'RD$ 75,000',
-      requestedBy: 'María García',
-      date: '14/01/2024'
-    }
-  ];
+  const pendingApprovals: Array<{ type: string; supplier: string; amount: string; requestedBy: string; date: string; }> = [];
 
   // Module Access Functions
-  const handleAccessModule = (moduleHref: string, moduleName: string) => {
+  const handleAccessModule = (moduleHref: string) => {
     navigate(moduleHref);
   };
 
@@ -219,7 +153,7 @@ export default function AccountsPayablePage() {
               <h3 className="text-lg font-semibold text-gray-900 mb-2">{module.title}</h3>
               <p className="text-gray-600 mb-4 text-sm">{module.description}</p>
               <button 
-                onClick={() => handleAccessModule(module.href, module.title)}
+                onClick={() => handleAccessModule(module.href)}
                 className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
               >
                 Access

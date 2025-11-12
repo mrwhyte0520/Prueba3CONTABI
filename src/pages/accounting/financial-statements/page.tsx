@@ -34,60 +34,20 @@ interface FinancialData {
 export default function FinancialStatementsPage() {
   const [activeTab, setActiveTab] = useState<'statements' | 'balance' | 'income' | 'cashflow'>('statements');
   const [statements, setStatements] = useState<FinancialStatement[]>([]);
-  const [selectedPeriod, setSelectedPeriod] = useState('2024-12');
+  const [selectedPeriod, setSelectedPeriod] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [showNewStatementModal, setShowNewStatementModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedStatement, setSelectedStatement] = useState<FinancialStatement | null>(null);
 
-  // Datos financieros de ejemplo
+  // Estructuras vacías (sin datos de prueba)
   const financialData: FinancialData = {
-    assets: {
-      current: [
-        { name: 'Efectivo y Equivalentes', amount: 2500000 },
-        { name: 'Cuentas por Cobrar', amount: 1800000 },
-        { name: 'Inventarios', amount: 3200000 },
-        { name: 'Gastos Pagados por Anticipado', amount: 150000 }
-      ],
-      nonCurrent: [
-        { name: 'Propiedad, Planta y Equipo', amount: 8500000 },
-        { name: 'Depreciación Acumulada', amount: -2100000 },
-        { name: 'Inversiones a Largo Plazo', amount: 1200000 },
-        { name: 'Activos Intangibles', amount: 450000 }
-      ]
-    },
-    liabilities: {
-      current: [
-        { name: 'Cuentas por Pagar', amount: 1200000 },
-        { name: 'Impuestos por Pagar', amount: 380000 },
-        { name: 'Préstamos a Corto Plazo', amount: 800000 },
-        { name: 'Gastos Acumulados', amount: 220000 }
-      ],
-      nonCurrent: [
-        { name: 'Préstamos a Largo Plazo', amount: 4500000 },
-        { name: 'Bonos por Pagar', amount: 2000000 },
-        { name: 'Provisiones', amount: 150000 }
-      ]
-    },
-    equity: [
-      { name: 'Capital Social', amount: 5000000 },
-      { name: 'Utilidades Retenidas', amount: 2847000 },
-      { name: 'Reservas Legales', amount: 500000 }
-    ],
-    revenue: [
-      { name: 'Ventas de Productos', amount: 12500000 },
-      { name: 'Ventas de Servicios', amount: 3200000 },
-      { name: 'Ingresos Financieros', amount: 180000 },
-      { name: 'Otros Ingresos', amount: 120000 }
-    ],
-    expenses: [
-      { name: 'Costo de Ventas', amount: 8200000 },
-      { name: 'Gastos de Administración', amount: 2100000 },
-      { name: 'Gastos de Ventas', amount: 1800000 },
-      { name: 'Gastos Financieros', amount: 320000 },
-      { name: 'Otros Gastos', amount: 180000 }
-    ]
+    assets: { current: [], nonCurrent: [] },
+    liabilities: { current: [], nonCurrent: [] },
+    equity: [],
+    revenue: [],
+    expenses: []
   };
 
   useEffect(() => {
@@ -95,48 +55,7 @@ export default function FinancialStatementsPage() {
   }, []);
 
   const loadStatements = () => {
-    // Datos de ejemplo de estados financieros
-    const mockStatements: FinancialStatement[] = [
-      {
-        id: '1',
-        name: 'Balance General Diciembre 2024',
-        type: 'balance_sheet',
-        period: '2024-12',
-        status: 'final',
-        created_at: '2024-12-31',
-        totalAssets: 15700000,
-        totalLiabilities: 9250000,
-        totalEquity: 6450000
-      },
-      {
-        id: '2',
-        name: 'Estado de Resultados Diciembre 2024',
-        type: 'income_statement',
-        period: '2024-12',
-        status: 'final',
-        created_at: '2024-12-31',
-        totalRevenue: 16000000,
-        totalExpenses: 12600000,
-        netIncome: 3400000
-      },
-      {
-        id: '3',
-        name: 'Flujo de Efectivo Diciembre 2024',
-        type: 'cash_flow',
-        period: '2024-12',
-        status: 'approved',
-        created_at: '2024-12-31'
-      },
-      {
-        id: '4',
-        name: 'Estado de Patrimonio Diciembre 2024',
-        type: 'equity_statement',
-        period: '2024-12',
-        status: 'draft',
-        created_at: '2024-12-31'
-      }
-    ];
-    setStatements(mockStatements);
+    setStatements([]);
   };
 
   const generateStatement = async (type: string) => {

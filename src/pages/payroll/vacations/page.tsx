@@ -21,97 +21,8 @@ interface VacationRequest {
   paidDays: number;
 }
 
-const mockVacationRequests: VacationRequest[] = [
-  {
-    id: '1',
-    employeeId: 'EMP001',
-    employeeName: 'María González',
-    department: 'Recursos Humanos',
-    position: 'Especialista RRHH',
-    startDate: '2024-03-15',
-    endDate: '2024-03-22',
-    totalDays: 8,
-    vacationType: 'annual',
-    status: 'approved',
-    reason: 'Vacaciones familiares',
-    approvedBy: 'Carlos Méndez',
-    approvedDate: '2024-02-28',
-    requestDate: '2024-02-25',
-    remainingDays: 12,
-    paidDays: 8
-  },
-  {
-    id: '2',
-    employeeId: 'EMP002',
-    employeeName: 'Juan Pérez',
-    department: 'Ventas',
-    position: 'Ejecutivo de Ventas',
-    startDate: '2024-03-10',
-    endDate: '2024-03-12',
-    totalDays: 3,
-    vacationType: 'sick',
-    status: 'approved',
-    reason: 'Enfermedad común',
-    approvedBy: 'Ana Rodríguez',
-    approvedDate: '2024-03-09',
-    requestDate: '2024-03-09',
-    remainingDays: 18,
-    paidDays: 3
-  },
-  {
-    id: '3',
-    employeeId: 'EMP003',
-    employeeName: 'Carmen Jiménez',
-    department: 'Contabilidad',
-    position: 'Contadora',
-    startDate: '2024-04-01',
-    endDate: '2024-04-05',
-    totalDays: 5,
-    vacationType: 'personal',
-    status: 'pending',
-    reason: 'Asuntos personales',
-    requestDate: '2024-02-20',
-    remainingDays: 15,
-    paidDays: 0
-  },
-  {
-    id: '4',
-    employeeId: 'EMP004',
-    employeeName: 'Roberto Silva',
-    department: 'IT',
-    position: 'Desarrollador',
-    startDate: '2024-05-15',
-    endDate: '2024-06-15',
-    totalDays: 32,
-    vacationType: 'paternity',
-    status: 'approved',
-    reason: 'Licencia de paternidad',
-    approvedBy: 'Luis Torres',
-    approvedDate: '2024-02-15',
-    requestDate: '2024-02-10',
-    remainingDays: 8,
-    paidDays: 15
-  },
-  {
-    id: '5',
-    employeeId: 'EMP005',
-    employeeName: 'Ana Martínez',
-    department: 'Marketing',
-    position: 'Coordinadora',
-    startDate: '2024-03-25',
-    endDate: '2024-03-29',
-    totalDays: 5,
-    vacationType: 'compensatory',
-    status: 'rejected',
-    reason: 'Días compensatorios por horas extras',
-    requestDate: '2024-03-01',
-    remainingDays: 20,
-    paidDays: 0
-  }
-];
-
 export default function VacationsPage() {
-  const [vacationRequests, setVacationRequests] = useState<VacationRequest[]>(mockVacationRequests);
+  const [vacationRequests, setVacationRequests] = useState<VacationRequest[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
@@ -126,7 +37,7 @@ export default function VacationsPage() {
     position: '',
     startDate: '',
     endDate: '',
-    vacationType: 'annual' as const,
+    vacationType: 'annual' as VacationRequest['vacationType'],
     reason: ''
   });
 

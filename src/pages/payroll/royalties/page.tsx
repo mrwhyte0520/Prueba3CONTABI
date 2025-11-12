@@ -23,62 +23,8 @@ interface Royalty {
   createdAt: string;
 }
 
-const mockRoyalties: Royalty[] = [
-  {
-    id: '1',
-    employeeId: 'EMP001',
-    employeeName: 'Juan Carlos Pérez',
-    department: 'Ventas',
-    position: 'Gerente de Ventas',
-    royaltyType: 'percentage',
-    baseAmount: 150000,
-    percentage: 2.5,
-    period: 'monthly',
-    startDate: '2024-01-01',
-    isActive: true,
-    description: 'Regalía por ventas mensuales',
-    calculatedAmount: 3750,
-    lastCalculation: '2024-01-31',
-    createdAt: '2024-01-01'
-  },
-  {
-    id: '2',
-    employeeId: 'EMP002',
-    employeeName: 'María González',
-    department: 'Producción',
-    position: 'Supervisora',
-    royaltyType: 'fixed',
-    baseAmount: 0,
-    fixedAmount: 5000,
-    period: 'quarterly',
-    startDate: '2024-01-01',
-    isActive: true,
-    description: 'Regalía fija por productividad',
-    calculatedAmount: 5000,
-    lastCalculation: '2024-03-31',
-    createdAt: '2024-01-01'
-  },
-  {
-    id: '3',
-    employeeId: 'EMP003',
-    employeeName: 'Carlos Rodríguez',
-    department: 'Administración',
-    position: 'Director Financiero',
-    royaltyType: 'formula',
-    baseAmount: 200000,
-    formula: '(baseAmount * 0.03) + 2000',
-    period: 'annual',
-    startDate: '2024-01-01',
-    isActive: true,
-    description: 'Regalía por gestión financiera',
-    calculatedAmount: 8000,
-    lastCalculation: '2024-12-31',
-    createdAt: '2024-01-01'
-  }
-];
-
 export default function PayrollRoyaltiesPage() {
-  const [royalties, setRoyalties] = useState<Royalty[]>(mockRoyalties);
+  const [royalties, setRoyalties] = useState<Royalty[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingRoyalty, setEditingRoyalty] = useState<Royalty | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -91,12 +37,12 @@ export default function PayrollRoyaltiesPage() {
     employeeName: '',
     department: '',
     position: '',
-    royaltyType: 'percentage' as const,
+    royaltyType: 'percentage' as Royalty['royaltyType'],
     baseAmount: 0,
     percentage: 0,
     fixedAmount: 0,
     formula: '',
-    period: 'monthly' as const,
+    period: 'monthly' as Royalty['period'],
     startDate: '',
     endDate: '',
     isActive: true,
@@ -133,9 +79,15 @@ export default function PayrollRoyaltiesPage() {
         return data.fixedAmount;
       case 'formula':
         try {
-          // Evaluación simple de fórmula
-          const formula = data.formula.replace('baseAmount', data.baseAmount.toString());
-          return eval(formula);
+          const raw = String(data.formula || '');
+          // Validar sólo caracteres permitidos y el identificador baseAmount
+          const allowed = /^[0-9+\-*/().\s]*([bB]ase[Aa]mount[0-9+\-*/().\s]*)*$/;
+          if (!allowed.test(raw)) return 0;
+          // Construir función pura que reciba baseAmount como argumento
+          // y no tenga acceso al scope externo.
+          const fn = new Function('baseAmount', `"use strict"; return (${raw});`);
+          const result = fn(Number(data.baseAmount) || 0);
+          return Number.isFinite(result) ? Number(result) : 0;
         } catch {
           return 0;
         }

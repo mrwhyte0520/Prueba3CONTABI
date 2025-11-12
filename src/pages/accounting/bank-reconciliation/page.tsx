@@ -47,11 +47,7 @@ export default function BankReconciliationPage() {
   const [adjustments, setAdjustments] = useState<any[]>([]);
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
 
-  const banks = [
-    { id: '1', name: 'Banco Popular Dominicano', account_number: '1234567890' },
-    { id: '2', name: 'Banco de Reservas', account_number: '0987654321' },
-    { id: '3', name: 'Banco BHD León', account_number: '5555666677' }
-  ];
+  const banks: Array<{ id: string; name: string; account_number: string }> = [];
 
   const [adjustmentForm, setAdjustmentForm] = useState({
     type: 'bank_charge',
@@ -72,81 +68,8 @@ export default function BankReconciliationPage() {
 
     setLoading(true);
     try {
-      // Datos de ejemplo para conciliación bancaria
-      const bookItemsData: ReconciliationItem[] = [
-        {
-          id: '1',
-          type: 'book',
-          date: '2024-01-15',
-          description: 'Depósito de ventas del día',
-          amount: 150000,
-          is_matched: false
-        },
-        {
-          id: '2',
-          type: 'book',
-          date: '2024-01-14',
-          description: 'Pago a proveedor ABC',
-          amount: -85000,
-          is_matched: false
-        },
-        {
-          id: '3',
-          type: 'book',
-          date: '2024-01-13',
-          description: 'Transferencia recibida',
-          amount: 200000,
-          is_matched: true,
-          match_id: 'bank_1'
-        },
-        {
-          id: '4',
-          type: 'book',
-          date: '2024-01-12',
-          description: 'Pago de nómina',
-          amount: -120000,
-          is_matched: false
-        }
-      ];
-
-      const bankItemsData: ReconciliationItem[] = [
-        {
-          id: 'bank_1',
-          type: 'bank',
-          date: '2024-01-13',
-          description: 'Transferencia electrónica',
-          amount: 200000,
-          is_matched: true,
-          match_id: '3'
-        },
-        {
-          id: 'bank_2',
-          type: 'bank',
-          date: '2024-01-15',
-          description: 'Depósito en efectivo',
-          amount: 150000,
-          is_matched: false
-        },
-        {
-          id: 'bank_3',
-          type: 'bank',
-          date: '2024-01-14',
-          description: 'Comisión bancaria',
-          amount: -2500,
-          is_matched: false
-        },
-        {
-          id: 'bank_4',
-          type: 'bank',
-          date: '2024-01-16',
-          description: 'Interés ganado',
-          amount: 5000,
-          is_matched: false
-        }
-      ];
-
-      setBookItems(bookItemsData);
-      setBankItems(bankItemsData);
+      setBookItems([]);
+      setBankItems([]);
     } catch (error) {
       console.error('Error loading reconciliation data:', error);
     } finally {
@@ -264,24 +187,24 @@ export default function BankReconciliationPage() {
       let csvContent = 'Conciliación Bancaria\n';
       csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
       csvContent += 'Fecha,Descripción,Referencia,Débito,Crédito,Estado\n';
-      
-      filteredTransactions.forEach(transaction => {
+      // Exportar items del estado bancario como referencia
+      bankItems.forEach((item: ReconciliationItem) => {
         const row = [
-          new Date(transaction.date).toLocaleDateString(),
-          `"${transaction.description}"`,
-          transaction.reference,
-          transaction.type === 'debit' ? transaction.amount.toLocaleString() : '',
-          transaction.type === 'credit' ? transaction.amount.toLocaleString() : '',
-          transaction.status === 'reconciled' ? 'Conciliado' : 'Pendiente'
+          new Date(item.date).toLocaleDateString(),
+          `"${item.description}"`,
+          '',
+          item.amount < 0 ? Math.abs(item.amount).toLocaleString() : '',
+          item.amount > 0 ? item.amount.toLocaleString() : '',
+          item.is_matched ? 'Conciliado' : 'Pendiente'
         ].join(',');
         csvContent += row + '\n';
       });
 
       // Agregar resumen
       csvContent += '\nResumen de Conciliación:\n';
-      csvContent += `Total Transacciones:,${filteredTransactions.length}\n`;
-      csvContent += `Transacciones Conciliadas:,${filteredTransactions.filter(t => t.status === 'reconciled').length}\n`;
-      csvContent += `Transacciones Pendientes:,${filteredTransactions.filter(t => t.status === 'pending').length}\n`;
+      csvContent += `Total Transacciones:,${bankItems.length}\n`;
+      csvContent += `Transacciones Conciliadas:,${bankItems.filter((i: ReconciliationItem) => i.is_matched).length}\n`;
+      csvContent += `Transacciones Pendientes:,${bankItems.filter((i: ReconciliationItem) => !i.is_matched).length}\n`;
 
       // Crear y descargar archivo
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });

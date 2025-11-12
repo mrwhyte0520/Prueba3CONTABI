@@ -18,83 +18,8 @@ interface PayrollPeriod {
   closed_at?: string;
 }
 
-const mockPeriods: PayrollPeriod[] = [
-  {
-    id: '1',
-    name: 'Enero 2024',
-    period_type: 'monthly',
-    start_date: '2024-01-01',
-    end_date: '2024-01-31',
-    pay_date: '2024-02-05',
-    status: 'paid',
-    total_employees: 45,
-    total_gross: 2250000,
-    total_deductions: 450000,
-    total_net: 1800000,
-    created_at: '2024-01-25',
-    closed_at: '2024-02-05'
-  },
-  {
-    id: '2',
-    name: 'Febrero 2024',
-    period_type: 'monthly',
-    start_date: '2024-02-01',
-    end_date: '2024-02-29',
-    pay_date: '2024-03-05',
-    status: 'paid',
-    total_employees: 47,
-    total_gross: 2350000,
-    total_deductions: 470000,
-    total_net: 1880000,
-    created_at: '2024-02-25',
-    closed_at: '2024-03-05'
-  },
-  {
-    id: '3',
-    name: 'Marzo 2024',
-    period_type: 'monthly',
-    start_date: '2024-03-01',
-    end_date: '2024-03-31',
-    pay_date: '2024-04-05',
-    status: 'calculated',
-    total_employees: 48,
-    total_gross: 2400000,
-    total_deductions: 480000,
-    total_net: 1920000,
-    created_at: '2024-03-25'
-  },
-  {
-    id: '4',
-    name: 'Abril 2024',
-    period_type: 'monthly',
-    start_date: '2024-04-01',
-    end_date: '2024-04-30',
-    pay_date: '2024-05-05',
-    status: 'processing',
-    total_employees: 50,
-    total_gross: 2500000,
-    total_deductions: 500000,
-    total_net: 2000000,
-    created_at: '2024-04-25'
-  },
-  {
-    id: '5',
-    name: 'Mayo 2024',
-    period_type: 'monthly',
-    start_date: '2024-05-01',
-    end_date: '2024-05-31',
-    pay_date: '2024-06-05',
-    status: 'draft',
-    total_employees: 52,
-    total_gross: 0,
-    total_deductions: 0,
-    total_net: 0,
-    created_at: '2024-05-01'
-  }
-];
-
 export default function PayrollPeriodsPage() {
-  const [periods, setPeriods] = useState<PayrollPeriod[]>(mockPeriods);
+  const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
@@ -103,7 +28,7 @@ export default function PayrollPeriodsPage() {
 
   const [formData, setFormData] = useState({
     name: '',
-    period_type: 'monthly' as const,
+    period_type: 'monthly' as PayrollPeriod['period_type'],
     start_date: '',
     end_date: '',
     pay_date: ''

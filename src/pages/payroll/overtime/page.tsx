@@ -23,107 +23,8 @@ interface OvertimeRecord {
   createdAt: string;
 }
 
-const mockOvertimeRecords: OvertimeRecord[] = [
-  {
-    id: '1',
-    employeeId: 'EMP001',
-    employeeName: 'María González',
-    department: 'Producción',
-    position: 'Operadora',
-    date: '2024-03-15',
-    startTime: '18:00',
-    endTime: '22:00',
-    totalHours: 4,
-    overtimeType: 'regular',
-    hourlyRate: 250,
-    overtimeRate: 1.5,
-    totalAmount: 1500,
-    status: 'approved',
-    approvedBy: 'Carlos Méndez',
-    approvedDate: '2024-03-16',
-    reason: 'Cumplimiento de pedido urgente',
-    createdAt: '2024-03-15'
-  },
-  {
-    id: '2',
-    employeeId: 'EMP002',
-    employeeName: 'Juan Pérez',
-    department: 'Mantenimiento',
-    position: 'Técnico',
-    date: '2024-03-14',
-    startTime: '22:00',
-    endTime: '06:00',
-    totalHours: 8,
-    overtimeType: 'night',
-    hourlyRate: 300,
-    overtimeRate: 2.0,
-    totalAmount: 4800,
-    status: 'approved',
-    approvedBy: 'Ana Rodríguez',
-    approvedDate: '2024-03-15',
-    reason: 'Mantenimiento preventivo nocturno',
-    createdAt: '2024-03-14'
-  },
-  {
-    id: '3',
-    employeeId: 'EMP003',
-    employeeName: 'Carmen Jiménez',
-    department: 'Ventas',
-    position: 'Ejecutiva',
-    date: '2024-03-17',
-    startTime: '08:00',
-    endTime: '14:00',
-    totalHours: 6,
-    overtimeType: 'sunday',
-    hourlyRate: 280,
-    overtimeRate: 2.0,
-    totalAmount: 3360,
-    status: 'pending',
-    reason: 'Evento especial de ventas',
-    createdAt: '2024-03-17'
-  },
-  {
-    id: '4',
-    employeeId: 'EMP004',
-    employeeName: 'Roberto Silva',
-    department: 'IT',
-    position: 'Desarrollador',
-    date: '2024-03-25',
-    startTime: '08:00',
-    endTime: '18:00',
-    totalHours: 10,
-    overtimeType: 'holiday',
-    hourlyRate: 400,
-    overtimeRate: 2.5,
-    totalAmount: 10000,
-    status: 'approved',
-    approvedBy: 'Luis Torres',
-    approvedDate: '2024-03-26',
-    reason: 'Soporte crítico en día feriado',
-    createdAt: '2024-03-25'
-  },
-  {
-    id: '5',
-    employeeId: 'EMP005',
-    employeeName: 'Ana Martínez',
-    department: 'Contabilidad',
-    position: 'Contadora',
-    date: '2024-03-20',
-    startTime: '17:00',
-    endTime: '20:00',
-    totalHours: 3,
-    overtimeType: 'regular',
-    hourlyRate: 350,
-    overtimeRate: 1.5,
-    totalAmount: 1575,
-    status: 'rejected',
-    reason: 'Cierre mensual de contabilidad',
-    createdAt: '2024-03-20'
-  }
-];
-
 export default function OvertimePage() {
-  const [overtimeRecords, setOvertimeRecords] = useState<OvertimeRecord[]>(mockOvertimeRecords);
+  const [overtimeRecords, setOvertimeRecords] = useState<OvertimeRecord[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
@@ -139,7 +40,7 @@ export default function OvertimePage() {
     date: '',
     startTime: '',
     endTime: '',
-    overtimeType: 'regular' as const,
+    overtimeType: 'regular' as OvertimeRecord['overtimeType'],
     hourlyRate: 0,
     reason: ''
   });

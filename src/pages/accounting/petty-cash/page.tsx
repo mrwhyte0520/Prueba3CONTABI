@@ -33,90 +33,10 @@ const PettyCashPage: React.FC = () => {
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [selectedFund, setSelectedFund] = useState<PettyCashFund | null>(null);
 
-  // Datos de ejemplo
+  // Inicializar sin datos de prueba
   useEffect(() => {
-    const mockFunds: PettyCashFund[] = [
-      {
-        id: '1',
-        name: 'Caja Chica Oficina Principal',
-        location: 'Santo Domingo - Oficina Central',
-        custodian: 'María González',
-        initialAmount: 50000,
-        currentBalance: 32500,
-        status: 'active',
-        createdAt: '2024-01-15'
-      },
-      {
-        id: '2',
-        name: 'Caja Chica Sucursal Norte',
-        location: 'Santiago - Sucursal Norte',
-        custodian: 'Carlos Rodríguez',
-        initialAmount: 30000,
-        currentBalance: 18750,
-        status: 'active',
-        createdAt: '2024-02-01'
-      },
-      {
-        id: '3',
-        name: 'Caja Chica Almacén',
-        location: 'Santo Domingo - Almacén Central',
-        custodian: 'Ana Martínez',
-        initialAmount: 25000,
-        currentBalance: 15200,
-        status: 'active',
-        createdAt: '2024-01-20'
-      }
-    ];
-
-    const mockExpenses: PettyCashExpense[] = [
-      {
-        id: '1',
-        fundId: '1',
-        date: '2024-03-15',
-        description: 'Compra de materiales de oficina',
-        category: 'Suministros de Oficina',
-        amount: 2500,
-        receipt: 'REC-001',
-        approvedBy: 'Luis Pérez',
-        status: 'approved'
-      },
-      {
-        id: '2',
-        fundId: '1',
-        date: '2024-03-14',
-        description: 'Viáticos para reunión cliente',
-        category: 'Viáticos',
-        amount: 3200,
-        receipt: 'REC-002',
-        approvedBy: 'Luis Pérez',
-        status: 'approved'
-      },
-      {
-        id: '3',
-        fundId: '2',
-        date: '2024-03-13',
-        description: 'Transporte de documentos urgentes',
-        category: 'Transporte',
-        amount: 1500,
-        receipt: 'REC-003',
-        approvedBy: 'Carmen Silva',
-        status: 'pending'
-      },
-      {
-        id: '4',
-        fundId: '1',
-        date: '2024-03-12',
-        description: 'Reparación menor equipo oficina',
-        category: 'Mantenimiento',
-        amount: 4800,
-        receipt: 'REC-004',
-        approvedBy: 'Luis Pérez',
-        status: 'approved'
-      }
-    ];
-
-    setFunds(mockFunds);
-    setExpenses(mockExpenses);
+    setFunds([]);
+    setExpenses([]);
   }, []);
 
   const handleCreateFund = (e: React.FormEvent) => {

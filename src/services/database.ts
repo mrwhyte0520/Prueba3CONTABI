@@ -129,6 +129,7 @@ export const chartAccountsService = {
         .from('chart_accounts')
         .select('*')
         .in('type', ['asset', 'liability', 'equity'])
+        .eq('user_id', userId)
         .eq('is_active', true)
         .order('code');
 
@@ -136,22 +137,12 @@ export const chartAccountsService = {
         console.error('Error in generateBalanceSheet:', error);
         // Retornar datos de ejemplo si hay error
         return {
-          assets: [
-            { code: '1111', name: 'Caja General', balance: 125000 },
-            { code: '1112', name: 'Banco Popular', balance: 850000 },
-            { code: '1121', name: 'Cuentas por Cobrar', balance: 675000 }
-          ],
-          liabilities: [
-            { code: '2111', name: 'Cuentas por Pagar', balance: 485000 },
-            { code: '2121', name: 'ITBIS por Pagar', balance: 125000 }
-          ],
-          equity: [
-            { code: '3110', name: 'Capital Autorizado', balance: 2000000 },
-            { code: '3210', name: 'Utilidades Retenidas', balance: 485000 }
-          ],
-          totalAssets: 1650000,
-          totalLiabilities: 610000,
-          totalEquity: 2485000,
+          assets: [],
+          liabilities: [],
+          equity: [],
+          totalAssets: 0,
+          totalLiabilities: 0,
+          totalEquity: 0,
           asOfDate
         };
       }
@@ -177,19 +168,12 @@ export const chartAccountsService = {
       console.error('Error generating balance sheet:', error);
       // Retornar datos de ejemplo en caso de error
       return {
-        assets: [
-          { code: '1111', name: 'Caja General', balance: 125000 },
-          { code: '1112', name: 'Banco Popular', balance: 850000 }
-        ],
-        liabilities: [
-          { code: '2111', name: 'Cuentas por Pagar', balance: 485000 }
-        ],
-        equity: [
-          { code: '3110', name: 'Capital Autorizado', balance: 2000000 }
-        ],
-        totalAssets: 975000,
-        totalLiabilities: 485000,
-        totalEquity: 2000000,
+        assets: [],
+        liabilities: [],
+        equity: [],
+        totalAssets: 0,
+        totalLiabilities: 0,
+        totalEquity: 0,
         asOfDate
       };
     }
@@ -201,6 +185,7 @@ export const chartAccountsService = {
         .from('chart_accounts')
         .select('*')
         .in('type', ['income', 'expense'])
+        .eq('user_id', userId)
         .eq('is_active', true)
         .order('code');
 
@@ -208,17 +193,11 @@ export const chartAccountsService = {
         console.error('Error in generateIncomeStatement:', error);
         // Retornar datos de ejemplo
         return {
-          income: [
-            { code: '4111', name: 'Ventas de Productos', balance: 3250000 },
-            { code: '4112', name: 'Ventas de Servicios', balance: 850000 }
-          ],
-          expenses: [
-            { code: '5110', name: 'Costo de Productos', balance: 1950000 },
-            { code: '5211', name: 'Sueldos y Salarios', balance: 485000 }
-          ],
-          totalIncome: 4100000,
-          totalExpenses: 2435000,
-          netIncome: 1665000,
+          income: [],
+          expenses: [],
+          totalIncome: 0,
+          totalExpenses: 0,
+          netIncome: 0,
           fromDate,
           toDate
         };
@@ -243,15 +222,11 @@ export const chartAccountsService = {
     } catch (error) {
       console.error('Error generating income statement:', error);
       return {
-        income: [
-          { code: '4111', name: 'Ventas de Productos', balance: 3250000 }
-        ],
-        expenses: [
-          { code: '5110', name: 'Costo de Productos', balance: 1950000 }
-        ],
-        totalIncome: 3250000,
-        totalExpenses: 1950000,
-        netIncome: 1300000,
+        income: [],
+        expenses: [],
+        totalIncome: 0,
+        totalExpenses: 0,
+        netIncome: 0,
         fromDate,
         toDate
       };
@@ -263,6 +238,7 @@ export const chartAccountsService = {
       const { data, error } = await supabase
         .from('chart_accounts')
         .select('*')
+        .eq('user_id', userId)
         .eq('is_active', true)
         .order('code');
 
@@ -270,13 +246,10 @@ export const chartAccountsService = {
         console.error('Error in generateTrialBalance:', error);
         // Retornar datos de ejemplo
         return {
-          accounts: [
-            { code: '1111', name: 'Caja General', debitBalance: 125000, creditBalance: 0 },
-            { code: '2111', name: 'Cuentas por Pagar', debitBalance: 0, creditBalance: 485000 }
-          ],
-          totalDebits: 125000,
-          totalCredits: 485000,
-          isBalanced: false,
+          accounts: [],
+          totalDebits: 0,
+          totalCredits: 0,
+          isBalanced: true,
           asOfDate
         };
       }
@@ -333,6 +306,7 @@ export const chartAccountsService = {
             chart_accounts (code, name, type)
           )
         `)
+        .eq('user_id', userId)
         .gte('entry_date', fromDate)
         .lte('entry_date', toDate)
         .order('entry_date');
@@ -341,10 +315,10 @@ export const chartAccountsService = {
         console.error('Error in generateCashFlowStatement:', error);
         // Retornar datos de ejemplo
         return {
-          operatingCashFlow: 125000,
-          investingCashFlow: -45000,
-          financingCashFlow: 25000,
-          netCashFlow: 105000,
+          operatingCashFlow: 0,
+          investingCashFlow: 0,
+          financingCashFlow: 0,
+          netCashFlow: 0,
           fromDate,
           toDate
         };
@@ -398,10 +372,10 @@ export const chartAccountsService = {
       console.error('Error generating cash flow statement:', error);
       // Retornar datos de ejemplo si hay error
       return {
-        operatingCashFlow: 125000,
-        investingCashFlow: -45000,
-        financingCashFlow: 25000,
-        netCashFlow: 105000,
+        operatingCashFlow: 0,
+        investingCashFlow: 0,
+        financingCashFlow: 0,
+        netCashFlow: 0,
         fromDate,
         toDate
       };

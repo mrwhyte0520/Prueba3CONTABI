@@ -69,6 +69,16 @@ export default defineConfig({
   build: {
     sourcemap: true,
     outDir: 'out',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          pdf: ['jspdf', 'jspdf-autotable', 'html2canvas'],
+          xlsx: ['xlsx'],
+          charts: ['recharts']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1200,
   },
   resolve: {
     alias: {

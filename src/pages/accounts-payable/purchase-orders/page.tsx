@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -217,7 +215,9 @@ export default function PurchaseOrdersPage() {
     setFormData({ ...formData, products: updatedProducts });
   };
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
+    const { default: jsPDF } = await import('jspdf');
+    await import('jspdf-autotable');
     const doc = new jsPDF();
     
     // Título
@@ -264,7 +264,7 @@ export default function PurchaseOrdersPage() {
         ['Órdenes Pendientes:', `${pendingOrders}`],
         ['Órdenes Aprobadas:', `${approvedOrders}`]
       ],
-      startY: doc.lastAutoTable.finalY + 20,
+      startY: (((doc as any).lastAutoTable?.finalY) ?? 70) + 20,
       theme: 'plain',
       styles: { fontStyle: 'bold' }
     });
@@ -424,9 +424,22 @@ export default function PurchaseOrdersPage() {
                 <option value="Cancelada">Cancelada</option>
               </select>
             </div>
-            <div className="md:col-span-2 flex items-end">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Proveedor</label>
+              <select 
+                value={filterSupplier}
+                onChange={(e) => setFilterSupplier(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="all">Todos los Proveedores</option>
+                {suppliers.map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-1 flex items-end">
               <button 
-                onClick={() => setFilterStatus('all')}
+                onClick={() => { setFilterStatus('all'); setFilterSupplier('all'); }}
                 className="w-full bg-gray-600 text-white py-2 px-4 rounded-lg hover:bg-gray-700 transition-colors whitespace-nowrap"
               >
                 Limpiar Filtros

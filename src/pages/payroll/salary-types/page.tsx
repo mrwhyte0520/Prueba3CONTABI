@@ -16,73 +16,8 @@ interface SalaryType {
   created_at: string;
 }
 
-const mockSalaryTypes: SalaryType[] = [
-  {
-    id: '1',
-    name: 'Salario Fijo Mensual',
-    description: 'Salario fijo pagado mensualmente sin variaciones',
-    calculation_method: 'fixed',
-    base_amount: 45000,
-    overtime_rate: 1.5,
-    night_shift_rate: 1.15,
-    holiday_rate: 2.0,
-    is_active: true,
-    created_at: '2024-01-15'
-  },
-  {
-    id: '2',
-    name: 'Salario por Horas',
-    description: 'Pago basado en horas trabajadas',
-    calculation_method: 'hourly',
-    base_amount: 250,
-    overtime_rate: 1.5,
-    night_shift_rate: 1.15,
-    holiday_rate: 2.0,
-    is_active: true,
-    created_at: '2024-01-15'
-  },
-  {
-    id: '3',
-    name: 'Salario + Comisión',
-    description: 'Salario base más comisión por ventas',
-    calculation_method: 'mixed',
-    base_amount: 30000,
-    commission_rate: 3.5,
-    overtime_rate: 1.5,
-    night_shift_rate: 1.15,
-    holiday_rate: 2.0,
-    is_active: true,
-    created_at: '2024-01-20'
-  },
-  {
-    id: '4',
-    name: 'Solo Comisión',
-    description: 'Pago únicamente por comisiones de ventas',
-    calculation_method: 'commission',
-    base_amount: 0,
-    commission_rate: 8.0,
-    overtime_rate: 1.0,
-    night_shift_rate: 1.0,
-    holiday_rate: 1.0,
-    is_active: true,
-    created_at: '2024-02-01'
-  },
-  {
-    id: '5',
-    name: 'Salario Ejecutivo',
-    description: 'Salario fijo para posiciones ejecutivas',
-    calculation_method: 'fixed',
-    base_amount: 120000,
-    overtime_rate: 1.0,
-    night_shift_rate: 1.0,
-    holiday_rate: 1.5,
-    is_active: true,
-    created_at: '2024-02-10'
-  }
-];
-
 export default function SalaryTypesPage() {
-  const [salaryTypes, setSalaryTypes] = useState<SalaryType[]>(mockSalaryTypes);
+  const [salaryTypes, setSalaryTypes] = useState<SalaryType[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterMethod, setFilterMethod] = useState<string>('all');
   const [showForm, setShowForm] = useState(false);
@@ -91,7 +26,7 @@ export default function SalaryTypesPage() {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    calculation_method: 'fixed' as const,
+    calculation_method: 'fixed' as SalaryType['calculation_method'],
     base_amount: 0,
     commission_rate: 0,
     overtime_rate: 1.5,

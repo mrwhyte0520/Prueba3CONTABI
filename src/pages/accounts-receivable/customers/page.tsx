@@ -1,7 +1,5 @@
 import { useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
 
 interface Customer {
   id: string;
@@ -95,7 +93,9 @@ export default function CustomersPage() {
     return matchesSearch && matchesStatus;
   });
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
+    const { default: jsPDF } = await import('jspdf');
+    await import('jspdf-autotable');
     const doc = new jsPDF();
     
     doc.setFontSize(20);
@@ -128,7 +128,7 @@ export default function CustomersPage() {
     });
     
     doc.setFontSize(14);
-    doc.text('Detalle de Clientes', 20, (doc as any).lastAutoTable.finalY + 20);
+    doc.text('Detalle de Clientes', 20, (((doc as any).lastAutoTable?.finalY) ?? 70) + 20);
     
     const customerData = filteredCustomers.map(customer => [
       customer.name,
@@ -141,7 +141,7 @@ export default function CustomersPage() {
     ]);
     
     (doc as any).autoTable({
-      startY: (doc as any).lastAutoTable.finalY + 30,
+      startY: ((((doc as any).lastAutoTable?.finalY) ?? 70) + 30),
       head: [['Cliente', 'Documento', 'Teléfono', 'Email', 'Límite Crédito', 'Saldo Actual', 'Estado']],
       body: customerData,
       theme: 'striped',

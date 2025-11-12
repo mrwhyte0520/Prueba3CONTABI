@@ -87,138 +87,7 @@ export default function POSPage() {
       const activeProducts = parsedProducts.filter((product: Product) => product.status === 'active');
       setProducts(activeProducts);
     } else {
-      const defaultProducts: Product[] = [
-        { 
-          id: '1', 
-          name: 'Laptop Dell Inspiron', 
-          price: 45000, 
-          stock: 15, 
-          category: 'Electrónicos', 
-          barcode: '123456789',
-          imageUrl: 'https://readdy.ai/api/search-image?query=modern%20silver%20laptop%20computer%20Dell%20Inspiron%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20technology%20device&width=300&height=300&seq=laptop001&orientation=squarish',
-          sku: 'DELL-INS-15-001',
-          cost: 35000,
-          minStock: 5,
-          maxStock: 50,
-          description: 'Laptop Dell Inspiron 15 with 8GB RAM and 256GB SSD',
-          supplier: 'Dell Technologies',
-          status: 'active'
-        },
-        { 
-          id: '2', 
-          name: 'Mouse Logitech', 
-          price: 1200, 
-          stock: 50, 
-          category: 'Accesorios', 
-          barcode: '987654321',
-          imageUrl: 'https://readdy.ai/api/search-image?query=black%20wireless%20computer%20mouse%20Logitech%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20technology%20accessory&width=300&height=300&seq=mouse001&orientation=squarish',
-          sku: 'LOG-MX-MST-001',
-          cost: 800,
-          minStock: 10,
-          maxStock: 100,
-          description: 'Wireless mouse Logitech MX Master with precision tracking',
-          supplier: 'Logitech',
-          status: 'active'
-        },
-        { 
-          id: '3', 
-          name: 'Teclado Mecánico', 
-          price: 3500, 
-          stock: 25, 
-          category: 'Accesorios', 
-          barcode: '456789123',
-          imageUrl: 'https://readdy.ai/api/search-image?query=black%20mechanical%20keyboard%20with%20RGB%20lighting%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20gaming%20accessory&width=300&height=300&seq=keyboard001&orientation=squarish',
-          sku: 'KEY-MECH-001',
-          cost: 2500,
-          minStock: 5,
-          maxStock: 50,
-          description: 'Mechanical keyboard with RGB lighting',
-          supplier: 'Gaming Tech',
-          status: 'active'
-        },
-        { 
-          id: '4', 
-          name: 'Monitor 24"', 
-          price: 18000, 
-          stock: 8, 
-          category: 'Electrónicos', 
-          barcode: '789123456',
-          imageUrl: 'https://readdy.ai/api/search-image?query=24%20inch%20computer%20monitor%20display%20screen%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20technology%20device&width=300&height=300&seq=monitor001&orientation=squarish',
-          sku: 'MON-24-001',
-          cost: 14000,
-          minStock: 3,
-          maxStock: 20,
-          description: '24 inch Full HD monitor',
-          supplier: 'Display Corp',
-          status: 'active'
-        },
-        { 
-          id: '5', 
-          name: 'Impresora HP', 
-          price: 8500, 
-          stock: 12, 
-          category: 'Oficina', 
-          barcode: '321654987',
-          imageUrl: 'https://readdy.ai/api/search-image?query=white%20HP%20inkjet%20printer%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20office%20equipment&width=300&height=300&seq=printer001&orientation=squarish',
-          sku: 'HP-PRT-001',
-          cost: 6500,
-          minStock: 2,
-          maxStock: 15,
-          description: 'HP Inkjet printer with wireless connectivity',
-          supplier: 'HP Inc',
-          status: 'active'
-        },
-        { 
-          id: '6', 
-          name: 'Cable HDMI', 
-          price: 800, 
-          stock: 100, 
-          category: 'Accesorios', 
-          barcode: '654987321',
-          imageUrl: 'https://readdy.ai/api/search-image?query=black%20HDMI%20cable%20connector%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20technology%20accessory&width=300&height=300&seq=hdmi001&orientation=squarish',
-          sku: 'HDMI-CBL-001',
-          cost: 500,
-          minStock: 20,
-          maxStock: 200,
-          description: 'High-speed HDMI cable 2 meters',
-          supplier: 'Cable Solutions',
-          status: 'active'
-        },
-        { 
-          id: '7', 
-          name: 'Auriculares Bluetooth', 
-          price: 2500, 
-          stock: 30, 
-          category: 'Accesorios', 
-          barcode: '789456123',
-          imageUrl: 'https://readdy.ai/api/search-image?query=black%20wireless%20bluetooth%20headphones%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20audio%20accessory&width=300&height=300&seq=headphones001&orientation=squarish',
-          sku: 'BT-HEAD-001',
-          cost: 1800,
-          minStock: 5,
-          maxStock: 60,
-          description: 'Wireless Bluetooth headphones with noise cancellation',
-          supplier: 'Audio Tech',
-          status: 'active'
-        },
-        { 
-          id: '8', 
-          name: 'Webcam HD', 
-          price: 3200, 
-          stock: 18, 
-          category: 'Electrónicos', 
-          barcode: '147258369',
-          imageUrl: 'https://readdy.ai/api/search-image?query=black%20HD%20webcam%20camera%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20technology%20device&width=300&height=300&seq=webcam001&orientation=squarish',
-          sku: 'WEB-HD-001',
-          cost: 2400,
-          minStock: 3,
-          maxStock: 40,
-          description: 'HD webcam with auto-focus and built-in microphone',
-          supplier: 'Video Solutions',
-          status: 'active'
-        }
-      ];
-      setProducts(defaultProducts);
-      localStorage.setItem('contabi_products', JSON.stringify(defaultProducts));
+      setProducts([]);
     }
   };
 
@@ -227,63 +96,7 @@ export default function POSPage() {
     if (savedSales) {
       setSales(JSON.parse(savedSales));
     } else {
-      // Generate sample sales data
-      const sampleSales: Sale[] = [
-        {
-          id: 'SALE-001',
-          date: '2024-01-15',
-          time: '10:30:00',
-          customer: null,
-          items: [
-            { id: '1', name: 'Laptop Dell Inspiron', price: 45000, stock: 15, category: 'Electrónicos', barcode: '123456789', imageUrl: '', sku: 'DELL-INS-15-001', cost: 35000, minStock: 5, maxStock: 50, description: '', supplier: 'Dell', status: 'active', quantity: 1, total: 45000 }
-          ],
-          subtotal: 45000,
-          tax: 8100,
-          total: 53100,
-          paymentMethod: 'card',
-          amountReceived: 53100,
-          change: 0,
-          status: 'completed',
-          cashier: 'Admin'
-        },
-        {
-          id: 'SALE-002',
-          date: '2024-01-15',
-          time: '11:45:00',
-          customer: { id: '1', name: 'Juan Pérez', document: '001-1234567-8', phone: '809-123-4567', email: 'juan@email.com', address: 'Av. Principal 123', type: 'regular' },
-          items: [
-            { id: '2', name: 'Mouse Logitech', price: 1200, stock: 50, category: 'Accesorios', barcode: '987654321', imageUrl: '', sku: 'LOG-MX-MST-001', cost: 800, minStock: 10, maxStock: 100, description: '', supplier: 'Logitech', status: 'active', quantity: 2, total: 2400 },
-            { id: '3', name: 'Teclado Mecánico', price: 3500, stock: 25, category: 'Accesorios', barcode: '456789123', imageUrl: '', sku: 'KEY-MECH-001', cost: 2500, minStock: 5, maxStock: 50, description: '', supplier: 'Gaming Tech', status: 'active', quantity: 1, total: 3500 }
-          ],
-          subtotal: 5900,
-          tax: 1062,
-          total: 6962,
-          paymentMethod: 'cash',
-          amountReceived: 7000,
-          change: 38,
-          status: 'completed',
-          cashier: 'Admin'
-        },
-        {
-          id: 'SALE-003',
-          date: '2024-01-15',
-          time: '14:20:00',
-          customer: { id: '2', name: 'María García', document: '001-2345678-9', phone: '809-234-5678', email: 'maria@email.com', address: 'Calle Secundaria 456', type: 'vip' },
-          items: [
-            { id: '4', name: 'Monitor 24"', price: 18000, stock: 8, category: 'Electrónicos', barcode: '789123456', imageUrl: '', sku: 'MON-24-001', cost: 14000, minStock: 3, maxStock: 20, description: '', supplier: 'Display Corp', status: 'active', quantity: 1, total: 18000 }
-          ],
-          subtotal: 18000,
-          tax: 3240,
-          total: 21240,
-          paymentMethod: 'transfer',
-          amountReceived: 21240,
-          change: 0,
-          status: 'completed',
-          cashier: 'Admin'
-        }
-      ];
-      setSales(sampleSales);
-      localStorage.setItem('contabi_pos_sales', JSON.stringify(sampleSales));
+      setSales([]);
     }
   };
 
@@ -292,15 +105,7 @@ export default function POSPage() {
     if (savedCustomers) {
       setCustomers(JSON.parse(savedCustomers));
     } else {
-      const defaultCustomers: Customer[] = [
-        { id: '1', name: 'Juan Pérez', document: '001-1234567-8', phone: '809-123-4567', email: 'juan@email.com', address: 'Av. Principal 123, Santo Domingo', type: 'regular' },
-        { id: '2', name: 'María García', document: '001-2345678-9', phone: '809-234-5678', email: 'maria@email.com', address: 'Calle Secundaria 456, Santiago', type: 'vip' },
-        { id: '3', name: 'Carlos Rodríguez', document: '001-3456789-0', phone: '809-345-6789', email: 'carlos@email.com', address: 'Av. Libertad 789, La Romana', type: 'regular' },
-        { id: '4', name: 'Ana Martínez', document: '001-4567890-1', phone: '809-456-7890', email: 'ana@email.com', address: 'Calle Central 321, Puerto Plata', type: 'vip' },
-        { id: '5', name: 'Luis Fernández', document: '001-5678901-2', phone: '809-567-8901', email: 'luis@email.com', address: 'Av. Norte 654, San Pedro', type: 'regular' }
-      ];
-      setCustomers(defaultCustomers);
-      localStorage.setItem('contabi_pos_customers', JSON.stringify(defaultCustomers));
+      setCustomers([]);
     }
   };
 

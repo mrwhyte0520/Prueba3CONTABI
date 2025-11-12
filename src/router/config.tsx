@@ -1,5 +1,5 @@
 
-import { RouteObject } from 'react-router-dom';
+import { type RouteObject } from 'react-router';
 import { lazy } from 'react';
 import DashboardLayout from '../components/layout/DashboardLayout';
 

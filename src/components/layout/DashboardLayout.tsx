@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { customersService, invoicesService, inventoryService } from '../../services/database';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -10,17 +11,18 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications] = useState<Array<{ title: string; time: string; type: 'info'|'warning'|'success' }>>([]);
   const [profilePanelOpen, setProfilePanelOpen] = useState(false);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [userProfile, setUserProfile] = useState({
-    fullName: 'Juan Pérez',
-    email: 'juan.perez@empresa.com',
-    phone: '+1 (555) 123-4567',
-    company: 'Mi Empresa S.A.',
-    position: 'Gerente General',
-    address: 'Av. Principal 123',
-    city: 'Santo Domingo',
-    country: 'República Dominicana'
+    fullName: '',
+    email: '',
+    phone: '',
+    company: '',
+    position: '',
+    address: '',
+    city: '',
+    country: ''
   });
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
@@ -31,6 +33,40 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, signOut } = useAuth();
+  const [kpiCounts, setKpiCounts] = useState({ invoices: 0, customers: 0, products: 0 });
+
+  useEffect(() => {
+    setUserProfile(prev => ({
+      ...prev,
+      fullName: (user?.user_metadata as any)?.full_name || prev.fullName || (user?.email?.split('@')[0] ?? ''),
+      email: user?.email ?? prev.email,
+    }));
+  }, [user]);
+
+  useEffect(() => {
+    const fetchCounts = async () => {
+      try {
+        const uid = user?.id || '';
+        if (!uid) {
+          setKpiCounts({ invoices: 0, customers: 0, products: 0 });
+          return;
+        }
+        const [invoices, customers, items] = await Promise.all([
+          invoicesService.getAll(uid),
+          customersService.getAll(uid),
+          inventoryService.getItems(uid)
+        ]);
+        setKpiCounts({
+          invoices: (invoices || []).length,
+          customers: (customers || []).length,
+          products: (items || []).length
+        });
+      } catch {
+        setKpiCounts({ invoices: 0, customers: 0, products: 0 });
+      }
+    };
+    fetchCounts();
+  }, [user]);
 
   const navigation = [
     {
@@ -289,13 +325,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     setNotificationsOpen(!notificationsOpen);
   };
 
-  const handleLogout = async () => {
-    const { error } = await signOut();
-    if (!error) {
-      navigate('/auth/login');
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Sidebar */}
@@ -403,15 +432,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                       </div>
                       <div className="grid grid-cols-3 gap-4 mt-4">
                         <div className="text-center">
-                          <div className="text-lg font-bold text-gray-900">24</div>
+                          <div className="text-lg font-bold text-gray-900">{kpiCounts.invoices}</div>
                           <div className="text-xs text-gray-600">Facturas</div>
                         </div>
                         <div className="text-center">
-                          <div className="text-lg font-bold text-gray-900">12</div>
+                          <div className="text-lg font-bold text-gray-900">{kpiCounts.customers}</div>
                           <div className="text-xs text-gray-600">Clientes</div>
                         </div>
                         <div className="text-center">
-                          <div className="text-lg font-bold text-gray-900">48</div>
+                          <div className="text-lg font-bold text-gray-900">{kpiCounts.products}</div>
                           <div className="text-xs text-gray-600">Productos</div>
                         </div>
                       </div>
@@ -677,9 +706,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               >
                 <span className="sr-only">Ver notificaciones</span>
                 <i className="ri-notification-3-line text-xl"></i>
-                <span className="absolute -top-1 -right-1 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium">
-                  3
-                </span>
+                {notifications.length > 0 && (
+                  <span className="absolute -top-1 -right-1 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium">
+                    {notifications.length}
+                  </span>
+                )}
               </button>
 
               {/* Notifications dropdown */}
@@ -687,34 +718,21 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 <div className="absolute right-0 top-16 mt-2 w-80 bg-white rounded-xl shadow-xl ring-1 ring-black/5 z-50 border border-gray-100">
                   <div className="p-4">
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">Notificaciones</h3>
-                    <div className="space-y-3">
-                      <div className="flex items-start space-x-3 p-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors duration-200">
-                        <i className="ri-information-line text-blue-500 mt-1"></i>
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">Nuevo reporte disponible</p>
-                          <p className="text-xs text-gray-500">Hace 2 horas</p>
-                        </div>
+                    {notifications.length === 0 ? (
+                      <div className="text-sm text-gray-500">No hay notificaciones</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {notifications.map((n, idx) => (
+                          <div key={idx} className={`flex items-start space-x-3 p-3 rounded-lg transition-colors duration-200 ${n.type === 'warning' ? 'bg-yellow-50' : n.type === 'success' ? 'bg-green-50' : 'bg-blue-50'}`}>
+                            <i className={`${n.type === 'warning' ? 'ri-warning-line text-yellow-500' : n.type === 'success' ? 'ri-check-line text-green-500' : 'ri-information-line text-blue-500'} mt-1`}></i>
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">{n.title}</p>
+                              <p className="text-xs text-gray-500">{n.time}</p>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <div className="flex items-start space-x-3 p-3 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition-colors duration-200">
-                        <i className="ri-warning-line text-yellow-500 mt-1"></i>
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">Vencimiento de NCF próximo</p>
-                          <p className="text-xs text-gray-500">Hace 1 día</p>
-                        </div>
-                      </div>
-                      <div className="flex items-start space-x-3 p-3 bg-green-50 rounded-lg hover:bg-green-100 transition-colors duration-200">
-                        <i className="ri-check-line text-green-500 mt-1"></i>
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">Backup completado</p>
-                          <p className="text-xs text-gray-500">Hace 2 días</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-4 pt-3 border-t border-gray-200">
-                      <button className="text-sm text-blue-600 hover:text-blue-500 font-medium">
-                        Ver todas las notificaciones
-                      </button>
-                    </div>
+                    )}
                   </div>
                 </div>
               )}

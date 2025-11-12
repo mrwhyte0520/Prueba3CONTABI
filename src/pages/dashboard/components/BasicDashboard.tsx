@@ -1,8 +1,59 @@
-
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FeatureGuard } from '../../../components/common/FeatureGuard';
+import { useAuth } from '../../../hooks/useAuth';
+import { chartAccountsService, invoicesService } from '../../../services/database';
 
 export default function BasicDashboard() {
+  const { user } = useAuth();
+  const [totalRevenue, setTotalRevenue] = useState(0);
+  const [totalExpenses, setTotalExpenses] = useState(0);
+  const [netProfit, setNetProfit] = useState(0);
+  const [pendingInvoices, setPendingInvoices] = useState(0);
+  const [pendingAmount, setPendingAmount] = useState(0);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const uid = user?.id || '';
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        const fromDate = start.toISOString().slice(0, 10);
+        const toDate = end.toISOString().slice(0, 10);
+
+        const [incomeStmt, invoices] = await Promise.all([
+          chartAccountsService.generateIncomeStatement(uid, fromDate, toDate),
+          invoicesService.getAll(uid)
+        ]);
+
+        const revenue = incomeStmt.totalIncome || 0;
+        const expenses = incomeStmt.totalExpenses || 0;
+        const profit = incomeStmt.netIncome || 0;
+
+        setTotalRevenue(revenue);
+        setTotalExpenses(expenses);
+        setNetProfit(profit);
+
+        const pendings = (invoices || []).filter((inv: any) => {
+          const status = (inv.status || '').toLowerCase();
+          return status === 'pending' || status === 'unpaid' || status === 'vencida';
+        });
+        setPendingInvoices(pendings.length);
+        const amount = pendings.reduce((sum: number, inv: any) => sum + (inv.total_amount || inv.total || 0), 0);
+        setPendingAmount(amount);
+      } catch {
+        setTotalRevenue(0);
+        setTotalExpenses(0);
+        setNetProfit(0);
+        setPendingInvoices(0);
+        setPendingAmount(0);
+      }
+    };
+    fetchData();
+  }, [user]);
+
+  const formatCurrency = (amount: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(amount);
+
   return (
     <div className="space-y-6">
       {/* Métricas Principales */}
@@ -11,15 +62,11 @@ export default function BasicDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Ingresos del Mes</p>
-              <p className="text-2xl font-bold text-green-600">RD$ 125,450</p>
+              <p className="text-2xl font-bold text-green-600">{formatCurrency(totalRevenue)}</p>
             </div>
             <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
               <i className="ri-money-dollar-circle-line text-green-600 text-xl"></i>
             </div>
-          </div>
-          <div className="mt-4 flex items-center text-sm">
-            <span className="text-green-600 font-medium">+12.5%</span>
-            <span className="text-gray-500 ml-2">vs mes anterior</span>
           </div>
         </div>
 
@@ -27,15 +74,11 @@ export default function BasicDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Gastos del Mes</p>
-              <p className="text-2xl font-bold text-red-600">RD$ 78,320</p>
+              <p className="text-2xl font-bold text-red-600">{formatCurrency(totalExpenses)}</p>
             </div>
             <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
               <i className="ri-shopping-cart-line text-red-600 text-xl"></i>
             </div>
-          </div>
-          <div className="mt-4 flex items-center text-sm">
-            <span className="text-red-600 font-medium">+8.2%</span>
-            <span className="text-gray-500 ml-2">vs mes anterior</span>
           </div>
         </div>
 
@@ -43,15 +86,11 @@ export default function BasicDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Utilidad Neta</p>
-              <p className="text-2xl font-bold text-blue-600">RD$ 47,130</p>
+              <p className="text-2xl font-bold text-blue-600">{formatCurrency(netProfit)}</p>
             </div>
             <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
               <i className="ri-line-chart-line text-blue-600 text-xl"></i>
             </div>
-          </div>
-          <div className="mt-4 flex items-center text-sm">
-            <span className="text-green-600 font-medium">+15.3%</span>
-            <span className="text-gray-500 ml-2">vs mes anterior</span>
           </div>
         </div>
 
@@ -59,14 +98,14 @@ export default function BasicDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Facturas Pendientes</p>
-              <p className="text-2xl font-bold text-orange-600">23</p>
+              <p className="text-2xl font-bold text-orange-600">{pendingInvoices}</p>
             </div>
             <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
               <i className="ri-file-list-3-line text-orange-600 text-xl"></i>
             </div>
           </div>
           <div className="mt-4 flex items-center text-sm">
-            <span className="text-orange-600 font-medium">RD$ 89,450</span>
+            <span className="text-orange-600 font-medium">{formatCurrency(pendingAmount)}</span>
             <span className="text-gray-500 ml-2">por cobrar</span>
           </div>
         </div>
@@ -74,7 +113,7 @@ export default function BasicDashboard() {
 
       {/* Gráficos */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <FeatureGuard feature="advanced_analytics" fallback={
+        <FeatureGuard feature="hasAdvancedAnalytics" fallback={
           <div className="bg-white p-6 rounded-lg shadow-sm border">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Ingresos vs Gastos</h3>
             <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg">
@@ -96,7 +135,7 @@ export default function BasicDashboard() {
           </div>
         </FeatureGuard>
 
-        <FeatureGuard feature="advanced_analytics" fallback={
+        <FeatureGuard feature="hasAdvancedAnalytics" fallback={
           <div className="bg-white p-6 rounded-lg shadow-sm border">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Distribución de Gastos</h3>
             <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg">
@@ -119,35 +158,7 @@ export default function BasicDashboard() {
         </FeatureGuard>
       </div>
 
-      {/* Alertas y Notificaciones */}
-      <div className="bg-white p-6 rounded-lg shadow-sm border">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Alertas Importantes</h3>
-        <div className="space-y-3">
-          <div className="flex items-center p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <i className="ri-alert-line text-yellow-600 text-xl mr-3"></i>
-            <div>
-              <p className="text-sm font-medium text-yellow-800">5 facturas vencen en los próximos 7 días</p>
-              <p className="text-xs text-yellow-600">Total: RD$ 45,230</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center p-3 bg-red-50 border border-red-200 rounded-lg">
-            <i className="ri-error-warning-line text-red-600 text-xl mr-3"></i>
-            <div>
-              <p className="text-sm font-medium text-red-800">3 productos con stock bajo</p>
-              <p className="text-xs text-red-600">Revisar inventario</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <i className="ri-information-line text-blue-600 text-xl mr-3"></i>
-            <div>
-              <p className="text-sm font-medium text-blue-800">Backup automático completado</p>
-              <p className="text-xs text-blue-600">Última copia: Hoy 3:00 AM</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      
     </div>
   );
 }

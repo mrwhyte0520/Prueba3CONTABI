@@ -1,5 +1,6 @@
-
 import { useState, useEffect } from 'react';
+import { useAuth } from '../../../hooks/useAuth';
+import { chartAccountsService, invoicesService } from '../../../services/database';
 
 interface KPIData {
   totalRevenue: number;
@@ -27,6 +28,7 @@ interface ExpenseData {
 }
 
 export default function AdvancedKPIDashboard() {
+  const { user } = useAuth();
   const [kpiData, setKpiData] = useState<KPIData>({
     totalRevenue: 0,
     totalExpenses: 0,
@@ -39,43 +41,68 @@ export default function AdvancedKPIDashboard() {
     monthlyGrowth: 0,
     customerSatisfaction: 0
   });
-
-  const [chartData] = useState<ChartData[]>([
-    { month: 'Ene', ingresos: 45000, gastos: 32000 },
-    { month: 'Feb', ingresos: 52000, gastos: 38000 },
-    { month: 'Mar', ingresos: 48000, gastos: 35000 },
-    { month: 'Abr', ingresos: 61000, gastos: 42000 },
-    { month: 'May', ingresos: 55000, gastos: 39000 },
-    { month: 'Jun', ingresos: 67000, gastos: 45000 }
-  ]);
-
-  const [expenseData] = useState<ExpenseData[]>([
-    { category: 'Nómina', amount: 25000, color: '#3B82F6' },
-    { category: 'Alquiler', amount: 8000, color: '#10B981' },
-    { category: 'Servicios', amount: 5000, color: '#F59E0B' },
-    { category: 'Marketing', amount: 3000, color: '#EF4444' },
-    { category: 'Otros', amount: 4000, color: '#8B5CF6' }
-  ]);
+  const [chartData, setChartData] = useState<ChartData[]>([]);
+  const [expenseData, setExpenseData] = useState<ExpenseData[]>([]);
+  const [pendingAmount, setPendingAmount] = useState(0);
 
   useEffect(() => {
-    // Simular carga de datos
-    const loadKPIData = () => {
-      setKpiData({
-        totalRevenue: 67000,
-        totalExpenses: 45000,
-        netProfit: 22000,
-        pendingInvoices: 12,
-        cashFlow: 15000,
-        profitMargin: 32.8,
-        liquidityRatio: 2.1,
-        efficiency: 85,
-        monthlyGrowth: 12.5,
-        customerSatisfaction: 94
-      });
+    const fetchData = async () => {
+      try {
+        const uid = user?.id || '';
+        // Rango del mes actual
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        const fromDate = start.toISOString().slice(0, 10);
+        const toDate = end.toISOString().slice(0, 10);
+
+        const [incomeStmt, cashFlowRes, invoices] = await Promise.all([
+          chartAccountsService.generateIncomeStatement(uid, fromDate, toDate),
+          chartAccountsService.generateCashFlowStatement(uid, fromDate, toDate),
+          invoicesService.getAll(uid)
+        ]);
+
+        const totalRevenue = incomeStmt.totalIncome || 0;
+        const totalExpenses = incomeStmt.totalExpenses || 0;
+        const netProfit = incomeStmt.netIncome || 0;
+        const cashFlow = cashFlowRes.netCashFlow || 0;
+        const pendingInvoices = (invoices || []).filter((inv: any) => {
+          const status = (inv.status || '').toLowerCase();
+          return status === 'pending' || status === 'unpaid' || status === 'vencida';
+        }).length;
+        const pendingAmountCalc = (invoices || []).filter((inv: any) => {
+          const status = (inv.status || '').toLowerCase();
+          return status === 'pending' || status === 'unpaid' || status === 'vencida';
+        }).reduce((sum: number, inv: any) => sum + (inv.total_amount || inv.total || 0), 0);
+
+        const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+        setKpiData(prev => ({
+          ...prev,
+          totalRevenue,
+          totalExpenses,
+          netProfit,
+          cashFlow,
+          pendingInvoices,
+          profitMargin,
+        }));
+        setPendingAmount(pendingAmountCalc);
+
+        // Datos para gráfico: una sola barra del mes actual
+        setChartData([{ month: now.toLocaleString('es-DO', { month: 'short' }), ingresos: totalRevenue, gastos: totalExpenses }]);
+
+        // Distribución de gastos: si hay detalle disponible, podríamos armar por categorías.
+        // De momento, dejamos vacío para evitar datos de prueba.
+        setExpenseData([]);
+      } catch (e) {
+        // En caso de error, dejamos los datos en cero (sin mocks)
+        setChartData([]);
+        setExpenseData([]);
+      }
     };
 
-    loadKPIData();
-  }, []);
+    fetchData();
+  }, [user]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('es-DO', {
@@ -118,10 +145,6 @@ export default function AdvancedKPIDashboard() {
               <i className="ri-money-dollar-circle-line text-2xl text-red-600"></i>
             </div>
           </div>
-          <div className="mt-4 flex items-center">
-            <span className="text-sm text-red-600 font-medium">+5.2%</span>
-            <span className="text-sm text-gray-500 ml-2">vs mes anterior</span>
-          </div>
         </div>
 
         <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
@@ -150,7 +173,7 @@ export default function AdvancedKPIDashboard() {
             </div>
           </div>
           <div className="mt-4 flex items-center">
-            <span className="text-sm text-orange-600 font-medium">Valor: {formatCurrency(85000)}</span>
+            <span className="text-sm text-orange-600 font-medium">Valor: {formatCurrency(pendingAmount)}</span>
           </div>
         </div>
       </div>
@@ -160,25 +183,30 @@ export default function AdvancedKPIDashboard() {
         {/* Revenue vs Expenses Chart */}
         <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Ingresos vs Gastos</h3>
-          <div className="h-64 flex items-end justify-between space-x-2">
-            {chartData.map((data, index) => (
-              <div key={index} className="flex flex-col items-center space-y-2 flex-1">
-                <div className="flex items-end space-x-1 h-48">
-                  <div 
-                    className="bg-green-500 rounded-t w-4"
-                    style={{ height: `${(data.ingresos / 70000) * 100}%` }}
-                    title={`Ingresos: ${formatCurrency(data.ingresos)}`}
-                  ></div>
-                  <div 
-                    className="bg-red-500 rounded-t w-4"
-                    style={{ height: `${(data.gastos / 70000) * 100}%` }}
-                    title={`Gastos: ${formatCurrency(data.gastos)}`}
-                  ></div>
-                </div>
-                <span className="text-xs text-gray-600">{data.month}</span>
+          {(() => {
+            const maxValue = Math.max(1, ...chartData.flatMap(d => [d.ingresos, d.gastos]));
+            return (
+              <div className="h-64 flex items-end justify-between space-x-2">
+                {chartData.map((data, index) => (
+                  <div key={index} className="flex flex-col items-center space-y-2 flex-1">
+                    <div className="flex items-end space-x-1 h-48">
+                      <div 
+                        className="bg-green-500 rounded-t w-4"
+                        style={{ height: `${Math.min((data.ingresos / maxValue) * 100, 100)}%` }}
+                        title={`Ingresos: ${formatCurrency(data.ingresos)}`}
+                      ></div>
+                      <div 
+                        className="bg-red-500 rounded-t w-4"
+                        style={{ height: `${Math.min((data.gastos / maxValue) * 100, 100)}%` }}
+                        title={`Gastos: ${formatCurrency(data.gastos)}`}
+                      ></div>
+                    </div>
+                    <span className="text-xs text-gray-600">{data.month}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            );
+          })()}
           <div className="flex justify-center space-x-6 mt-4">
             <div className="flex items-center">
               <div className="w-3 h-3 bg-green-500 rounded mr-2"></div>
@@ -264,33 +292,7 @@ export default function AdvancedKPIDashboard() {
         </div>
       </div>
 
-      {/* Alerts */}
-      <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Alertas Importantes</h3>
-        <div className="space-y-3">
-          <div className="flex items-center p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <i className="ri-alert-line text-yellow-600 mr-3"></i>
-            <div>
-              <p className="text-sm font-medium text-yellow-800">Facturas por vencer</p>
-              <p className="text-xs text-yellow-600">5 facturas vencen en los próximos 7 días</p>
-            </div>
-          </div>
-          <div className="flex items-center p-3 bg-red-50 border border-red-200 rounded-lg">
-            <i className="ri-error-warning-line text-red-600 mr-3"></i>
-            <div>
-              <p className="text-sm font-medium text-red-800">Stock bajo</p>
-              <p className="text-xs text-red-600">3 productos con inventario crítico</p>
-            </div>
-          </div>
-          <div className="flex items-center p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <i className="ri-information-line text-blue-600 mr-3"></i>
-            <div>
-              <p className="text-sm font-medium text-blue-800">Backup programado</p>
-              <p className="text-xs text-blue-600">Próximo backup automático: Mañana 2:00 AM</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      
     </div>
   );
 }

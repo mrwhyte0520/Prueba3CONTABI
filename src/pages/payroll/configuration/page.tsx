@@ -46,39 +46,8 @@ export default function PayrollConfigurationPage() {
   }, []);
 
   const loadConfiguration = () => {
-    // Mock configuration data
-    const mockConfig: PayrollConfig = {
-      id: '1',
-      company_name: 'Empresa Demo S.R.L.',
-      tax_id: '131-12345-6',
-      social_security_rate: 2.87,
-      income_tax_rate: 15,
-      christmas_bonus_rate: 8.33,
-      vacation_days: 14,
-      sick_days: 12,
-      overtime_rate: 1.35,
-      night_shift_rate: 1.15,
-      sunday_rate: 1.35,
-      holiday_rate: 2.0,
-      min_wage: 21000,
-      currency: 'DOP',
-      pay_frequency: 'monthly',
-      fiscal_year_start: '2024-01-01',
-      backup_frequency: 'weekly',
-      auto_calculate_taxes: true,
-      auto_generate_reports: true
-    };
-
-    const mockTaxBrackets: TaxBracket[] = [
-      { id: '1', min_amount: 0, max_amount: 416220, rate: 0, fixed_amount: 0 },
-      { id: '2', min_amount: 416220.01, max_amount: 624329, rate: 15, fixed_amount: 0 },
-      { id: '3', min_amount: 624329.01, max_amount: 867123, rate: 20, fixed_amount: 31216 },
-      { id: '4', min_amount: 867123.01, max_amount: 1000000, rate: 25, fixed_amount: 79775 },
-      { id: '5', min_amount: 1000000.01, max_amount: Infinity, rate: 27, fixed_amount: 112994 }
-    ];
-
-    setConfig(mockConfig);
-    setTaxBrackets(mockTaxBrackets);
+    setConfig(null);
+    setTaxBrackets([]);
   };
 
   const handleSaveConfig = async (e: React.FormEvent) => {

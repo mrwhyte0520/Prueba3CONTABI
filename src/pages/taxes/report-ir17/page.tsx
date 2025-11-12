@@ -13,33 +13,8 @@ export default function ReportIR17Page() {
     
     setGenerating(true);
     try {
-      // Simular datos de retenciones
-      const mockData = [
-        {
-          supplier_rnc: '131234567',
-          supplier_name: 'Consultores Asociados SRL',
-          payment_date: '2024-02-15',
-          gross_amount: 100000,
-          withholding_rate: 10,
-          withheld_amount: 10000,
-          net_amount: 90000,
-          service_type: 'Servicios Profesionales',
-          invoice_number: 'FACT-001'
-        },
-        {
-          supplier_rnc: '131567890',
-          supplier_name: 'Servicios Técnicos SA',
-          payment_date: '2024-02-20',
-          gross_amount: 75000,
-          withholding_rate: 10,
-          withheld_amount: 7500,
-          net_amount: 67500,
-          service_type: 'Servicios Técnicos',
-          invoice_number: 'FACT-002'
-        }
-      ];
-      
-      setWithholdingData(mockData);
+      // No generar datos de prueba: mantener vacío hasta integrar fuente real
+      setWithholdingData([]);
     } catch (error) {
       console.error('Error generating report IR-17:', error);
       alert('Error al generar el reporte IR-17');

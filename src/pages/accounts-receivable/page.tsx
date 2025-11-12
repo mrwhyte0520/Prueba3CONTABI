@@ -3,11 +3,10 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 
 export default function AccountsReceivablePage() {
-  // Mock data para estadísticas del dashboard
-  const totalReceivables = 435000;
-  const overdueAmount = 125000;
-  const currentAmount = 310000;
-  const activeCustomers = 15;
+  const totalReceivables = 0;
+  const overdueAmount = 0;
+  const currentAmount = 0;
+  const activeCustomers = 0;
 
   const modules = [
     {
@@ -16,7 +15,7 @@ export default function AccountsReceivablePage() {
       icon: 'ri-file-list-3-line',
       path: '/accounts-receivable/invoices',
       color: 'bg-blue-500',
-      stats: 'RD$ 435,000'
+      stats: ''
     },
     {
       title: 'Gestión de Clientes',
@@ -24,7 +23,7 @@ export default function AccountsReceivablePage() {
       icon: 'ri-user-line',
       path: '/accounts-receivable/customers',
       color: 'bg-purple-500',
-      stats: '15 Activos'
+      stats: ''
     },
     {
       title: 'Pagos Recibidos',
@@ -32,7 +31,7 @@ export default function AccountsReceivablePage() {
       icon: 'ri-money-dollar-circle-line',
       path: '/accounts-receivable/payments',
       color: 'bg-green-500',
-      stats: 'RD$ 285,000'
+      stats: ''
     },
     {
       title: 'Recibos de Cobro',
@@ -40,7 +39,7 @@ export default function AccountsReceivablePage() {
       icon: 'ri-receipt-line',
       path: '/accounts-receivable/receipts',
       color: 'bg-indigo-500',
-      stats: '24 Emitidos'
+      stats: ''
     },
     {
       title: 'Anticipos de Clientes',
@@ -48,7 +47,7 @@ export default function AccountsReceivablePage() {
       icon: 'ri-wallet-line',
       path: '/accounts-receivable/advances',
       color: 'bg-orange-500',
-      stats: 'RD$ 150,000'
+      stats: ''
     },
     {
       title: 'Notas de Crédito',
@@ -56,7 +55,7 @@ export default function AccountsReceivablePage() {
       icon: 'ri-file-reduce-line',
       path: '/accounts-receivable/credit-notes',
       color: 'bg-emerald-500',
-      stats: 'RD$ 45,000'
+      stats: ''
     },
     {
       title: 'Notas de Débito',
@@ -64,7 +63,7 @@ export default function AccountsReceivablePage() {
       icon: 'ri-file-add-line',
       path: '/accounts-receivable/debit-notes',
       color: 'bg-red-500',
-      stats: 'RD$ 25,000'
+      stats: ''
     },
     {
       title: 'Reportes CxC',
@@ -72,7 +71,7 @@ export default function AccountsReceivablePage() {
       icon: 'ri-bar-chart-line',
       path: '/accounts-receivable/reports',
       color: 'bg-cyan-500',
-      stats: '8 Disponibles'
+      stats: ''
     }
   ];
 

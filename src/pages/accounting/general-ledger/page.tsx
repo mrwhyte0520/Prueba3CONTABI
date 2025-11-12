@@ -73,118 +73,23 @@ const GeneralLedgerPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Error loading accounts:', error);
-      // Cargar datos de ejemplo
-      loadMockAccounts();
+      // No usar datos de ejemplo
+      setAccounts([]);
     } finally {
       setLoading(false);
     }
   };
 
   const loadMockAccounts = () => {
-    const mockAccounts: Account[] = [
-      { id: '1', code: '1111', name: 'Caja General', type: 'asset', balance: 125000, normalBalance: 'debit' },
-      { id: '2', code: '1112', name: 'Banco Popular', type: 'asset', balance: 850000, normalBalance: 'debit' },
-      { id: '3', code: '1113', name: 'Banco BHD León', type: 'asset', balance: 420000, normalBalance: 'debit' },
-      { id: '4', code: '1120', name: 'Cuentas por Cobrar', type: 'asset', balance: 450000, normalBalance: 'debit' },
-      { id: '5', code: '1300', name: 'Inventario', type: 'asset', balance: 320000, normalBalance: 'debit' },
-      { id: '6', code: '1400', name: 'Equipos de Oficina', type: 'asset', balance: 180000, normalBalance: 'debit' },
-      { id: '7', code: '1410', name: 'Depreciación Acumulada', type: 'asset', balance: -45000, normalBalance: 'credit' },
-      { id: '8', code: '2100', name: 'Cuentas por Pagar', type: 'liability', balance: 180000, normalBalance: 'credit' },
-      { id: '9', code: '2200', name: 'Préstamos Bancarios', type: 'liability', balance: 500000, normalBalance: 'credit' },
-      { id: '10', code: '3100', name: 'Capital Social', type: 'equity', balance: 1000000, normalBalance: 'credit' },
-      { id: '11', code: '4100', name: 'Ventas', type: 'income', balance: 2500000, normalBalance: 'credit' },
-      { id: '12', code: '4200', name: 'Ingresos por Servicios', type: 'income', balance: 850000, normalBalance: 'credit' },
-      { id: '13', code: '5100', name: 'Gastos Operativos', type: 'expense', balance: 180000, normalBalance: 'debit' },
-      { id: '14', code: '5200', name: 'Servicios Públicos', type: 'expense', balance: 45000, normalBalance: 'debit' },
-      { id: '15', code: '5300', name: 'Gastos de Personal', type: 'expense', balance: 720000, normalBalance: 'debit' },
-      { id: '16', code: '5400', name: 'Depreciación', type: 'expense', balance: 25000, normalBalance: 'debit' }
-    ];
-    setAccounts(mockAccounts);
+    setAccounts([]);
   };
 
   const loadLedgerEntries = async (accountId: string) => {
     if (!user) return;
 
     try {
-      // Generar datos del mayor para la cuenta seleccionada
-      const account = accounts.find(acc => acc.id === accountId);
-      if (!account) return;
-
-      const mockEntries: LedgerEntry[] = [
-        {
-          id: '1',
-          date: '2024-12-01',
-          description: 'Saldo inicial del período',
-          reference: 'SI-001',
-          debit: account.normalBalance === 'debit' ? Math.abs(account.balance * 0.7) : 0,
-          credit: account.normalBalance === 'credit' ? Math.abs(account.balance * 0.7) : 0,
-          balance: account.balance * 0.7,
-          entryNumber: 'SI-001'
-        },
-        {
-          id: '2',
-          date: '2024-12-03',
-          description: account.type === 'asset' ? 'Incremento por operación comercial' : 
-                      account.type === 'income' ? 'Venta de productos y servicios' :
-                      account.type === 'expense' ? 'Gasto operativo del período' : 
-                      account.type === 'liability' ? 'Incremento de obligaciones' : 'Movimiento de capital',
-          reference: 'FAC-001',
-          debit: account.normalBalance === 'debit' ? Math.abs(account.balance * 0.15) : 0,
-          credit: account.normalBalance === 'credit' ? Math.abs(account.balance * 0.15) : 0,
-          balance: account.balance * 0.85,
-          entryNumber: 'JE-001234'
-        },
-        {
-          id: '3',
-          date: '2024-12-07',
-          description: account.type === 'asset' ? 'Ajuste por conciliación bancaria' : 
-                      account.type === 'income' ? 'Servicios prestados adicionales' :
-                      account.type === 'expense' ? 'Gastos administrativos' : 
-                      account.type === 'liability' ? 'Pago parcial de obligaciones' : 'Ajuste patrimonial',
-          reference: 'REC-002',
-          debit: account.normalBalance === 'debit' ? Math.abs(account.balance * 0.08) : Math.abs(account.balance * 0.05),
-          credit: account.normalBalance === 'credit' ? Math.abs(account.balance * 0.08) : Math.abs(account.balance * 0.05),
-          balance: account.balance * 0.93,
-          entryNumber: 'JE-001235'
-        },
-        {
-          id: '4',
-          date: '2024-12-10',
-          description: account.type === 'asset' ? 'Depósito bancario por ventas' : 
-                      account.type === 'income' ? 'Ingresos por comisiones' :
-                      account.type === 'expense' ? 'Gastos de mantenimiento' : 
-                      account.type === 'liability' ? 'Nueva obligación contraída' : 'Distribución de utilidades',
-          reference: 'DEP-003',
-          debit: account.normalBalance === 'debit' ? Math.abs(account.balance * 0.05) : 0,
-          credit: account.normalBalance === 'credit' ? Math.abs(account.balance * 0.05) : 0,
-          balance: account.balance * 0.98,
-          entryNumber: 'JE-001236'
-        },
-        {
-          id: '5',
-          date: '2024-12-15',
-          description: account.type === 'asset' ? 'Movimiento final del período' : 
-                      account.type === 'income' ? 'Ajuste de ingresos devengados' :
-                      account.type === 'expense' ? 'Provisión de gastos' : 
-                      account.type === 'liability' ? 'Ajuste de provisiones' : 'Cierre del período',
-          reference: 'AJU-004',
-          debit: account.normalBalance === 'debit' ? Math.abs(account.balance * 0.02) : 0,
-          credit: account.normalBalance === 'credit' ? Math.abs(account.balance * 0.02) : 0,
-          balance: account.balance,
-          entryNumber: 'JE-001237'
-        }
-      ];
-
-      // Filtrar por fechas si están definidas
-      let filteredEntries = mockEntries;
-      if (dateFrom) {
-        filteredEntries = filteredEntries.filter(entry => entry.date >= dateFrom);
-      }
-      if (dateTo) {
-        filteredEntries = filteredEntries.filter(entry => entry.date <= dateTo);
-      }
-
-      setLedgerEntries(filteredEntries);
+      // No generar datos de ejemplo
+      setLedgerEntries([]);
     } catch (error) {
       console.error('Error loading ledger entries:', error);
       setLedgerEntries([]);

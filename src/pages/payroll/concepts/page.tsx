@@ -20,131 +20,8 @@ interface PayrollConcept {
   created_at: string;
 }
 
-const mockConcepts: PayrollConcept[] = [
-  {
-    id: '1',
-    code: 'SAL001',
-    name: 'Salario Base',
-    description: 'Salario base mensual del empleado',
-    type: 'income',
-    category: 'salary',
-    calculation_type: 'fixed',
-    amount: 0,
-    is_taxable: true,
-    affects_social_security: true,
-    is_mandatory: true,
-    is_active: true,
-    created_at: '2024-01-15'
-  },
-  {
-    id: '2',
-    code: 'BON001',
-    name: 'Bono de Productividad',
-    description: 'Bono por cumplimiento de metas',
-    type: 'income',
-    category: 'bonus',
-    calculation_type: 'percentage',
-    percentage: 10,
-    is_taxable: true,
-    affects_social_security: true,
-    is_mandatory: false,
-    is_active: true,
-    created_at: '2024-01-15'
-  },
-  {
-    id: '3',
-    code: 'HEX001',
-    name: 'Horas Extras',
-    description: 'Pago por horas trabajadas adicionales',
-    type: 'income',
-    category: 'overtime',
-    calculation_type: 'formula',
-    formula: 'horas_extra * tarifa_hora * 1.5',
-    is_taxable: true,
-    affects_social_security: true,
-    is_mandatory: false,
-    is_active: true,
-    created_at: '2024-01-20'
-  },
-  {
-    id: '4',
-    code: 'ISR001',
-    name: 'Impuesto Sobre la Renta',
-    description: 'Retención de ISR según tabla fiscal',
-    type: 'deduction',
-    category: 'tax',
-    calculation_type: 'formula',
-    formula: 'calcular_isr(salario_gravable)',
-    is_taxable: false,
-    affects_social_security: false,
-    is_mandatory: true,
-    is_active: true,
-    created_at: '2024-01-15'
-  },
-  {
-    id: '5',
-    code: 'AFP001',
-    name: 'AFP (Pensiones)',
-    description: 'Aporte a fondo de pensiones',
-    type: 'deduction',
-    category: 'social_security',
-    calculation_type: 'percentage',
-    percentage: 2.87,
-    is_taxable: false,
-    affects_social_security: false,
-    is_mandatory: true,
-    is_active: true,
-    created_at: '2024-01-15'
-  },
-  {
-    id: '6',
-    code: 'ARS001',
-    name: 'ARS (Salud)',
-    description: 'Aporte al seguro de salud',
-    type: 'deduction',
-    category: 'social_security',
-    calculation_type: 'percentage',
-    percentage: 3.04,
-    is_taxable: false,
-    affects_social_security: false,
-    is_mandatory: true,
-    is_active: true,
-    created_at: '2024-01-15'
-  },
-  {
-    id: '7',
-    code: 'SEG001',
-    name: 'Seguro de Vida',
-    description: 'Prima de seguro de vida grupal',
-    type: 'deduction',
-    category: 'insurance',
-    calculation_type: 'fixed',
-    amount: 500,
-    is_taxable: false,
-    affects_social_security: false,
-    is_mandatory: false,
-    is_active: true,
-    created_at: '2024-02-01'
-  },
-  {
-    id: '8',
-    code: 'ALI001',
-    name: 'Auxilio de Alimentación',
-    description: 'Subsidio para alimentación',
-    type: 'income',
-    category: 'allowance',
-    calculation_type: 'fixed',
-    amount: 3000,
-    is_taxable: false,
-    affects_social_security: false,
-    is_mandatory: false,
-    is_active: true,
-    created_at: '2024-02-05'
-  }
-];
-
 export default function PayrollConceptsPage() {
-  const [concepts, setConcepts] = useState<PayrollConcept[]>(mockConcepts);
+  const [concepts, setConcepts] = useState<PayrollConcept[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
@@ -155,9 +32,9 @@ export default function PayrollConceptsPage() {
     code: '',
     name: '',
     description: '',
-    type: 'income' as const,
-    category: 'salary' as const,
-    calculation_type: 'fixed' as const,
+    type: 'income' as PayrollConcept['type'],
+    category: 'salary' as PayrollConcept['category'],
+    calculation_type: 'fixed' as PayrollConcept['calculation_type'],
     amount: 0,
     percentage: 0,
     formula: '',

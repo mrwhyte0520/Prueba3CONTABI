@@ -18,136 +18,8 @@ interface Bonus {
   createdAt: string;
 }
 
-const mockBonuses: Bonus[] = [
-  {
-    id: '1',
-    name: 'Bono de Productividad',
-    type: 'porcentaje',
-    amount: 0,
-    percentage: 15,
-    frequency: 'mensual',
-    category: 'productividad',
-    isActive: true,
-    isTaxable: true,
-    affectsISR: true,
-    affectsSocialSecurity: true,
-    description: 'Bono por cumplimiento de metas de productividad',
-    conditions: 'Cumplir 100% de las metas mensuales establecidas',
-    createdAt: '2024-01-01'
-  },
-  {
-    id: '2',
-    name: 'Bono de Ventas',
-    type: 'porcentaje',
-    amount: 0,
-    percentage: 5,
-    frequency: 'mensual',
-    category: 'ventas',
-    isActive: true,
-    isTaxable: true,
-    affectsISR: true,
-    affectsSocialSecurity: true,
-    description: 'Comisión por ventas realizadas',
-    conditions: 'Aplicable sobre ventas netas del mes',
-    createdAt: '2024-01-01'
-  },
-  {
-    id: '3',
-    name: 'Bono de Asistencia Perfecta',
-    type: 'fijo',
-    amount: 5000,
-    frequency: 'mensual',
-    category: 'asistencia',
-    isActive: true,
-    isTaxable: true,
-    affectsISR: true,
-    affectsSocialSecurity: true,
-    description: 'Bono por asistencia perfecta mensual',
-    conditions: 'No tener faltas ni tardanzas en el mes',
-    createdAt: '2024-01-01'
-  },
-  {
-    id: '4',
-    name: 'Bono de Antigüedad',
-    type: 'porcentaje',
-    amount: 0,
-    percentage: 2,
-    frequency: 'anual',
-    category: 'antiguedad',
-    isActive: true,
-    isTaxable: true,
-    affectsISR: true,
-    affectsSocialSecurity: true,
-    description: 'Bono por años de servicio en la empresa',
-    conditions: 'Por cada año completo de servicio',
-    createdAt: '2024-01-01'
-  },
-  {
-    id: '5',
-    name: 'Bono Navideño (Doble Sueldo)',
-    type: 'formula',
-    amount: 0,
-    formula: 'salario_base * 1',
-    frequency: 'anual',
-    category: 'navidad',
-    isActive: true,
-    isTaxable: true,
-    affectsISR: true,
-    affectsSocialSecurity: false,
-    description: 'Bono navideño equivalente a un salario mensual',
-    conditions: 'Haber trabajado mínimo 3 meses en el año',
-    createdAt: '2024-01-01'
-  },
-  {
-    id: '6',
-    name: 'Bono Vacacional',
-    type: 'porcentaje',
-    amount: 0,
-    percentage: 50,
-    frequency: 'anual',
-    category: 'vacaciones',
-    isActive: true,
-    isTaxable: true,
-    affectsISR: true,
-    affectsSocialSecurity: false,
-    description: 'Bono equivalente al 50% del salario para vacaciones',
-    conditions: 'Al tomar vacaciones anuales',
-    createdAt: '2024-01-01'
-  },
-  {
-    id: '7',
-    name: 'Bono por Referidos',
-    type: 'fijo',
-    amount: 10000,
-    frequency: 'unico',
-    category: 'otro',
-    isActive: true,
-    isTaxable: true,
-    affectsISR: true,
-    affectsSocialSecurity: true,
-    description: 'Bono por referir empleados que sean contratados',
-    conditions: 'El empleado referido debe completar 3 meses de prueba',
-    createdAt: '2024-01-01'
-  },
-  {
-    id: '8',
-    name: 'Bono de Capacitación',
-    type: 'fijo',
-    amount: 7500,
-    frequency: 'trimestral',
-    category: 'otro',
-    isActive: true,
-    isTaxable: true,
-    affectsISR: true,
-    affectsSocialSecurity: true,
-    description: 'Bono por completar capacitaciones certificadas',
-    conditions: 'Completar al menos 20 horas de capacitación trimestral',
-    createdAt: '2024-01-01'
-  }
-];
-
 export default function PayrollBonusesPage() {
-  const [bonuses, setBonuses] = useState<Bonus[]>(mockBonuses);
+  const [bonuses, setBonuses] = useState<Bonus[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('todos');
   const [typeFilter, setTypeFilter] = useState<string>('todos');
@@ -337,7 +209,7 @@ export default function PayrollBonusesPage() {
             Volver a Nóminas
           </button>
           <button
-            onClick={() => setShowModal(true)}
+            onClick={() => setShowForm(true)}
             className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors flex items-center gap-2 whitespace-nowrap"
           >
             <i className="ri-add-line"></i>

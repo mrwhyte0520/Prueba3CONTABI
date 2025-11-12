@@ -33,16 +33,7 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [categories, setCategories] = useState<Category[]>([
-    { id: '1', name: 'Electrónicos' },
-    { id: '2', name: 'Accesorios' },
-    { id: '3', name: 'Suministros de Oficina' },
-    { id: '4', name: 'Muebles' },
-    { id: '5', name: 'Software' },
-    { id: '6', name: 'Ropa' },
-    { id: '7', name: 'Hogar' },
-    { id: '8', name: 'Deportes' }
-  ]);
+  const [categories, setCategories] = useState<Category[]>([]);
 
   const [showModal, setShowModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
@@ -75,117 +66,7 @@ export default function ProductsPage() {
     name: ''
   });
 
-  // Sample data for demonstration
-  const sampleProducts: Product[] = [
-    {
-      id: '1',
-      name: 'Laptop Dell Inspiron 15',
-      sku: 'DELL-INS-15-001',
-      category: 'Electrónicos',
-      price: 45000,
-      cost: 35000,
-      stock: 8,
-      minStock: 5,
-      maxStock: 50,
-      barcode: '1234567890123',
-      description: 'Laptop Dell Inspiron 15 con procesador Intel Core i5, 8GB RAM, 256GB SSD',
-      supplier: 'Dell Technologies',
-      imageUrl: 'https://readdy.ai/api/search-image?query=Dell%20Inspiron%2015%20laptop%20computer%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20modern%20design&width=400&height=400&seq=laptop001&orientation=squarish',
-      status: 'active',
-      createdAt: '2024-01-15T10:00:00Z',
-      updatedAt: '2024-01-15T10:00:00Z'
-    },
-    {
-      id: '2',
-      name: 'Mouse Inalámbrico Logitech MX Master 3',
-      sku: 'LOG-MX3-002',
-      category: 'Accesorios',
-      price: 3500,
-      cost: 2500,
-      stock: 25,
-      minStock: 10,
-      maxStock: 100,
-      barcode: '2345678901234',
-      description: 'Mouse inalámbrico ergonómico con sensor de alta precisión y batería de larga duración',
-      supplier: 'Logitech',
-      imageUrl: 'https://readdy.ai/api/search-image?query=Logitech%20MX%20Master%203%20wireless%20mouse%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20ergonomic%20design&width=400&height=400&seq=mouse001&orientation=squarish',
-      status: 'active',
-      createdAt: '2024-01-16T11:30:00Z',
-      updatedAt: '2024-01-16T11:30:00Z'
-    },
-    {
-      id: '3',
-      name: 'Escritorio de Oficina Ejecutivo',
-      sku: 'DESK-EXEC-003',
-      category: 'Muebles',
-      price: 15000,
-      cost: 10000,
-      stock: 3,
-      minStock: 2,
-      maxStock: 20,
-      barcode: '3456789012345',
-      description: 'Escritorio ejecutivo de madera con cajones y espacio amplio para trabajo',
-      supplier: 'Muebles Modernos SA',
-      imageUrl: 'https://readdy.ai/api/search-image?query=executive%20office%20desk%20wooden%20furniture%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20modern%20office%20furniture&width=400&height=400&seq=desk001&orientation=squarish',
-      status: 'active',
-      createdAt: '2024-01-17T09:15:00Z',
-      updatedAt: '2024-01-17T09:15:00Z'
-    },
-    {
-      id: '4',
-      name: 'Silla Ergonómica de Oficina',
-      sku: 'CHAIR-ERG-004',
-      category: 'Muebles',
-      price: 8500,
-      cost: 6000,
-      stock: 12,
-      minStock: 5,
-      maxStock: 30,
-      barcode: '4567890123456',
-      description: 'Silla ergonómica con soporte lumbar ajustable y reposabrazos',
-      supplier: 'Ergonomic Solutions',
-      imageUrl: 'https://readdy.ai/api/search-image?query=ergonomic%20office%20chair%20with%20lumbar%20support%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20modern%20office%20furniture&width=400&height=400&seq=chair001&orientation=squarish',
-      status: 'active',
-      createdAt: '2024-01-18T14:20:00Z',
-      updatedAt: '2024-01-18T14:20:00Z'
-    },
-    {
-      id: '5',
-      name: 'Papel Bond Tamaño Carta',
-      sku: 'PAPER-A4-005',
-      category: 'Suministros de Oficina',
-      price: 250,
-      cost: 180,
-      stock: 150,
-      minStock: 50,
-      maxStock: 500,
-      barcode: '5678901234567',
-      description: 'Papel bond blanco tamaño carta, paquete de 500 hojas',
-      supplier: 'Papelería Central',
-      imageUrl: 'https://readdy.ai/api/search-image?query=white%20office%20paper%20stack%20letter%20size%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20office%20supplies&width=400&height=400&seq=paper001&orientation=squarish',
-      status: 'active',
-      createdAt: '2024-01-19T08:45:00Z',
-      updatedAt: '2024-01-19T08:45:00Z'
-    },
-    {
-      id: '6',
-      name: 'Monitor LED 24 pulgadas',
-      sku: 'MON-LED-24-006',
-      category: 'Electrónicos',
-      price: 12000,
-      cost: 9000,
-      stock: 2,
-      minStock: 3,
-      maxStock: 25,
-      barcode: '6789012345678',
-      description: 'Monitor LED de 24 pulgadas Full HD con conectividad HDMI y VGA',
-      supplier: 'Samsung Electronics',
-      imageUrl: 'https://readdy.ai/api/search-image?query=24%20inch%20LED%20monitor%20computer%20display%20on%20clean%20white%20background%2C%20professional%20product%20photography%2C%20high%20quality%2C%20detailed%20view%2C%20modern%20technology&width=400&height=400&seq=monitor001&orientation=squarish',
-      status: 'inactive',
-      createdAt: '2024-01-20T16:10:00Z',
-      updatedAt: '2024-01-20T16:10:00Z'
-    }
-  ];
+  
 
   // Load products from database or use sample data
   useEffect(() => {
@@ -218,14 +99,14 @@ export default function ProductsPage() {
           }));
           setProducts(transformedProducts);
         } else {
-          setProducts(sampleProducts);
+          setProducts([]);
         }
       } else {
-        setProducts(sampleProducts);
+        setProducts([]);
       }
     } catch (error) {
       console.error('Error loading products:', error);
-      setProducts(sampleProducts);
+      setProducts([]);
     } finally {
       setLoading(false);
     }

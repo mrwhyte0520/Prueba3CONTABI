@@ -17,73 +17,8 @@ interface CommissionType {
   createdAt: string;
 }
 
-const mockCommissionTypes: CommissionType[] = [
-  {
-    id: '1',
-    name: 'Comisión por Ventas',
-    description: 'Comisión basada en el volumen de ventas mensuales',
-    calculationType: 'percentage',
-    rate: 3.5,
-    basedOn: 'sales',
-    paymentFrequency: 'monthly',
-    isActive: true,
-    applicablePositions: ['Vendedor', 'Ejecutivo de Ventas'],
-    createdAt: '2024-01-15'
-  },
-  {
-    id: '2',
-    name: 'Comisión por Utilidad',
-    description: 'Comisión calculada sobre la utilidad bruta de las ventas',
-    calculationType: 'percentage',
-    rate: 5.0,
-    basedOn: 'profit',
-    paymentFrequency: 'monthly',
-    isActive: true,
-    applicablePositions: ['Gerente de Ventas'],
-    createdAt: '2024-01-10'
-  },
-  {
-    id: '3',
-    name: 'Bono por Unidades',
-    description: 'Comisión fija por cada unidad vendida',
-    calculationType: 'fixed',
-    rate: 50,
-    basedOn: 'units',
-    paymentFrequency: 'monthly',
-    isActive: true,
-    applicablePositions: ['Vendedor Junior'],
-    createdAt: '2024-01-20'
-  },
-  {
-    id: '4',
-    name: 'Comisión Escalonada',
-    description: 'Comisión variable según tramos de ventas',
-    calculationType: 'tiered',
-    rate: 2.0,
-    minAmount: 100000,
-    maxAmount: 500000,
-    basedOn: 'sales',
-    paymentFrequency: 'quarterly',
-    isActive: true,
-    applicablePositions: ['Ejecutivo Senior'],
-    createdAt: '2024-01-05'
-  },
-  {
-    id: '5',
-    name: 'Comisión Anual',
-    description: 'Comisión especial por cumplimiento de metas anuales',
-    calculationType: 'percentage',
-    rate: 1.5,
-    basedOn: 'revenue',
-    paymentFrequency: 'annually',
-    isActive: false,
-    applicablePositions: ['Director de Ventas'],
-    createdAt: '2024-01-01'
-  }
-];
-
 export default function CommissionTypesPage() {
-  const [commissionTypes, setCommissionTypes] = useState<CommissionType[]>(mockCommissionTypes);
+  const [commissionTypes, setCommissionTypes] = useState<CommissionType[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
   const [filterFrequency, setFilterFrequency] = useState<string>('all');
@@ -93,12 +28,12 @@ export default function CommissionTypesPage() {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    calculationType: 'percentage' as const,
+    calculationType: 'percentage' as CommissionType['calculationType'],
     rate: 0,
     minAmount: '',
     maxAmount: '',
-    basedOn: 'sales' as const,
-    paymentFrequency: 'monthly' as const,
+    basedOn: 'sales' as CommissionType['basedOn'],
+    paymentFrequency: 'monthly' as CommissionType['paymentFrequency'],
     applicablePositions: [] as string[]
   });
 

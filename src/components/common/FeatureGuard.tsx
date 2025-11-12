@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { usePlanLimitations } from '../../hooks/usePlanLimitations';
 
@@ -40,7 +40,7 @@ export function FeatureGuard({
             Función No Disponible
           </h3>
           <p className="text-gray-600 text-sm mb-4">
-            {getUpgradeMessage(feature as string)}
+            {getUpgradeMessage()}
           </p>
         </div>
 
