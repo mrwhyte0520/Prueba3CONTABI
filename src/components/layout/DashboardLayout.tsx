@@ -1,0 +1,756 @@
+import { useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
+
+interface DashboardLayoutProps {
+  children: React.ReactNode;
+}
+
+export function DashboardLayout({ children }: DashboardLayoutProps) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [profilePanelOpen, setProfilePanelOpen] = useState(false);
+  const [editProfileOpen, setEditProfileOpen] = useState(false);
+  const [userProfile, setUserProfile] = useState({
+    fullName: 'Juan Pérez',
+    email: 'juan.perez@empresa.com',
+    phone: '+1 (555) 123-4567',
+    company: 'Mi Empresa S.A.',
+    position: 'Gerente General',
+    address: 'Av. Principal 123',
+    city: 'Santo Domingo',
+    country: 'República Dominicana'
+  });
+  const [passwordData, setPasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [saveMessage, setSaveMessage] = useState('');
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { user, signOut } = useAuth();
+
+  const navigation = [
+    {
+      name: 'Panel de Control',
+      href: '/dashboard',
+      icon: 'ri-dashboard-line',
+      current: location.pathname === '/dashboard'
+    },
+    {
+      name: 'Contabilidad',
+      href: '/accounting',
+      icon: 'ri-calculator-line',
+      current: location.pathname.startsWith('/accounting'),
+      submenu: [
+        { name: 'Catálogo de Cuentas', href: '/accounting/chart-accounts' },
+        { name: 'Bancos', href: '/accounting/banks' },
+        { name: 'Conciliación Bancaria', href: '/accounting/bank-reconciliation' },
+        { name: 'Caja Chica', href: '/accounting/petty-cash' },
+        { name: 'Estados Financieros', href: '/accounting/financial-statements' },
+        { name: 'Diario General', href: '/accounting/general-journal' },
+        { name: 'Mayor General', href: '/accounting/general-ledger' },
+        { name: 'Períodos Contables', href: '/accounting/periods' }
+      ]
+    },
+    {
+      name: 'Punto de Ventas',
+      href: '/pos',
+      icon: 'ri-shopping-cart-line',
+      current: location.pathname.startsWith('/pos')
+    },
+    {
+      name: 'Nóminas',
+      href: '/payroll',
+      icon: 'ri-team-line',
+      current: location.pathname.startsWith('/payroll'),
+      submenu: [
+        { name: 'Configuración de Nóminas', href: '/payroll/configuration' },
+        { name: 'Empleados', href: '/payroll/employees' },
+        { name: 'Tipos de Empleados', href: '/payroll/employee-types' },
+        { name: 'Departamentos', href: '/payroll/departments' },
+        { name: 'Cargos / Posiciones', href: '/payroll/positions' },
+        { name: 'Tipos de Salarios', href: '/payroll/salary-types' },
+        { name: 'Tipos de Comisiones', href: '/payroll/commission-types' },
+        { name: 'Vacaciones', href: '/payroll/vacations' },
+        { name: 'Horas Extras', href: '/payroll/overtime' },
+        { name: 'Días Feriados', href: '/payroll/holidays' },
+        { name: 'Regalías', href: '/payroll/royalties' },
+        { name: 'Bonificaciones', href: '/payroll/bonuses' }
+      ]
+    },
+    {
+      name: 'Productos',
+      href: '/products',
+      icon: 'ri-product-hunt-line',
+      current: location.pathname.startsWith('/products')
+    },
+    {
+      name: 'Inventario',
+      href: '/inventory',
+      icon: 'ri-archive-line',
+      current: location.pathname.startsWith('/inventory')
+    },
+    {
+      name: 'Activos Fijos',
+      href: '/fixed-assets',
+      icon: 'ri-building-line',
+      current: location.pathname.startsWith('/fixed-assets'),
+      submenu: [
+        { name: 'Registro de Activos', href: '/fixed-assets/register' },
+        { name: 'Tipos de Activos', href: '/fixed-assets/types' },
+        { name: 'Depreciación', href: '/fixed-assets/depreciation' },
+        { name: 'Revalorización', href: '/fixed-assets/revaluation' },
+        { name: 'Retiro de Activos', href: '/fixed-assets/disposal' }
+      ]
+    },
+    {
+      name: 'Cuentas por Cobrar',
+      href: '/accounts-receivable',
+      icon: 'ri-money-dollar-circle-line',
+      current: location.pathname.startsWith('/accounts-receivable')
+    },
+    {
+      name: 'Cuentas por Pagar',
+      href: '/accounts-payable',
+      icon: 'ri-file-list-3-line',
+      current: location.pathname.startsWith('/accounts-payable'),
+      submenu: [
+        { name: 'Reportes CxP', href: '/accounts-payable/reports' },
+        { name: 'Suplidores', href: '/accounts-payable/suppliers' },
+        { name: 'Emisión de Pagos', href: '/accounts-payable/payments' },
+        { name: 'Órdenes de Compra', href: '/accounts-payable/purchase-orders' },
+        { name: 'Cotizaciones', href: '/accounts-payable/quotes' }
+      ]
+    },
+    {
+      name: 'Facturación',
+      href: '/billing',
+      icon: 'ri-file-text-line',
+      current: location.pathname.startsWith('/billing'),
+      submenu: [
+        { name: 'Reporte de Ventas', href: '/billing/sales-reports' },
+        { name: 'Facturación', href: '/billing/invoicing' },
+        { name: 'Pre-facturación', href: '/billing/pre-invoicing' },
+        { name: 'Facturación Recurrente', href: '/billing/recurring' },
+        { name: 'Cierre de Caja', href: '/billing/cash-closing' },
+        { name: 'Cotizaciones', href: '/billing/quotes' }
+      ]
+    },
+    {
+      name: 'Impuestos',
+      href: '/taxes',
+      icon: 'ri-government-line',
+      current: location.pathname.startsWith('/taxes'),
+      submenu: [
+        { name: 'Configuración', href: '/taxes/configuration' },
+        { name: 'NCF/E-CF', href: '/taxes/ncf' },
+        { name: 'Series Fiscales', href: '/taxes/fiscal-series' },
+        { name: 'Reporte 606', href: '/taxes/report-606' },
+        { name: 'Reporte 607', href: '/taxes/report-607' },
+        { name: 'Reporte 608', href: '/taxes/report-608' },
+        { name: 'Reporte IT-1', href: '/taxes/report-it1' },
+        { name: 'Reporte IR-17', href: '/taxes/report-ir17' }
+      ]
+    },
+    {
+      name: 'Planes',
+      href: '/plans',
+      icon: 'ri-vip-crown-line',
+      current: location.pathname.startsWith('/plans')
+    },
+    {
+      name: 'Configuración',
+      href: '/settings',
+      icon: 'ri-settings-line',
+      current: location.pathname.startsWith('/settings')
+    }
+  ];
+
+  const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
+
+  const toggleSubmenu = (href: string) => {
+    setExpandedMenus(prev => 
+      prev.includes(href) 
+        ? prev.filter(item => item !== href)
+        : [...prev, href]
+    );
+  };
+
+  const renderNavItem = (item: any) => {
+    const hasSubmenu = item.submenu && item.submenu.length > 0;
+    const isExpanded = expandedMenus.includes(item.href);
+
+    return (
+      <div key={item.name} className="mb-1">
+        <div className="flex items-center">
+          <Link
+            to={item.href}
+            className={`group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg flex-1 transition-all duration-200 ${
+              item.current
+                ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg transform scale-[1.02]'
+                : 'text-slate-300 hover:bg-slate-700/50 hover:text-white hover:transform hover:scale-[1.01]'
+            }`}
+            onClick={() => setSidebarOpen(false)}
+          >
+            <i className={`${item.icon} mr-3 text-lg flex-shrink-0`}></i>
+            <span className="truncate">{item.name}</span>
+          </Link>
+          {hasSubmenu && (
+            <button
+              onClick={() => toggleSubmenu(item.href)}
+              className="p-2 ml-1 text-slate-400 hover:text-white transition-colors duration-200 rounded-md hover:bg-slate-700/50"
+            >
+              <i className={`ri-arrow-${isExpanded ? 'up' : 'down'}-s-line text-sm`}></i>
+            </button>
+          )}
+        </div>
+        {hasSubmenu && isExpanded && (
+          <div className="ml-6 mt-2 space-y-1 border-l border-slate-700 pl-4">
+            {item.submenu.map((subItem: any) => (
+              <Link
+                key={subItem.name}
+                to={subItem.href}
+                className={`block px-3 py-2 text-sm rounded-md transition-all duration-200 ${
+                  location.pathname === subItem.href
+                    ? 'text-blue-400 bg-slate-700/50 font-medium'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-700/30'
+                }`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                {subItem.name}
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const handleSignOut = async () => {
+    try {
+      setProfileDropdownOpen(false);
+      await signOut();
+      navigate('/login');
+    } catch (error) {
+      console.error('Error al cerrar sesión:', error);
+    }
+  };
+
+  const handleProfileClick = () => {
+    setProfilePanelOpen(true);
+    setSidebarOpen(false);
+  };
+
+  const handleEditProfile = () => {
+    setEditProfileOpen(true);
+  };
+
+  const handleSaveProfile = async () => {
+    try {
+      // Aquí iría la lógica para guardar en Supabase
+      console.log('Guardando perfil:', userProfile);
+      setSaveMessage('Perfil actualizado correctamente');
+      setTimeout(() => {
+        setSaveMessage('');
+        setEditProfileOpen(false);
+      }, 2000);
+    } catch (error) {
+      console.error('Error al guardar perfil:', error);
+      setSaveMessage('Error al actualizar el perfil');
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      setSaveMessage('Las contraseñas no coinciden');
+      return;
+    }
+    if (passwordData.newPassword.length < 6) {
+      setSaveMessage('La contraseña debe tener al menos 6 caracteres');
+      return;
+    }
+    
+    try {
+      // Aquí iría la lógica para cambiar contraseña en Supabase
+      console.log('Cambiando contraseña');
+      setSaveMessage('Contraseña actualizada correctamente');
+      setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setTimeout(() => setSaveMessage(''), 2000);
+    } catch (error) {
+      console.error('Error al cambiar contraseña:', error);
+      setSaveMessage('Error al cambiar la contraseña');
+    }
+  };
+
+  const handleNotificationClick = () => {
+    setNotificationsOpen(!notificationsOpen);
+  };
+
+  const handleLogout = async () => {
+    const { error } = await signOut();
+    if (!error) {
+      navigate('/auth/login');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Sidebar */}
+      <div className={`fixed inset-y-0 left-0 z-40 w-72 bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 shadow-2xl transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}>
+        <div className="flex h-full flex-col">
+          {/* Logo */}
+          <div className="flex h-16 shrink-0 items-center px-6 border-b border-slate-700/50 bg-slate-900/50">
+            <div className="flex items-center">
+              <div className="h-10 w-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
+                <i className="ri-calculator-line text-white text-xl"></i>
+              </div>
+              <div className="ml-3">
+                <h1 className="text-xl font-bold text-white">Contabi RD</h1>
+                <p className="text-xs text-slate-400">Sistema Contable</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Navigation */}
+          <nav className="flex-1 px-4 py-6 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-transparent">
+            <div className="space-y-1">
+              {navigation.map(renderNavItem)}
+              
+              {/* Mi Perfil Button */}
+              <div className="mb-1">
+                <button
+                  onClick={handleProfileClick}
+                  className="group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg w-full transition-all duration-200 text-slate-300 hover:bg-slate-700/50 hover:text-white hover:transform hover:scale-[1.01]"
+                >
+                  <i className="ri-user-line mr-3 text-lg flex-shrink-0"></i>
+                  <span className="truncate">Mi Perfil</span>
+                </button>
+              </div>
+            </div>
+          </nav>
+
+          {/* User info */}
+          <div className="border-t border-slate-700/50 p-4 bg-slate-900/30">
+            <div className="flex items-center">
+              <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg">
+                <span className="text-sm font-bold text-white">
+                  {user?.email?.charAt(0).toUpperCase() || 'U'}
+                </span>
+              </div>
+              <div className="ml-3 flex-1 min-w-0">
+                <p className="text-sm font-medium text-white truncate">
+                  {user?.email || 'Usuario'}
+                </p>
+                <p className="text-xs text-slate-400">
+                  Plan Básico
+                </p>
+              </div>
+              <button
+                onClick={handleSignOut}
+                className="ml-2 p-2 text-slate-400 hover:text-white transition-colors duration-200 rounded-md hover:bg-slate-700/50"
+                title="Cerrar Sesión"
+              >
+                <i className="ri-logout-box-line text-lg"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Profile Panel */}
+      {profilePanelOpen && (
+        <div className="fixed inset-0 z-50 overflow-hidden">
+          <div className="absolute inset-0 bg-black bg-opacity-50" onClick={() => setProfilePanelOpen(false)}></div>
+          <div className="absolute right-0 top-0 h-full w-96 bg-white shadow-xl transform transition-transform duration-300 ease-in-out">
+            <div className="flex flex-col h-full">
+              {/* Header */}
+              <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                <h2 className="text-xl font-semibold text-gray-900">Mi Perfil</h2>
+                <button
+                  onClick={() => setProfilePanelOpen(false)}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <i className="ri-close-line text-xl text-gray-500"></i>
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto p-6">
+                {!editProfileOpen ? (
+                  <>
+                    {/* User Info */}
+                    <div className="text-center mb-6">
+                      <div className="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <span className="text-2xl font-bold text-white">
+                          {userProfile.fullName.charAt(0)}
+                        </span>
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900">{userProfile.fullName}</h3>
+                      <p className="text-sm text-gray-600">{userProfile.email}</p>
+                      <span className="inline-block px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full mt-2">
+                        Plan Profesional
+                      </span>
+                    </div>
+
+                    {/* Account Status */}
+                    <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-gray-700">Estado de la cuenta</span>
+                        <span className="text-sm text-green-600 font-medium">Activo</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4 mt-4">
+                        <div className="text-center">
+                          <div className="text-lg font-bold text-gray-900">24</div>
+                          <div className="text-xs text-gray-600">Facturas</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-bold text-gray-900">12</div>
+                          <div className="text-xs text-gray-600">Clientes</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-bold text-gray-900">48</div>
+                          <div className="text-xs text-gray-600">Productos</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick Actions */}
+                    <div className="space-y-2">
+                      <button 
+                        onClick={handleEditProfile}
+                        className="w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors duration-200"
+                      >
+                        <i className="ri-edit-line mr-3 text-blue-600"></i>
+                        Editar Perfil
+                      </button>
+                      <button 
+                        onClick={() => {
+                          navigate('/settings');
+                        }}
+                        className="w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors duration-200"
+                      >
+                        <i className="ri-settings-line mr-3 text-gray-600"></i>
+                        Configuración
+                      </button>
+                      <button 
+                        onClick={() => {
+                          navigate('/plans');
+                        }}
+                        className="w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors duration-200"
+                      >
+                        <i className="ri-vip-crown-line mr-3 text-yellow-600"></i>
+                        Mejorar Plan
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  /* Edit Profile Form */
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-lg font-semibold text-gray-900">Editar Perfil</h3>
+                      <button
+                        onClick={() => setEditProfileOpen(false)}
+                        className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                      >
+                        <i className="ri-arrow-left-line text-xl text-gray-500"></i>
+                      </button>
+                    </div>
+
+                    {saveMessage && (
+                      <div className={`p-3 rounded-lg text-sm ${
+                        saveMessage.includes('Error') 
+                          ? 'bg-red-100 text-red-700' 
+                          : 'bg-green-100 text-green-700'
+                      }`}>
+                        {saveMessage}
+                      </div>
+                    )}
+
+                    {/* Personal Information */}
+                    <div>
+                      <h4 className="text-md font-medium text-gray-900 mb-4">Información Personal</h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Nombre Completo
+                          </label>
+                          <input
+                            type="text"
+                            value={userProfile.fullName}
+                            onChange={(e) => setUserProfile({...userProfile, fullName: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Email
+                          </label>
+                          <input
+                            type="email"
+                            value={userProfile.email}
+                            onChange={(e) => setUserProfile({...userProfile, email: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Teléfono
+                          </label>
+                          <input
+                            type="tel"
+                            value={userProfile.phone}
+                            onChange={(e) => setUserProfile({...userProfile, phone: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Empresa
+                          </label>
+                          <input
+                            type="text"
+                            value={userProfile.company}
+                            onChange={(e) => setUserProfile({...userProfile, company: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Cargo
+                          </label>
+                          <input
+                            type="text"
+                            value={userProfile.position}
+                            onChange={(e) => setUserProfile({...userProfile, position: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Dirección
+                          </label>
+                          <input
+                            type="text"
+                            value={userProfile.address}
+                            onChange={(e) => setUserProfile({...userProfile, address: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              Ciudad
+                            </label>
+                            <input
+                              type="text"
+                              value={userProfile.city}
+                              onChange={(e) => setUserProfile({...userProfile, city: e.target.value})}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              País
+                            </label>
+                            <input
+                              type="text"
+                              value={userProfile.country}
+                              onChange={(e) => setUserProfile({...userProfile, country: e.target.value})}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Change Password */}
+                    <div>
+                      <h4 className="text-md font-medium text-gray-900 mb-4">Cambiar Contraseña</h4>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Contraseña Actual
+                          </label>
+                          <input
+                            type="password"
+                            value={passwordData.currentPassword}
+                            onChange={(e) => setPasswordData({...passwordData, currentPassword: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Nueva Contraseña
+                          </label>
+                          <input
+                            type="password"
+                            value={passwordData.newPassword}
+                            onChange={(e) => setPasswordData({...passwordData, newPassword: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Confirmar Nueva Contraseña
+                          </label>
+                          <input
+                            type="password"
+                            value={passwordData.confirmPassword}
+                            onChange={(e) => setPasswordData({...passwordData, confirmPassword: e.target.value})}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                          />
+                        </div>
+                        <button
+                          onClick={handleChangePassword}
+                          className="w-full bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+                        >
+                          Cambiar Contraseña
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Save Button */}
+                    <div className="pt-4 border-t border-gray-200">
+                      <button
+                        onClick={handleSaveProfile}
+                        className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                      >
+                        Guardar Cambios
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer - Only show when not editing */}
+              {!editProfileOpen && (
+                <div className="border-t border-gray-200 p-6">
+                  <button
+                    onClick={handleSignOut}
+                    className="w-full flex items-center justify-center px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors duration-200"
+                  >
+                    <i className="ri-logout-box-line mr-2"></i>
+                    Cerrar Sesión
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col lg:ml-0">
+        {/* Top navigation */}
+        <div className="flex h-16 shrink-0 items-center gap-x-4 border-b border-gray-200 bg-white/95 backdrop-blur-sm px-4 shadow-sm sm:gap-x-6 sm:px-6 lg:px-8">
+          <button
+            type="button"
+            className="-m-2.5 p-2.5 text-gray-700 lg:hidden hover:bg-gray-100 rounded-lg transition-colors duration-200"
+            onClick={() => setSidebarOpen(true)}
+          >
+            <span className="sr-only">Abrir sidebar</span>
+            <i className="ri-menu-line text-xl"></i>
+          </button>
+
+          {/* Separator */}
+          <div className="h-6 w-px bg-gray-200 lg:hidden" aria-hidden="true" />
+
+          <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
+            <div className="relative flex flex-1 items-center">
+              <div className="flex items-center space-x-2 text-sm text-gray-600">
+                <i className="ri-home-line"></i>
+                <span>/</span>
+                <span className="font-medium text-gray-900 capitalize">
+                  {location.pathname.split('/').filter(Boolean).join(' / ') || 'Dashboard'}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-x-4 lg:gap-x-6">
+              {/* Notifications button */}
+              <button
+                type="button"
+                className="-m-2.5 p-2.5 text-gray-400 hover:text-gray-500 relative hover:bg-gray-100 rounded-lg transition-colors duration-200"
+                onClick={handleNotificationClick}
+              >
+                <span className="sr-only">Ver notificaciones</span>
+                <i className="ri-notification-3-line text-xl"></i>
+                <span className="absolute -top-1 -right-1 h-5 w-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium">
+                  3
+                </span>
+              </button>
+
+              {/* Notifications dropdown */}
+              {notificationsOpen && (
+                <div className="absolute right-0 top-16 mt-2 w-80 bg-white rounded-xl shadow-xl ring-1 ring-black/5 z-50 border border-gray-100">
+                  <div className="p-4">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Notificaciones</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-start space-x-3 p-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors duration-200">
+                        <i className="ri-information-line text-blue-500 mt-1"></i>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Nuevo reporte disponible</p>
+                          <p className="text-xs text-gray-500">Hace 2 horas</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start space-x-3 p-3 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition-colors duration-200">
+                        <i className="ri-warning-line text-yellow-500 mt-1"></i>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Vencimiento de NCF próximo</p>
+                          <p className="text-xs text-gray-500">Hace 1 día</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start space-x-3 p-3 bg-green-50 rounded-lg hover:bg-green-100 transition-colors duration-200">
+                        <i className="ri-check-line text-green-500 mt-1"></i>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Backup completado</p>
+                          <p className="text-xs text-gray-500">Hace 2 días</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-gray-200">
+                      <button className="text-sm text-blue-600 hover:text-blue-500 font-medium">
+                        Ver todas las notificaciones
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Page content */}
+        <main className="flex-1">
+          <div className="py-6">
+            <div className="px-4 sm:px-6 lg:px-8">
+              {children}
+            </div>
+          </div>
+        </main>
+      </div>
+
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-30 lg:hidden">
+          <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
+        </div>
+      )}
+
+      {/* Click outside to close dropdowns */}
+      {(profileDropdownOpen || notificationsOpen) && (
+        <div 
+          className="fixed inset-0 z-20" 
+          onClick={() => {
+            setProfileDropdownOpen(false);
+            setNotificationsOpen(false);
+          }} 
+        />
+      )}
+    </div>
+  );
+}
+
+export default DashboardLayout;
