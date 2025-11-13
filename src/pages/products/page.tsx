@@ -71,6 +71,7 @@ export default function ProductsPage() {
   // Load products from database or use sample data
   useEffect(() => {
     loadProducts();
+    loadCategories();
   }, [user]);
 
   const loadProducts = async () => {
@@ -110,6 +111,28 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadCategories = () => {
+    try {
+      const saved = localStorage.getItem('contabi_categories');
+      if (saved) {
+        setCategories(JSON.parse(saved));
+      } else if (products.length > 0) {
+        const unique = Array.from(new Set(products.map(p => p.category).filter(Boolean))).map((name, idx) => ({ id: `${idx + 1}` , name }));
+        setCategories(unique);
+        localStorage.setItem('contabi_categories', JSON.stringify(unique));
+      } else {
+        setCategories([]);
+      }
+    } catch {}
+  };
+
+  const saveCategories = (next: Category[]) => {
+    try {
+      localStorage.setItem('contabi_categories', JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent('categoriesUpdated'));
+    } catch {}
   };
 
   const filteredProducts = products.filter(product => {
@@ -338,6 +361,31 @@ export default function ProductsPage() {
     setShowBulkActions(selectedProducts.length > 0);
   }, [selectedProducts]);
 
+  useEffect(() => {
+    const activeProducts = products
+      .filter(p => p.status === 'active')
+      .map(p => ({
+        id: p.id,
+        name: p.name,
+        price: p.price,
+        stock: p.stock,
+        category: p.category,
+        barcode: p.barcode,
+        imageUrl: p.imageUrl,
+        sku: p.sku,
+        cost: p.cost,
+        minStock: p.minStock,
+        maxStock: p.maxStock,
+        description: p.description,
+        supplier: p.supplier,
+        status: p.status
+      }));
+    try {
+      localStorage.setItem('contabi_products', JSON.stringify(activeProducts));
+      window.dispatchEvent(new CustomEvent('productsUpdated'));
+    } catch {}
+  }, [products]);
+
   const handleCategorySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -364,9 +412,11 @@ export default function ProductsPage() {
 
       if (editingCategory) {
         // Update existing category
-        setCategories(prev => prev.map(cat => 
-          cat.id === editingCategory.id ? newCategory : cat
-        ));
+        setCategories(prev => {
+          const next = prev.map(cat => cat.id === editingCategory.id ? newCategory : cat);
+          saveCategories(next);
+          return next;
+        });
         
         // Update products that use this category
         setProducts(prev => prev.map(product => 
@@ -376,7 +426,11 @@ export default function ProductsPage() {
         ));
       } else {
         // Add new category
-        setCategories(prev => [...prev, newCategory]);
+        setCategories(prev => {
+          const next = [...prev, newCategory];
+          saveCategories(next);
+          return next;
+        });
       }
 
       resetCategoryForm();
@@ -407,7 +461,11 @@ export default function ProductsPage() {
     }
 
     if (confirm(`¿Está seguro de que desea eliminar la categoría "${category.name}"?`)) {
-      setCategories(prev => prev.filter(cat => cat.id !== categoryId));
+      setCategories(prev => {
+        const next = prev.filter(cat => cat.id !== categoryId);
+        saveCategories(next);
+        return next;
+      });
     }
   };
 

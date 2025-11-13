@@ -64,6 +64,7 @@ export default function POSPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [categories, setCategories] = useState<string[]>(['all']);
   const [newCustomer, setNewCustomer] = useState({
     name: '',
     document: '',
@@ -78,6 +79,21 @@ export default function POSPage() {
     loadProducts();
     loadSales();
     loadCustomers();
+    loadCategories();
+
+    const onProductsUpdated = () => {
+      loadProducts();
+      loadCategories();
+    };
+    const onCategoriesUpdated = () => {
+      loadCategories();
+    };
+    window.addEventListener('productsUpdated', onProductsUpdated);
+    window.addEventListener('categoriesUpdated', onCategoriesUpdated);
+    return () => {
+      window.removeEventListener('productsUpdated', onProductsUpdated);
+      window.removeEventListener('categoriesUpdated', onCategoriesUpdated);
+    };
   }, []);
 
   const loadProducts = () => {
@@ -88,6 +104,24 @@ export default function POSPage() {
       setProducts(activeProducts);
     } else {
       setProducts([]);
+    }
+  };
+
+  const loadCategories = () => {
+    try {
+      const saved = localStorage.getItem('contabi_categories');
+      if (saved) {
+        const list = JSON.parse(saved) as { id: string; name: string }[];
+        const names = Array.from(new Set(list.map(x => x.name).filter(Boolean)));
+        setCategories(['all', ...names]);
+      } else {
+        // Derivar de los productos actuales en localStorage
+        const savedProducts = JSON.parse(localStorage.getItem('contabi_products') || '[]') as Product[];
+        const names = Array.from(new Set(savedProducts.map(p => p.category).filter(Boolean)));
+        setCategories(['all', ...names]);
+      }
+    } catch {
+      setCategories(['all']);
     }
   };
 
@@ -109,7 +143,7 @@ export default function POSPage() {
     }
   };
 
-  const categories = ['all', 'Electrónicos', 'Accesorios', 'Oficina', 'Hogar'];
+  // categories now managed via state from real data
 
   const filteredProducts = products.filter(product => {
     const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -153,6 +187,23 @@ export default function POSPage() {
 
   const removeFromCart = (id: string) => {
     setCart(cart.filter(item => item.id !== id));
+  };
+
+  const deleteProduct = (productId: string) => {
+    if (!confirm('¿Eliminar este producto del Punto de Venta? Esta acción sólo afecta los productos guardados en este dispositivo.')) {
+      return;
+    }
+    try {
+      const savedProducts = JSON.parse(localStorage.getItem('contabi_products') || '[]') as Product[];
+      const next = savedProducts.filter(p => p.id !== productId);
+      localStorage.setItem('contabi_products', JSON.stringify(next));
+      setProducts(prev => prev.filter(p => p.id !== productId));
+      window.dispatchEvent(new CustomEvent('productsUpdated'));
+      alert('Producto eliminado del Punto de Venta.');
+    } catch (error) {
+      console.error('Error deleting POS product:', error);
+      alert('No se pudo eliminar el producto.');
+    }
   };
 
   const getSubtotal = () => cart.reduce((sum, item) => sum + item.total, 0);
@@ -500,9 +551,16 @@ export default function POSPage() {
           {filteredProducts.map((product) => (
             <div
               key={product.id}
-              className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow cursor-pointer"
+              className="relative bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow cursor-pointer"
               onClick={() => addToCart(product)}
             >
+              <button
+                title="Eliminar producto"
+                onClick={(e) => { e.stopPropagation(); deleteProduct(product.id); }}
+                className="absolute top-2 right-2 w-8 h-8 bg-red-50 text-red-600 rounded-full flex items-center justify-center hover:bg-red-100"
+              >
+                <i className="ri-delete-bin-line"></i>
+              </button>
               <div className="w-full h-32 mb-3 bg-gray-100 rounded-lg overflow-hidden">
                 <img
                   src={product.imageUrl}

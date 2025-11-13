@@ -170,35 +170,8 @@ const GeneralJournalPage: React.FC = () => {
         if (linesError) throw linesError;
       } catch (supabaseError) {
         console.error('Supabase error:', supabaseError);
-        // Crear asiento localmente si Supabase falla
-        const newEntry: JournalEntry = {
-          id: Date.now().toString(),
-          entry_number: entryNumber,
-          entry_date: formData.entry_date,
-          description: formData.description,
-          reference: formData.reference,
-          total_debit: totalDebit,
-          total_credit: totalCredit,
-          status: 'posted',
-          created_at: new Date().toISOString(),
-          journal_entry_lines: formData.lines
-            .filter(line => line.account_id && (line.debit_amount > 0 || line.credit_amount > 0))
-            .map((line, index) => {
-              const account = accounts.find(acc => acc.id === line.account_id);
-              return {
-                id: `${Date.now()}_${index}`,
-                account_id: line.account_id,
-                debit_amount: line.debit_amount || 0,
-                credit_amount: line.credit_amount || 0,
-                description: line.description,
-                chart_accounts: {
-                  code: account?.code || '',
-                  name: account?.name || ''
-                }
-              };
-            })
-        };
-        setEntries(prev => [newEntry, ...prev]);
+        alert('No se pudo crear el asiento en la base de datos. Inténtelo nuevamente.');
+        return;
       }
       
       // Resetear formulario

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
+import { departmentsService, positionsService } from '../../../services/database';
 
 interface Employee {
   id: string;
@@ -55,8 +56,8 @@ export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
-  const [employeeTypes, setEmployeeTypes] = useState<EmployeeType[]>([]);
-  const [salaryTypes, setSalaryTypes] = useState<SalaryType[]>([]);
+  const [employeeTypes] = useState<EmployeeType[]>([]);
+  const [salaryTypes] = useState<SalaryType[]>([]);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
@@ -68,15 +69,24 @@ export default function EmployeesPage() {
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
 
   useEffect(() => {
-    loadMockData();
-  }, []);
+    loadData();
+  }, [user]);
 
-  const loadMockData = () => {
-    setDepartments([]);
-    setPositions([]);
-    setEmployeeTypes([]);
-    setSalaryTypes([]);
-    setEmployees([]);
+  const loadData = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const [depts, poss] = await Promise.all([
+        departmentsService.getAll(user.id),
+        positionsService.getAll(user.id)
+      ]);
+      setDepartments(depts);
+      setPositions(poss);
+    } catch (error) {
+      console.error('Error loading payroll catalogs:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleOpenModal = (type: string, employee: Employee | null = null) => {

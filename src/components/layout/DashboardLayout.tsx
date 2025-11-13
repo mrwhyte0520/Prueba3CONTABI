@@ -333,11 +333,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           {/* Logo */}
           <div className="flex h-16 shrink-0 items-center px-6 border-b border-slate-700/50 bg-slate-900/50">
             <div className="flex items-center">
-              <div className="h-10 w-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
-                <i className="ri-calculator-line text-white text-xl"></i>
-              </div>
+              <img
+                src="https://i.postimg.cc/25S0htqg/Contabi-L-removebg-preview.png"
+                alt="Logo Contabi"
+                className="h-10 w-auto object-contain"
+              />
               <div className="ml-3">
-                <h1 className="text-xl font-bold text-white">Contabi RD</h1>
+                <h1 className="brand-serif text-xl font-bold text-white">Contabi RD</h1>
                 <p className="text-xs text-slate-400">Sistema Contable</p>
               </div>
             </div>

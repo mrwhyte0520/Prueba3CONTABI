@@ -1,3 +1,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Brand font for Contabi title */
+.brand-font {
+  font-family: 'Sora', ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
+}
+
+/* Brand serif for elegant style (like provided image) */
+.brand-serif {
+  font-family: 'Bodoni Moda', Georgia, 'Times New Roman', Times, serif;
+}

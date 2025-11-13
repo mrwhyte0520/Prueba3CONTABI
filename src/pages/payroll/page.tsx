@@ -1,6 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import { departmentsService, positionsService } from '../../services/database';
 
 interface Employee {
   id: string;
@@ -85,14 +86,24 @@ export default function PayrollPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<string>('');
 
   useEffect(() => {
-    loadMockData();
-  }, []);
+    loadData();
+  }, [user]);
 
-  const loadMockData = () => {
-    setDepartments([]);
-    setPositions([]);
-    setEmployees([]);
-    setPayrollPeriods([]);
+  const loadData = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const [depts, poss] = await Promise.all([
+        departmentsService.getAll(user.id),
+        positionsService.getAll(user.id)
+      ]);
+      setDepartments(depts);
+      setPositions(poss);
+    } catch (error) {
+      console.error('Error loading payroll catalogs:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleOpenModal = (type: string, item: any = null) => {

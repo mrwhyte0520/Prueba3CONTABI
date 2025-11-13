@@ -454,33 +454,7 @@ export default function SettingsPage() {
     }
   };
 
-  // Mock data para historial de cambios
-  const changeHistory: ChangeHistoryItem[] = [
-    {
-      id: '1',
-      section: 'Información de la Empresa',
-      action: 'Actualización',
-      user: 'Admin',
-      timestamp: new Date().toISOString(),
-      details: 'Actualizado nombre de la empresa y dirección'
-    },
-    {
-      id: '2',
-      section: 'Configuración de Impuestos',
-      action: 'Modificación',
-      user: 'Contador',
-      timestamp: new Date(Date.now() - 86400000).toISOString(),
-      details: 'Modificada tasa de ITBIS de 18% a 18%'
-    },
-    {
-      id: '3',
-      section: 'Gestión de Usuarios',
-      action: 'Creación',
-      user: 'Admin',
-      timestamp: new Date(Date.now() - 172800000).toISOString(),
-      details: 'Creado nuevo usuario con rol de Contador'
-    }
-  ];
+  const changeHistory: ChangeHistoryItem[] = [];
 
   // Auto-hide message after 5 seconds
   useState(() => {
@@ -590,13 +564,15 @@ export default function SettingsPage() {
               <i className="ri-refresh-line"></i>
               <span>Restablecer Valores</span>
             </button>
-            <button 
-              onClick={() => setShowHistoryModal(true)}
-              className="flex items-center justify-center space-x-2 bg-purple-50 text-purple-700 px-4 py-3 rounded-lg hover:bg-purple-100 transition-colors whitespace-nowrap"
-            >
-              <i className="ri-history-line"></i>
-              <span>Historial de Cambios</span>
-            </button>
+            {changeHistory.length > 0 && (
+              <button 
+                onClick={() => setShowHistoryModal(true)}
+                className="flex items-center justify-center space-x-2 bg-purple-50 text-purple-700 px-4 py-3 rounded-lg hover:bg-purple-100 transition-colors whitespace-nowrap"
+              >
+                <i className="ri-history-line"></i>
+                <span>Historial de Cambios</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -629,7 +605,7 @@ export default function SettingsPage() {
         </div>
 
         {/* History Modal */}
-        {showHistoryModal && (
+        {showHistoryModal && changeHistory.length > 0 && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[80vh] overflow-hidden">
               <div className="flex items-center justify-between p-6 border-b border-gray-200">
