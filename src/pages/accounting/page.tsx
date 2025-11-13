@@ -458,9 +458,9 @@ export default function AccountingPage() {
                   <div className="p-2 bg-blue-100 rounded-lg">
                     <i className="ri-money-dollar-circle-line text-2xl text-blue-600"></i>
                   </div>
-                  <div className="ml-4">
+                  <div className="ml-4 min-w-0">
                     <p className="text-sm font-medium text-gray-600">Activos Totales</p>
-                    <p className="text-2xl font-bold text-gray-900">
+                    <p className="text-2xl md:text-3xl font-bold text-gray-900 break-all leading-tight">
                       RD${calculateAccountTypeTotal('asset').toLocaleString()}
                     </p>
                   </div>
@@ -472,9 +472,9 @@ export default function AccountingPage() {
                   <div className="p-2 bg-red-100 rounded-lg">
                     <i className="ri-bank-card-line text-2xl text-red-600"></i>
                   </div>
-                  <div className="ml-4">
+                  <div className="ml-4 min-w-0">
                     <p className="text-sm font-medium text-gray-600">Pasivos Totales</p>
-                    <p className="text-2xl font-bold text-gray-900">
+                    <p className="text-2xl md:text-3xl font-bold text-gray-900 break-all leading-tight">
                       RD${calculateAccountTypeTotal('liability').toLocaleString()}
                     </p>
                   </div>
@@ -486,9 +486,9 @@ export default function AccountingPage() {
                   <div className="p-2 bg-green-100 rounded-lg">
                     <i className="ri-pie-chart-line text-2xl text-green-600"></i>
                   </div>
-                  <div className="ml-4">
+                  <div className="ml-4 min-w-0">
                     <p className="text-sm font-medium text-gray-600">Patrimonio</p>
-                    <p className="text-2xl font-bold text-gray-900">
+                    <p className="text-2xl md:text-3xl font-bold text-gray-900 break-all leading-tight">
                       RD${calculateAccountTypeTotal('equity').toLocaleString()}
                     </p>
                   </div>
@@ -500,9 +500,9 @@ export default function AccountingPage() {
                   <div className="p-2 bg-purple-100 rounded-lg">
                     <i className="ri-line-chart-line text-2xl text-purple-600"></i>
                   </div>
-                  <div className="ml-4">
+                  <div className="ml-4 min-w-0">
                     <p className="text-sm font-medium text-gray-600">Ingresos</p>
-                    <p className="text-2xl font-bold text-gray-900">
+                    <p className="text-2xl md:text-3xl font-bold text-gray-900 break-all leading-tight">
                       RD${calculateAccountTypeTotal('income').toLocaleString()}
                     </p>
                   </div>
