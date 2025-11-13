@@ -356,7 +356,10 @@ export default function AccountingPage() {
   };
 
   const calculateAccountTypeTotal = (type: string) => {
-    return getAccountsByType(type).reduce((sum, account) => sum + (account.balance || 0), 0);
+    const accounts = getAccountsByType(type);
+    if (accounts.length === 0) return null;
+    const total = accounts.reduce((sum, account) => sum + (account.balance || 0), 0);
+    return total === 0 ? null : total;
   };
 
   const { totalDebit, totalCredit } = calculateTotals();
@@ -460,9 +463,13 @@ export default function AccountingPage() {
                   </div>
                   <div className="ml-3 min-w-0 flex-1">
                     <p className="text-xs font-medium text-gray-600 truncate">Activos</p>
-                    <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('asset').toLocaleString()}`}>
-                      RD${calculateAccountTypeTotal('asset').toLocaleString()}
-                    </p>
+                    {calculateAccountTypeTotal('asset') === null ? (
+                      <p className="text-sm text-gray-500 italic">No hay datos</p>
+                    ) : (
+                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('asset')?.toLocaleString()}`}>
+                        RD${calculateAccountTypeTotal('asset')?.toLocaleString()}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -474,9 +481,13 @@ export default function AccountingPage() {
                   </div>
                   <div className="ml-3 min-w-0 flex-1">
                     <p className="text-xs font-medium text-gray-600 truncate">Pasivos</p>
-                    <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('liability').toLocaleString()}`}>
-                      RD${calculateAccountTypeTotal('liability').toLocaleString()}
-                    </p>
+                    {calculateAccountTypeTotal('liability') === null ? (
+                      <p className="text-sm text-gray-500 italic">No hay datos</p>
+                    ) : (
+                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('liability')?.toLocaleString()}`}>
+                        RD${calculateAccountTypeTotal('liability')?.toLocaleString()}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -488,9 +499,13 @@ export default function AccountingPage() {
                   </div>
                   <div className="ml-3 min-w-0 flex-1">
                     <p className="text-xs font-medium text-gray-600 truncate">Patrimonio</p>
-                    <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('equity').toLocaleString()}`}>
-                      RD${calculateAccountTypeTotal('equity').toLocaleString()}
-                    </p>
+                    {calculateAccountTypeTotal('equity') === null ? (
+                      <p className="text-sm text-gray-500 italic">No hay datos</p>
+                    ) : (
+                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('equity')?.toLocaleString()}`}>
+                        RD${calculateAccountTypeTotal('equity')?.toLocaleString()}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -502,9 +517,13 @@ export default function AccountingPage() {
                   </div>
                   <div className="ml-3 min-w-0 flex-1">
                     <p className="text-xs font-medium text-gray-600 truncate">Ingresos</p>
-                    <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('income').toLocaleString()}`}>
-                      RD${calculateAccountTypeTotal('income').toLocaleString()}
-                    </p>
+                    {calculateAccountTypeTotal('income') === null ? (
+                      <p className="text-sm text-gray-500 italic">No hay datos</p>
+                    ) : (
+                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('income')?.toLocaleString()}`}>
+                        RD${calculateAccountTypeTotal('income')?.toLocaleString()}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
