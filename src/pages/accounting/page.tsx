@@ -452,57 +452,57 @@ export default function AccountingPage() {
         {activeTab === 'overview' && (
           <div className="space-y-6">
             {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                <div className="flex items-center">
-                  <div className="p-2 bg-blue-100 rounded-lg">
-                    <i className="ri-money-dollar-circle-line text-2xl text-blue-600"></i>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                <div className="flex items-start">
+                  <div className="p-2 bg-blue-100 rounded-lg flex-shrink-0">
+                    <i className="ri-money-dollar-circle-line text-xl text-blue-600"></i>
                   </div>
-                  <div className="ml-4 min-w-0">
-                    <p className="text-sm font-medium text-gray-600">Activos Totales</p>
-                    <p className="text-2xl md:text-3xl font-bold text-gray-900 break-all leading-tight">
+                  <div className="ml-3 min-w-0 flex-1">
+                    <p className="text-xs font-medium text-gray-600 truncate">Activos</p>
+                    <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('asset').toLocaleString()}`}>
                       RD${calculateAccountTypeTotal('asset').toLocaleString()}
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                <div className="flex items-center">
-                  <div className="p-2 bg-red-100 rounded-lg">
-                    <i className="ri-bank-card-line text-2xl text-red-600"></i>
+              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                <div className="flex items-start">
+                  <div className="p-2 bg-red-100 rounded-lg flex-shrink-0">
+                    <i className="ri-bank-card-line text-xl text-red-600"></i>
                   </div>
-                  <div className="ml-4 min-w-0">
-                    <p className="text-sm font-medium text-gray-600">Pasivos Totales</p>
-                    <p className="text-2xl md:text-3xl font-bold text-gray-900 break-all leading-tight">
+                  <div className="ml-3 min-w-0 flex-1">
+                    <p className="text-xs font-medium text-gray-600 truncate">Pasivos</p>
+                    <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('liability').toLocaleString()}`}>
                       RD${calculateAccountTypeTotal('liability').toLocaleString()}
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                <div className="flex items-center">
-                  <div className="p-2 bg-green-100 rounded-lg">
-                    <i className="ri-pie-chart-line text-2xl text-green-600"></i>
+              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                <div className="flex items-start">
+                  <div className="p-2 bg-green-100 rounded-lg flex-shrink-0">
+                    <i className="ri-pie-chart-line text-xl text-green-600"></i>
                   </div>
-                  <div className="ml-4 min-w-0">
-                    <p className="text-sm font-medium text-gray-600">Patrimonio</p>
-                    <p className="text-2xl md:text-3xl font-bold text-gray-900 break-all leading-tight">
+                  <div className="ml-3 min-w-0 flex-1">
+                    <p className="text-xs font-medium text-gray-600 truncate">Patrimonio</p>
+                    <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('equity').toLocaleString()}`}>
                       RD${calculateAccountTypeTotal('equity').toLocaleString()}
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                <div className="flex items-center">
-                  <div className="p-2 bg-purple-100 rounded-lg">
-                    <i className="ri-line-chart-line text-2xl text-purple-600"></i>
+              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                <div className="flex items-start">
+                  <div className="p-2 bg-purple-100 rounded-lg flex-shrink-0">
+                    <i className="ri-line-chart-line text-xl text-purple-600"></i>
                   </div>
-                  <div className="ml-4 min-w-0">
-                    <p className="text-sm font-medium text-gray-600">Ingresos</p>
-                    <p className="text-2xl md:text-3xl font-bold text-gray-900 break-all leading-tight">
+                  <div className="ml-3 min-w-0 flex-1">
+                    <p className="text-xs font-medium text-gray-600 truncate">Ingresos</p>
+                    <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('income').toLocaleString()}`}>
                       RD${calculateAccountTypeTotal('income').toLocaleString()}
                     </p>
                   </div>
