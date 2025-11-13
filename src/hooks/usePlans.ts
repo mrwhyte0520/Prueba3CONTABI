@@ -7,6 +7,8 @@ interface Plan {
   price: number;
   features: string[];
   active: boolean;
+  color?: string;
+  icon?: string;
 }
 
 interface TrialInfo {
@@ -169,12 +171,44 @@ export function usePlans() {
 
       console.log('Subscribing to plan:', planId);
       
+      // Mapear el ID del plan a su información correspondiente
+      const plansInfo: {[key: string]: {name: string, color: string, icon: string}} = {
+        'pyme': { 
+          name: 'PYME',
+          color: 'from-blue-500 to-blue-600',
+          icon: 'ri-building-2-line'
+        },
+        'pro': { 
+          name: 'PRO',
+          color: 'from-indigo-500 to-indigo-600',
+          icon: 'ri-rocket-line'
+        },
+        'plus': { 
+          name: 'PLUS',
+          color: 'from-purple-500 to-purple-600',
+          icon: 'ri-vip-crown-line'
+        },
+        'student': { 
+          name: 'ESTUDIANTIL',
+          color: 'from-green-500 to-green-600',
+          icon: 'ri-graduation-cap-line'
+        }
+      };
+      
+      const planInfo = plansInfo[planId] || { 
+        name: planId.toUpperCase(),
+        color: 'from-gray-500 to-gray-600',
+        icon: 'ri-question-line'
+      };
+      
       const plan: Plan = {
         id: planId,
-        name: planId.toUpperCase(),
+        name: planInfo.name,
         price: getPlanPrice(planId),
         features: getPlanFeatures(planId),
-        active: true
+        active: true,
+        color: planInfo.color,
+        icon: planInfo.icon
       };
       
       setCurrentPlan(plan);

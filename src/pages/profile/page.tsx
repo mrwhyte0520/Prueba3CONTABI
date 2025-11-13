@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
+import { usePlans } from '../../hooks/usePlans';
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -10,6 +11,73 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  
+  // Obtener información del plan actual
+  const { 
+    currentPlan, 
+    trialInfo, 
+    getTrialStatus,
+    // No necesitamos subscribeToPlan aquí, se usa en la página de planes
+  } = usePlans();
+  
+  const trialStatus = getTrialStatus();
+  interface Plan {
+    id: string;
+    name: string;
+    price: number;
+    features: string[];
+    active: boolean;
+    color?: string;
+    icon?: string;
+  }
+
+  const [currentPlanState, setCurrentPlanState] = useState<Plan | null>(null);
+  
+  // Sincronizar el estado local con el estado global del plan
+  useEffect(() => {
+    setCurrentPlanState(currentPlan);
+  }, [currentPlan]);
+  
+  // Escuchar cambios en el plan actual
+  useEffect(() => {
+    // Este efecto asegura que si el plan cambia en otra parte de la aplicación,
+    // el perfil se actualice para reflejarlo
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === 'contard_current_plan' || event.key === null) {
+        const savedPlan = localStorage.getItem('contard_current_plan');
+        if (savedPlan) {
+          try {
+            const plan = JSON.parse(savedPlan);
+            setCurrentPlanState(plan);
+          } catch (error) {
+            console.error('Error parsing saved plan:', error);
+          }
+        } else {
+          setCurrentPlanState(null);
+        }
+      }
+    };
+
+    // Escuchar cambios en el localStorage
+    window.addEventListener('storage', handleStorageChange);
+    
+    // Cargar el plan actual al montar el componente
+    const savedPlan = localStorage.getItem('contard_current_plan');
+    if (savedPlan) {
+      try {
+        const plan = JSON.parse(savedPlan);
+        setCurrentPlanState(plan);
+      } catch (error) {
+        console.error('Error parsing saved plan:', error);
+      }
+    } else {
+      setCurrentPlanState(null);
+    }
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
 
   const [profileData, setProfileData] = useState({
     email: user?.email || '',
@@ -177,16 +245,46 @@ export default function ProfilePage() {
                 <h2 className="text-xl font-bold text-gray-900">{profileData.fullName || 'Usuario'}</h2>
                 <p className="text-sm text-gray-500 mt-1">{profileData.email}</p>
                 <div className="mt-4 pt-4 border-t border-gray-200">
-                  <div className="flex items-center justify-center text-sm text-gray-600">
-                    <i className="ri-vip-crown-line text-yellow-500 mr-2"></i>
-                    <span className="font-medium">Plan Básico</span>
-                  </div>
-                  <button
-                    onClick={() => navigate('/plans')}
-                    className="mt-3 w-full px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 text-sm font-medium"
-                  >
-                    Mejorar Plan
-                  </button>
+                  {currentPlanState ? (
+                    <div className="text-center">
+                      <div className={`inline-flex items-center justify-center w-12 h-12 rounded-xl mb-3 ${currentPlanState.color || 'bg-gradient-to-br from-gray-500 to-gray-600'} text-white`}>
+                        <i className={`${currentPlanState.icon || 'ri-vip-crown-line'} text-xl`}></i>
+                      </div>
+                      <h3 className="text-sm font-semibold text-gray-900 mb-1">
+                        {currentPlanState.name}
+                      </h3>
+                      <p className="text-sm text-gray-600 mb-3">
+                        Plan actual
+                      </p>
+                      <button
+                        onClick={() => navigate('/plans')}
+                        className="w-full px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-lg transition-all duration-200 text-sm font-medium"
+                      >
+                        Gestionar Plan
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-center">
+                      <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-yellow-500 to-yellow-600 text-white mb-3">
+                        <i className="ri-timer-line text-xl"></i>
+                      </div>
+                      <h3 className="text-sm font-semibold text-gray-900 mb-1">
+                        {trialStatus === 'expired' ? 'Sin plan activo' : 'Plan de Prueba'}
+                      </h3>
+                      {trialStatus === 'active' && (
+                        <p className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded-full inline-block mb-3">
+                          {trialInfo.daysLeft} días restantes
+                        </p>
+                      )}
+                      <button
+                        onClick={() => navigate('/plans')}
+                        className="w-full px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-lg transition-all duration-200 text-sm font-medium"
+                      >
+                        Mejorar Plan
+                      </button>
+                    </div>
+                  )}
+                </div>
                 </div>
               </div>
             </div>
@@ -194,18 +292,67 @@ export default function ProfilePage() {
             {/* Quick Stats */}
             <div className="mt-6 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
               <h3 className="text-sm font-semibold text-gray-900 mb-4">Estadísticas</h3>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Facturas emitidas</span>
-                  <span className="text-sm font-semibold text-gray-900">0</span>
+              <div className="space-y-4">
+                {/* Estado del Plan */}
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Estado del Plan</h4>
+                  <div className="bg-blue-50 p-3 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-gray-700">Plan Actual</span>
+                      <span className="text-sm font-semibold text-blue-700">
+                        {currentPlan?.name || 'Gratis'}
+                      </span>
+                    </div>
+                    
+                    {trialStatus === 'active' && (
+                      <div className="mt-2">
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div 
+                            className="bg-blue-600 h-2 rounded-full" 
+                            style={{ width: `${(trialInfo.daysLeft / 15) * 100}%` }}
+                          ></div>
+                        </div>
+                        <p className="text-xs text-gray-600 mt-1">
+                          {trialInfo.daysLeft} días restantes de prueba
+                        </p>
+                      </div>
+                    )}
+                    
+                    {trialStatus === 'expired' && (
+                      <p className="text-xs text-red-600 mt-1">
+                        Tu período de prueba ha expirado
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Clientes activos</span>
-                  <span className="text-sm font-semibold text-gray-900">0</span>
+                
+                {/* Límites del Plan */}
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Límites del Plan</h4>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-600">Empresas</span>
+                      <span className="text-sm font-semibold text-gray-900">1/1</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-600">Usuarios</span>
+                      <span className="text-sm font-semibold text-gray-900">1/1</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-600">Facturas/mes</span>
+                      <span className="text-sm font-semibold text-gray-900">Ilimitadas</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Productos</span>
-                  <span className="text-sm font-semibold text-gray-900">0</span>
+                
+                {/* Acciones */}
+                <div className="pt-2">
+                  <button
+                    onClick={() => navigate('/plans')}
+                    className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md transition-colors duration-200"
+                  >
+                    {trialStatus === 'expired' ? 'Actualizar Plan' : 'Ver Planes'}
+                  </button>
                 </div>
               </div>
             </div>

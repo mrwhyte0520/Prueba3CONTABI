@@ -111,54 +111,6 @@ export default function BasicDashboard() {
         </div>
       </div>
 
-      {/* Gráficos */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <FeatureGuard feature="hasAdvancedAnalytics" fallback={
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Ingresos vs Gastos</h3>
-            <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg">
-              <div className="text-center">
-                <i className="ri-bar-chart-line text-4xl text-gray-400 mb-2"></i>
-                <p className="text-gray-500">Gráfico disponible en plan PRO</p>
-              </div>
-            </div>
-          </div>
-        }>
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Ingresos vs Gastos</h3>
-            <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg">
-              <div className="text-center">
-                <i className="ri-bar-chart-line text-4xl text-gray-400 mb-2"></i>
-                <p className="text-gray-500">Gráfico de barras aquí</p>
-              </div>
-            </div>
-          </div>
-        </FeatureGuard>
-
-        <FeatureGuard feature="hasAdvancedAnalytics" fallback={
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Distribución de Gastos</h3>
-            <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg">
-              <div className="text-center">
-                <i className="ri-pie-chart-line text-4xl text-gray-400 mb-2"></i>
-                <p className="text-gray-500">Gráfico disponible en plan PRO</p>
-              </div>
-            </div>
-          </div>
-        }>
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Distribución de Gastos</h3>
-            <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg">
-              <div className="text-center">
-                <i className="ri-pie-chart-line text-4xl text-gray-400 mb-2"></i>
-                <p className="text-gray-500">Gráfico circular aquí</p>
-              </div>
-            </div>
-          </div>
-        </FeatureGuard>
-      </div>
-
-      
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { usePlans } from '../../hooks/usePlans';
 import { customersService, invoicesService, inventoryService } from '../../services/database';
 
 interface DashboardLayoutProps {
@@ -33,7 +34,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, signOut } = useAuth();
+  const { currentPlan, getTrialStatus, trialInfo } = usePlans();
   const [kpiCounts, setKpiCounts] = useState({ invoices: 0, customers: 0, products: 0 });
+  const trialStatus = getTrialStatus();
 
   useEffect(() => {
     setUserProfile(prev => ({
@@ -375,8 +378,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                 <p className="text-sm font-medium text-white truncate">
                   {user?.email || 'Usuario'}
                 </p>
-                <p className="text-xs text-slate-400">
-                  Plan Básico
+                <p className="text-xs text-slate-400 truncate">
+                  {currentPlan?.name || (trialStatus === 'expired' ? 'Sin plan activo' : 'Plan de Prueba')}
+                  {trialStatus === 'active' && !currentPlan && ` (${trialInfo.daysLeft}d restantes)`}
                 </p>
               </div>
               <button
