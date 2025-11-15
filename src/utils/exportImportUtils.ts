@@ -1,4 +1,6 @@
 import { read, utils, writeFile } from 'xlsx';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 
@@ -10,6 +12,90 @@ export const exportToExcel = (data: any[], fileName: string) => {
     writeFile(wb, `${fileName}.xlsx`);
   } catch (error) {
     console.error('Error al exportar a Excel:', error);
+    throw error;
+  }
+};
+
+// Styled Excel export using ExcelJS (supports header styles, widths, number formats, autofilter, freeze)
+export const exportToExcelStyled = async (
+  rows: any[],
+  columns: Array<{ key: string; title: string; width?: number; numFmt?: string }>,
+  fileBaseName: string,
+  sheetName: string = 'Datos'
+) => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(sheetName, {
+    views: [{ state: 'frozen', ySplit: 1 }]
+  });
+
+  // Header row
+  ws.columns = columns.map(col => ({ key: col.key, header: col.title, width: col.width || 14 }));
+  const header = ws.getRow(1);
+  header.font = { bold: true };
+  header.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+  header.alignment = { vertical: 'middle' };
+
+  // Data rows
+  rows.forEach(row => {
+    const values: Record<string, any> = {};
+    columns.forEach(col => {
+      values[col.key] = row[col.key];
+    });
+    ws.addRow(values);
+  });
+
+  // Number formats per column
+  columns.forEach((col, idx) => {
+    if (col.numFmt) {
+      const colIndex = idx + 1;
+      for (let r = 2; r <= ws.rowCount; r++) {
+        const cell = ws.getRow(r).getCell(colIndex);
+        if (typeof cell.value === 'number') {
+          cell.numFmt = col.numFmt;
+        }
+      }
+    }
+  });
+
+  // Autofilter across header range
+  ws.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: columns.length }
+  } as any;
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  saveAs(blob, `${fileBaseName}.xlsx`);
+};
+
+export const exportToExcelWithHeaders = (
+  rows: any[],
+  headers: { key: string; title: string }[],
+  fileName: string,
+  sheetName: string = 'Datos',
+  columnWidths?: number[]
+) => {
+  try {
+    const aoa: any[][] = [];
+    // Header row
+    aoa.push(headers.map(h => h.title));
+    // Data rows in the exact header key order
+    for (const row of rows) {
+      aoa.push(headers.map(h => row[h.key]));
+    }
+    const ws = utils.aoa_to_sheet(aoa);
+    // Optional: set column widths
+    if (columnWidths && columnWidths.length) {
+      ws['!cols'] = columnWidths.map(w => ({ wch: w }));
+    } else {
+      // Autosize roughly based on header length
+      ws['!cols'] = headers.map(h => ({ wch: Math.max(12, h.title.length + 2) }));
+    }
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, sheetName);
+    writeFile(wb, `${fileName}.xlsx`);
+  } catch (error) {
+    console.error('Error al exportar a Excel con cabeceras:', error);
     throw error;
   }
 };

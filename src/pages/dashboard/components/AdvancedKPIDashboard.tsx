@@ -120,12 +120,12 @@ export default function AdvancedKPIDashboard() {
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-sm font-medium text-gray-600">Ingresos Totales</p>
-              <p className="text-2xl font-bold text-green-600">{formatCurrency(kpiData.totalRevenue)}</p>
+              <p className="text-lg sm:text-xl md:text-2xl font-bold text-green-600 whitespace-normal break-words leading-tight">{formatCurrency(kpiData.totalRevenue)}</p>
             </div>
-            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
               <i className="ri-money-dollar-circle-line text-2xl text-green-600"></i>
             </div>
           </div>
@@ -136,24 +136,24 @@ export default function AdvancedKPIDashboard() {
         </div>
 
         <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-sm font-medium text-gray-600">Gastos Totales</p>
-              <p className="text-2xl font-bold text-red-600">{formatCurrency(kpiData.totalExpenses)}</p>
+              <p className="text-lg sm:text-xl md:text-2xl font-bold text-red-600 whitespace-normal break-words leading-tight">{formatCurrency(kpiData.totalExpenses)}</p>
             </div>
-            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
               <i className="ri-money-dollar-circle-line text-2xl text-red-600"></i>
             </div>
           </div>
         </div>
 
         <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-sm font-medium text-gray-600">Utilidad Neta</p>
-              <p className="text-2xl font-bold text-blue-600">{formatCurrency(kpiData.netProfit)}</p>
+              <p className="text-lg sm:text-xl md:text-2xl font-bold text-blue-600 whitespace-normal break-words leading-tight">{formatCurrency(kpiData.netProfit)}</p>
             </div>
-            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
               <i className="ri-line-chart-line text-2xl text-blue-600"></i>
             </div>
           </div>
@@ -163,12 +163,12 @@ export default function AdvancedKPIDashboard() {
         </div>
 
         <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-sm font-medium text-gray-600">Facturas Pendientes</p>
-              <p className="text-2xl font-bold text-orange-600">{kpiData.pendingInvoices}</p>
+              <p className="text-lg sm:text-xl md:text-2xl font-bold text-orange-600 whitespace-normal break-words leading-tight">{kpiData.pendingInvoices}</p>
             </div>
-            <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
               <i className="ri-file-list-3-line text-2xl text-orange-600"></i>
             </div>
           </div>

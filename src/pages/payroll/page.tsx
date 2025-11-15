@@ -1396,6 +1396,14 @@ export default function PayrollPage() {
         </nav>
       </div>
 
+      {/* Tab Content */}
+      <div className="mt-6">
+        {activeTab === 'dashboard' && renderDashboard()}
+        {activeTab === 'employees' && renderEmployees()}
+        {activeTab === 'departments' && renderDepartments()}
+        {activeTab === 'positions' && renderPositions()}
+      </div>
+
       {/* Navigation Buttons for Other Modules */}
       <div className="bg-white rounded-lg shadow p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Otros Módulos de Nómina</h3>
@@ -1478,14 +1486,6 @@ export default function PayrollPage() {
             <span>Regalías</span>
           </button>
         </div>
-      </div>
-
-      {/* Tab Content */}
-      <div className="mt-6">
-        {activeTab === 'dashboard' && renderDashboard()}
-        {activeTab === 'employees' && renderEmployees()}
-        {activeTab === 'departments' && renderDepartments()}
-        {activeTab === 'positions' && renderPositions()}
       </div>
 
       {/* Modal */}

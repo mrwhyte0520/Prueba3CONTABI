@@ -1,6 +1,7 @@
 
 import { useState } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 
 interface Department {
   id: string;
@@ -168,29 +169,38 @@ export default function DepartmentsPage() {
     ));
   };
 
-  const downloadExcel = () => {
-    let csvContent = 'Departamentos\\n';
-    csvContent += `Generado: ${new Date().toLocaleDateString()}\\n\\n`;
-    csvContent += 'Nombre,Descripción,Gerente,Empleados,Presupuesto,Ubicación,Estado\\n';
-    
-    filteredDepartments.forEach(dept => {
-      const row = [
-        `"${dept.name}"`,
-        `"${dept.description}"`,
-        `"${dept.manager}"`,
-        dept.employeeCount,
-        dept.budget.toLocaleString(),
-        `"${dept.location}"`,
-        dept.status === 'active' ? 'Activo' : 'Inactivo'
-      ].join(',');
-      csvContent += row + '\\n';
-    });
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `departamentos_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+  const downloadExcel = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const rows = filteredDepartments.map(dept => ({
+        name: dept.name,
+        description: dept.description,
+        manager: dept.manager,
+        employees: dept.employeeCount,
+        budget: dept.budget || 0,
+        location: dept.location,
+        status: dept.status === 'active' ? 'Activo' : 'Inactivo',
+        createdAt: dept.createdAt,
+      }));
+      await exportToExcelStyled(
+        rows,
+        [
+          { key: 'name', title: 'Nombre', width: 22 },
+          { key: 'description', title: 'Descripción', width: 40 },
+          { key: 'manager', title: 'Gerente', width: 22 },
+          { key: 'employees', title: 'Empleados', width: 12 },
+          { key: 'budget', title: 'Presupuesto', width: 16, numFmt: '#,##0.00' },
+          { key: 'location', title: 'Ubicación', width: 24 },
+          { key: 'status', title: 'Estado', width: 12 },
+          { key: 'createdAt', title: 'Creado', width: 14 },
+        ],
+        `departamentos_${today}`,
+        'Departamentos'
+      );
+    } catch (error) {
+      console.error('Error exporting departments:', error);
+      alert('Error al exportar a Excel');
+    }
   };
 
   const totalEmployees = departments.reduce((sum, dept) => sum + dept.employeeCount, 0);

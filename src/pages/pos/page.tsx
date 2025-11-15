@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
 import { customersService } from '../../services/database';
+import { exportToExcelStyled } from '../../utils/exportImportUtils';
 
 interface Product {
   id: string;
@@ -484,31 +485,42 @@ export default function POSPage() {
       .slice(0, 5);
   };
 
-  const exportSalesReport = () => {
-    const csvContent = [
-      ['ID Venta', 'Fecha', 'Hora', 'Cliente', 'Subtotal', 'Impuesto', 'Total', 'Método Pago', 'Estado'].join(','),
-      ...sales.map(sale => [
-        sale.id,
-        sale.date,
-        sale.time,
-        sale.customer?.name || 'Cliente General',
-        sale.subtotal.toFixed(2),
-        sale.tax.toFixed(2),
-        sale.total.toFixed(2),
-        sale.paymentMethod,
-        sale.status
-      ].join(','))
-    ].join('\n');
-
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `reporte_ventas_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const exportSalesReport = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const rows = sales.map(sale => ({
+        id: sale.id,
+        date: sale.date,
+        time: sale.time,
+        customer: sale.customer?.name || 'Cliente General',
+        subtotal: sale.subtotal || 0,
+        tax: sale.tax || 0,
+        total: sale.total || 0,
+        paymentMethod: sale.paymentMethod,
+        status: sale.status,
+        cashier: sale.cashier || '—',
+      }));
+      await exportToExcelStyled(
+        rows,
+        [
+          { key: 'id', title: 'ID Venta', width: 20 },
+          { key: 'date', title: 'Fecha', width: 12 },
+          { key: 'time', title: 'Hora', width: 10 },
+          { key: 'customer', title: 'Cliente', width: 28 },
+          { key: 'subtotal', title: 'Subtotal', width: 14, numFmt: '#,##0.00' },
+          { key: 'tax', title: 'Impuesto', width: 14, numFmt: '#,##0.00' },
+          { key: 'total', title: 'Total', width: 14, numFmt: '#,##0.00' },
+          { key: 'paymentMethod', title: 'Método Pago', width: 16 },
+          { key: 'status', title: 'Estado', width: 12 },
+          { key: 'cashier', title: 'Cajero', width: 14 },
+        ],
+        `reporte_ventas_${today}`,
+        'Ventas'
+      );
+    } catch (error) {
+      console.error('Error exporting POS sales report:', error);
+      alert('Error al exportar el reporte a Excel');
+    }
   };
 
   const renderDashboard = () => {

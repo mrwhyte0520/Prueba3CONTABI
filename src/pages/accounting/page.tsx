@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { chartAccountsService, journalEntriesService } from '../../services/database';
 import { useAuth } from '../../hooks/useAuth';
+import { exportToExcelWithHeaders, exportToExcelStyled } from '../../utils/exportImportUtils';
 
 interface JournalEntry {
   id: string;
@@ -181,65 +182,187 @@ export default function AccountingPage() {
       const today = new Date().toISOString().split('T')[0];
       const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
       
-      let reportData;
       let filename = '';
-      let content = '';
 
       switch (reportType) {
         case 'balance-sheet':
-          reportData = await chartAccountsService.generateBalanceSheet(user.id, today);
-          filename = `balance_general_${today}.csv`;
-          content = generateBalanceSheetCSV(reportData);
+          {
+            const data = await chartAccountsService.generateBalanceSheet(user.id, today);
+            filename = `balance_general_${today}.xlsx`;
+            const headers = [
+              { key: 'section', title: 'Sección' },
+              { key: 'code', title: 'Código' },
+              { key: 'name', title: 'Nombre' },
+              { key: 'balance', title: 'Saldo' },
+            ];
+            const rows: any[] = [];
+            const pushGroup = (section: string, items: any[], total: number) => {
+              items.forEach(acc => rows.push({ section, code: acc.code, name: acc.name, balance: Math.abs(acc.balance || 0) }));
+              rows.push({ section: `TOTAL ${section.toUpperCase()}`, code: '', name: '', balance: total });
+              rows.push({ section: '', code: '', name: '', balance: '' });
+            };
+            pushGroup('Activos', data.assets || [], data.totalAssets || 0);
+            pushGroup('Pasivos', data.liabilities || [], data.totalLiabilities || 0);
+            pushGroup('Patrimonio', data.equity || [], data.totalEquity || 0);
+            rows.push({ section: 'TOTAL PASIVOS + PATRIMONIO', code: '', name: '', balance: (data.totalLiabilities || 0) + (data.totalEquity || 0) });
+            await exportToExcelStyled(
+              rows,
+              [
+                { key: 'section', title: 'Sección', width: 18 },
+                { key: 'code', title: 'Código', width: 12 },
+                { key: 'name', title: 'Nombre', width: 40 },
+                { key: 'balance', title: 'Saldo', width: 18, numFmt: '#,##0.00' },
+              ],
+              filename.replace('.xlsx',''),
+              'Balance General'
+            );
+          }
           break;
 
         case 'income-statement':
-          reportData = await chartAccountsService.generateIncomeStatement(user.id, firstDayOfMonth, today);
-          filename = `estado_resultados_${today}.csv`;
-          content = generateIncomeStatementCSV(reportData);
+          {
+            const data = await chartAccountsService.generateIncomeStatement(user.id, firstDayOfMonth, today);
+            filename = `estado_resultados_${today}.xlsx`;
+            const headers = [
+              { key: 'section', title: 'Sección' },
+              { key: 'code', title: 'Código' },
+              { key: 'name', title: 'Nombre' },
+              { key: 'amount', title: 'Monto' },
+            ];
+            const rows: any[] = [];
+            (data.income || []).forEach(acc => rows.push({ section: 'Ingresos', code: acc.code, name: acc.name, amount: Math.abs(acc.balance || 0) }));
+            rows.push({ section: 'TOTAL INGRESOS', code: '', name: '', amount: data.totalIncome || 0 });
+            rows.push({ section: '', code: '', name: '', amount: '' });
+            (data.expenses || []).forEach(acc => rows.push({ section: 'Gastos', code: acc.code, name: acc.name, amount: Math.abs(acc.balance || 0) }));
+            rows.push({ section: 'TOTAL GASTOS', code: '', name: '', amount: data.totalExpenses || 0 });
+            rows.push({ section: '', code: '', name: '', amount: '' });
+            rows.push({ section: 'UTILIDAD NETA', code: '', name: '', amount: data.netIncome || 0 });
+            await exportToExcelStyled(
+              rows,
+              [
+                { key: 'section', title: 'Sección', width: 18 },
+                { key: 'code', title: 'Código', width: 12 },
+                { key: 'name', title: 'Nombre', width: 40 },
+                { key: 'amount', title: 'Monto', width: 18, numFmt: '#,##0.00' },
+              ],
+              filename.replace('.xlsx',''),
+              'Estado de Resultados'
+            );
+          }
           break;
 
         case 'trial-balance':
-          reportData = await chartAccountsService.generateTrialBalance(user.id, today);
-          filename = `balanza_comprobacion_${today}.csv`;
-          content = generateTrialBalanceCSV(reportData);
+          {
+            const data = await chartAccountsService.generateTrialBalance(user.id, today);
+            filename = `balanza_comprobacion_${today}.xlsx`;
+            const headers = [
+              { key: 'code', title: 'Código' },
+              { key: 'name', title: 'Nombre' },
+              { key: 'debit', title: 'Débito' },
+              { key: 'credit', title: 'Crédito' },
+            ];
+            const rows: any[] = [];
+            (data.accounts || []).forEach((acc: any) => rows.push({ code: acc.code, name: acc.name, debit: acc.debitBalance || 0, credit: acc.creditBalance || 0 }));
+            rows.push({ code: 'TOTALES', name: '', debit: data.totalDebits || 0, credit: data.totalCredits || 0 });
+            rows.push({ code: 'BALANCEADO', name: '', debit: data.isBalanced ? 'SÍ' : 'NO', credit: '' });
+            await exportToExcelStyled(
+              rows,
+              [
+                { key: 'code', title: 'Código', width: 12 },
+                { key: 'name', title: 'Nombre', width: 40 },
+                { key: 'debit', title: 'Débito', width: 16, numFmt: '#,##0.00' },
+                { key: 'credit', title: 'Crédito', width: 16, numFmt: '#,##0.00' },
+              ],
+              filename.replace('.xlsx',''),
+              'Balanza de Comprobación'
+            );
+          }
           break;
 
         case 'cash-flow':
-          reportData = await chartAccountsService.generateCashFlowStatement(user.id, firstDayOfMonth, today);
-          filename = `flujo_efectivo_${today}.csv`;
-          content = generateCashFlowCSV(reportData);
+          {
+            const data = await chartAccountsService.generateCashFlowStatement(user.id, firstDayOfMonth, today);
+            filename = `flujo_efectivo_${today}.xlsx`;
+            const headers = [
+              { key: 'concept', title: 'Concepto' },
+              { key: 'amount', title: 'Monto' },
+            ];
+            const rows = [
+              { concept: 'Flujo de Efectivo Operativo', amount: data.operatingCashFlow || 0 },
+              { concept: 'Flujo de Efectivo de Inversión', amount: data.investingCashFlow || 0 },
+              { concept: 'Flujo de Efectivo de Financiamiento', amount: data.financingCashFlow || 0 },
+              { concept: 'Flujo Neto de Efectivo', amount: data.netCashFlow || 0 },
+            ];
+            await exportToExcelStyled(
+              rows,
+              [
+                { key: 'concept', title: 'Concepto', width: 50 },
+                { key: 'amount', title: 'Monto', width: 18, numFmt: '#,##0.00' },
+              ],
+              filename.replace('.xlsx',''),
+              'Flujo de Efectivo'
+            );
+          }
           break;
 
         case 'general-ledger':
-          const entries = await journalEntriesService.getAll(user.id);
-          filename = `mayor_general_${today}.csv`;
-          content = generateGeneralLedgerCSV(entries);
+          {
+            const entries = await journalEntriesService.getAll(user.id);
+            filename = `mayor_general_${today}.xlsx`;
+            const headers = [
+              { key: 'date', title: 'Fecha' },
+              { key: 'number', title: 'Número' },
+              { key: 'description', title: 'Descripción' },
+              { key: 'account', title: 'Cuenta' },
+              { key: 'debit', title: 'Débito' },
+              { key: 'credit', title: 'Crédito' },
+            ];
+            const rows: any[] = [];
+            entries.forEach((entry: any) => {
+              entry.journal_entry_lines?.forEach((line: any) => {
+                rows.push({
+                  date: new Date(entry.entry_date).toLocaleDateString(),
+                  number: entry.entry_number,
+                  description: entry.description,
+                  account: `${line.chart_accounts?.code || ''} - ${line.chart_accounts?.name || ''}`,
+                  debit: line.debit_amount || 0,
+                  credit: line.credit_amount || 0,
+                });
+              });
+            });
+            exportToExcelWithHeaders(rows, headers, filename.replace('.xlsx',''), 'Mayor General', [12,14,40,28,16,16]);
+          }
           break;
 
         case 'journal-report':
-          const journalData = await journalEntriesService.getAll(user.id);
-          filename = `libro_diario_${today}.csv`;
-          content = generateJournalReportCSV(journalData);
+          {
+            const journalData = await journalEntriesService.getAll(user.id);
+            filename = `libro_diario_${today}.xlsx`;
+            const headers = [
+              { key: 'date', title: 'Fecha' },
+              { key: 'number', title: 'Número' },
+              { key: 'description', title: 'Descripción' },
+              { key: 'reference', title: 'Referencia' },
+              { key: 'total_debit', title: 'Débito Total' },
+              { key: 'total_credit', title: 'Crédito Total' },
+            ];
+            const rows = journalData.map((entry: any) => ({
+              date: new Date(entry.entry_date).toLocaleDateString(),
+              number: entry.entry_number,
+              description: entry.description,
+              reference: entry.reference || '',
+              total_debit: entry.total_debit || 0,
+              total_credit: entry.total_credit || 0,
+            }));
+            exportToExcelWithHeaders(rows, headers, filename.replace('.xlsx',''), 'Libro Diario', [12,14,40,18,16,16]);
+          }
           break;
 
         default:
           alert('Tipo de reporte no soportado');
           return;
       }
-
-      // Descargar el archivo (UTF-8 BOM + CRLF para compatibilidad con Excel)
-      const csvForExcel = '\uFEFF' + content.replace(/\n/g, '\r\n');
-      const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', filename);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      alert(`Reporte ${getReportName(reportType)} generado exitosamente.`);
+      alert(`Reporte ${getReportName(reportType)} generado exitosamente en Excel.`);
     } catch (error) {
       console.error('Error generating report:', error);
       alert('Error al generar el reporte. Intente nuevamente.');
