@@ -198,6 +198,7 @@ export default function PlansPage() {
   };
 
   const trialStatus = getTrialStatus();
+  const visiblePlans = plans.filter(plan => plan.id !== 'student');
   const selectedPlanData = plans.find(plan => plan.id === selectedPlan);
 
   const formatTimeLeft = () => {
@@ -392,7 +393,7 @@ export default function PlansPage() {
               <thead>
                 <tr className="border-b-2 border-gray-200">
                   <th className="text-left py-3 px-4 font-semibold text-gray-900">Características</th>
-                  {plans.map((plan) => (
+                  {visiblePlans.map((plan) => (
                     <th key={plan.id} className="text-center py-3 px-4 font-semibold text-gray-900">
                       {plan.name}
                     </th>

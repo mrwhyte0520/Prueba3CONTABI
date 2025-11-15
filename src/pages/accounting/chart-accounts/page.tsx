@@ -89,7 +89,6 @@ export default function ChartAccountsPage() {
 
   const importFormats: ImportFormat[] = [
     {
-<<<<<<< HEAD
       id: 'csv',
       name: 'CSV Estándar',
       description: 'Formato CSV compatible con Excel y sistemas contables básicos',
@@ -98,15 +97,12 @@ export default function ChartAccountsPage() {
       color: 'bg-green-100 text-green-800'
     },
     {
-=======
->>>>>>> 46ccfc25 (Guardando cambios antes del pull)
       id: 'excel',
       name: 'Microsoft Excel',
       description: 'Archivos Excel con formato estructurado (.xlsx, .xls)',
       fileTypes: ['.xlsx', '.xls'],
       icon: 'ri-file-excel-line',
       color: 'bg-green-100 text-green-800'
-<<<<<<< HEAD
     },
     {
       id: 'quickbooks',
@@ -131,8 +127,6 @@ export default function ChartAccountsPage() {
       fileTypes: ['.json'],
       icon: 'ri-code-s-slash-line',
       color: 'bg-gray-100 text-gray-800'
-=======
->>>>>>> 46ccfc25 (Guardando cambios antes del pull)
     }
   ];
 
@@ -421,19 +415,15 @@ export default function ChartAccountsPage() {
       setImportProgress(25);
 
       switch (selectedFormat.id) {
-<<<<<<< HEAD
         case 'csv': {
           const content = await file.text();
           importedData = parseCSVContent(content);
           break;
         }
-=======
->>>>>>> 46ccfc25 (Guardando cambios antes del pull)
         case 'excel': {
           importedData = await parseExcelData(file);
           break;
         }
-<<<<<<< HEAD
         case 'quickbooks': {
           if (extension === 'iif') {
             const content = await file.text();
@@ -459,13 +449,6 @@ export default function ChartAccountsPage() {
           importedData = parseCSVContent(content);
           break;
         }
-=======
-        default: {
-          const content = await file.text();
-          importedData = parseCSVContent(content);
-          break;
-        }
->>>>>>> 46ccfc25 (Guardando cambios antes del pull)
       }
 
       setImportProgress(75);
@@ -530,7 +513,6 @@ export default function ChartAccountsPage() {
     await loadAccounts();
   };
 
-<<<<<<< HEAD
   const downloadTemplate = (formatId: string) => {
     let template = '';
     let filename = '';
@@ -611,9 +593,6 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
     a.click();
     window.URL.revokeObjectURL(url);
   };
-
-=======
->>>>>>> 46ccfc25 (Guardando cambios antes del pull)
   const handleAddAccount = async () => {
     if (!user || !newAccount.code || !newAccount.name) {
       alert('Por favor complete código y nombre.');
@@ -747,11 +726,6 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
         }
       }
 
-<<<<<<< HEAD
-      // Crear y descargar archivo (UTF-8 BOM + CRLF para Excel)
-      const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
-      const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
-=======
       // Congelar primera fila (encabezados)
       (ws as any)['!freeze'] = { rows: 1, columns: 0 };
 
@@ -759,7 +733,6 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
       XLSX.utils.book_append_sheet(wb, ws, 'Catálogo');
       const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
->>>>>>> 46ccfc25 (Guardando cambios antes del pull)
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.href = url;
