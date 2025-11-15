@@ -187,11 +187,6 @@ export function usePlans() {
           name: 'PLUS',
           color: 'from-purple-500 to-purple-600',
           icon: 'ri-vip-crown-line'
-        },
-        'student': { 
-          name: 'ESTUDIANTIL',
-          color: 'from-green-500 to-green-600',
-          icon: 'ri-graduation-cap-line'
         }
       };
       
@@ -285,8 +280,7 @@ export function usePlans() {
     const prices: Record<string, number> = {
       'pyme': 19.97,
       'pro': 49.97,
-      'plus': 99.97,
-      'student': 49.97
+      'plus': 99.97
     };
     return prices[planId] || 0;
   };
@@ -317,16 +311,6 @@ export function usePlans() {
         'Inventario ilimitado',
         'Nómina completa',
         'Análisis financiero avanzado',
-        'Usuarios ilimitados'
-      ],
-      'student': [
-        'Empresas ilimitadas', 
-        'Todas las funciones contables', 
-        'Dashboard KPI avanzado',
-        'Inventario ilimitado',
-        'Nómina completa',
-        'Análisis financiero avanzado',
-        'Válido con ID estudiantil',
         'Usuarios ilimitados'
       ]
     };

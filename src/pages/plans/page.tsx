@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { usePlans } from '../../hooks/usePlans';
 import { useAuth } from '../../hooks/useAuth';
@@ -22,7 +21,6 @@ export default function PlansPage() {
   const [selectedPlan, setSelectedPlan] = useState<string>('');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
-  const navigate = useNavigate();
   const { user } = useAuth();
   
   const { 
@@ -32,28 +30,6 @@ export default function PlansPage() {
     canSelectPlan, 
     getTrialStatus 
   } = usePlans();
-
-  // Student plan expiration (4 months)
-  const studentExpiresAt = Number(localStorage.getItem('contabi_student_expires_at') || '0');
-  const nowTs = Date.now();
-  const studentExpired = studentExpiresAt > 0 && nowTs > studentExpiresAt;
-  const studentMsLeft = Math.max(0, studentExpiresAt - nowTs);
-
-  const formatStudentLeft = () => {
-    if (!studentExpiresAt) return null;
-    const days = Math.floor(studentMsLeft / (1000 * 60 * 60 * 24));
-    if (studentExpired) return 'Expirado';
-    if (days >= 30) {
-      const months = Math.floor(days / 30);
-      const remDays = days % 30;
-      return `${months} mes${months !== 1 ? 'es' : ''}${remDays ? ` y ${remDays} día${remDays !== 1 ? 's' : ''}` : ''}`;
-    }
-    if (days > 0) return `${days} día${days !== 1 ? 's' : ''}`;
-    const hours = Math.floor(studentMsLeft / (1000 * 60 * 60));
-    if (hours > 0) return `${hours} hora${hours !== 1 ? 's' : ''}`;
-    const minutes = Math.floor(studentMsLeft / (1000 * 60));
-    return `${minutes} minuto${minutes !== 1 ? 's' : ''}`;
-  };
 
   const plans: Plan[] = [
     {
@@ -120,42 +96,11 @@ export default function PlansPage() {
       popular: false,
       color: 'from-purple-500 to-purple-600',
       icon: 'ri-vip-crown-line'
-    },
-    {
-      id: 'student',
-      name: 'ESTUDIANTIL',
-      price: 0,
-      period: '/mes',
-      description: 'Especial para estudiantes y emprendedores',
-      features: [
-        'Empresas ilimitadas',
-        'Todas las funciones contables',
-        'Dashboard KPI avanzado',
-        'Inventario ilimitado',
-        'API personalizada',
-        'Nómina completa',
-        'Reportes personalizados',
-        'Análisis financiero avanzado',
-        'Válido con ID estudiantil',
-        'Soporte por email',
-        'Gestión de activos fijos '
-      ],
-      popular: false,
-      color: 'from-green-500 to-green-600',
-      icon: 'ri-graduation-cap-line'
     }
   ];
 
   const handleSelectPlan = (planId: string) => {
     if (!canSelectPlan()) {
-      return;
-    }
-    if (planId === 'student') {
-      // Siempre pasa por verificación para estudiantes
-      if (studentExpired) {
-        alert('Tu verificación estudiantil ha expirado. Debes volver a verificar.');
-      }
-      navigate('/plans/student-verify');
       return;
     }
     setSelectedPlan(planId);
@@ -229,11 +174,6 @@ export default function PlansPage() {
                   <div className="text-sm text-green-200">Plan Activo</div>
                   <div className="text-2xl font-bold text-green-100">{currentPlan.name}</div>
                   <div className="text-sm text-green-200">Suscripción activa</div>
-                  {currentPlan.name?.toUpperCase() === 'ESTUDIANTIL' && (
-                    <div className={`mt-2 text-sm ${studentExpired ? 'text-red-200' : 'text-green-100'}`}>
-                      {studentExpired ? 'Verificación expirada · Requiere reverificación' : `Tiempo restante: ${formatStudentLeft()}`}
-                    </div>
-                  )}
                 </div>
               ) : (
                 <div className={`rounded-lg p-4 border ${
@@ -304,7 +244,7 @@ export default function PlansPage() {
         )}
 
         {/* Plans Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {plans.map((plan) => (
             <div
               key={plan.id}
@@ -315,11 +255,6 @@ export default function PlansPage() {
               {plan.popular && (
                 <div className="absolute top-0 left-0 right-0 bg-gradient-to-r from-indigo-500 to-indigo-600 text-white text-center py-2 text-sm font-semibold">
                   Más Popular
-                </div>
-              )}
-              {plan.id === 'student' && studentExpiresAt > 0 && (
-                <div className={`absolute top-0 right-0 m-2 text-xs px-2 py-1 rounded ${studentExpired ? 'bg-red-600 text-white' : 'bg-green-600 text-white'}`}>
-                  {studentExpired ? 'Expirado' : `Restante: ${formatStudentLeft()}`}
                 </div>
               )}
 
@@ -363,13 +298,7 @@ export default function PlansPage() {
                       : 'bg-gradient-to-r from-navy-600 to-navy-700 text-white hover:from-navy-700 hover:to-navy-800'
                   }`}
                 >
-                  {!canSelectPlan()
-                    ? 'Pago Requerido'
-                    : plan.id === 'student'
-                    ? 'Verificación Estudiantil'
-                    : currentPlan?.active
-                    ? 'Cambiar Plan'
-                    : 'Seleccionar Plan'}
+                  {!canSelectPlan() ? 'Pago Requerido' : currentPlan?.active ? 'Cambiar Plan' : 'Seleccionar Plan'}
                 </button>
 
                 <div className="text-center mt-3">
@@ -406,13 +335,11 @@ export default function PlansPage() {
                   <td className="py-3 px-4 text-center">1</td>
                   <td className="py-3 px-4 text-center">3</td>
                   <td className="py-3 px-4 text-center">Ilimitadas</td>
-                  <td className="py-3 px-4 text-center">Ilimitadas</td>
                 </tr>
                 <tr className="border-b border-gray-100">
                   <td className="py-3 px-4 font-medium">Usuarios</td>
                   <td className="py-3 px-4 text-center">2</td>
                   <td className="py-3 px-4 text-center">5</td>
-                  <td className="py-3 px-4 text-center">Ilimitados</td>
                   <td className="py-3 px-4 text-center">Ilimitados</td>
                 </tr>
                 <tr className="border-b border-gray-100">
@@ -420,11 +347,9 @@ export default function PlansPage() {
                   <td className="py-3 px-4 text-center">500</td>
                   <td className="py-3 px-4 text-center">2,000</td>
                   <td className="py-3 px-4 text-center">Ilimitados</td>
-                  <td className="py-3 px-4 text-center">Ilimitados</td>
                 </tr>
                 <tr className="border-b border-gray-100">
                   <td className="py-3 px-4 font-medium">Dashboard</td>
-                  <td className="py-3 px-4 text-center">KPI Avanzado</td>
                   <td className="py-3 px-4 text-center">KPI Avanzado</td>
                   <td className="py-3 px-4 text-center">KPI Avanzado</td>
                   <td className="py-3 px-4 text-center">KPI Avanzado</td>
@@ -434,12 +359,10 @@ export default function PlansPage() {
                   <td className="py-3 px-4 text-center">N/A</td>
                   <td className="py-3 px-4 text-center">10</td>
                   <td className="py-3 px-4 text-center">Ilimitados</td>
-                  <td className="py-3 px-4 text-center">Ilimitados</td>
                 </tr>
                 <tr className="border-b border-gray-100">
                   <td className="py-3 px-4 font-medium">Gestión Bancaria</td>
                   <td className="py-3 px-4 text-center"><i className="ri-close-line text-red-500"></i></td>
-                  <td className="py-3 px-4 text-center"><i className="ri-check-line text-green-500"></i></td>
                   <td className="py-3 px-4 text-center"><i className="ri-check-line text-green-500"></i></td>
                   <td className="py-3 px-4 text-center"><i className="ri-check-line text-green-500"></i></td>
                 </tr>
@@ -447,7 +370,6 @@ export default function PlansPage() {
                   <td className="py-3 px-4 font-medium">Análisis financiero avanzado</td>
                   <td className="py-3 px-4 text-center"><i className="ri-close-line text-red-500"></i></td>
                   <td className="py-3 px-4 text-center"><i className="ri-close-line text-red-500"></i></td>
-                  <td className="py-3 px-4 text-center"><i className="ri-check-line text-green-500"></i></td>
                   <td className="py-3 px-4 text-center"><i className="ri-check-line text-green-500"></i></td>
                 </tr>
               </tbody>
