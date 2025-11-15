@@ -33,7 +33,7 @@ export const useAuth = () => {
           data: {
             full_name: fullName,
           },
-          emailRedirectTo: `${window.location.origin}/auth/login`,
+          emailRedirectTo: "https://prueba3-contabi-5kna2.vercel.app/auth/reset-password",
         },
       });
 
@@ -73,7 +73,7 @@ export const useAuth = () => {
   const resetPassword = async (email: string) => {
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/reset-password`,
+        redirectTo: "https://prueba3-contabi-5kna2.vercel.app/auth/reset-password",
       });
 
       if (error) throw error;

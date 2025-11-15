@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 
 interface JournalEntry {
   id: string;
@@ -301,6 +302,52 @@ const GeneralJournalPage: React.FC = () => {
     }));
   };
 
+  const exportToExcel = () => {
+    try {
+      // Preparar los datos para la exportación
+      const dataToExport = entries.flatMap(entry => {
+        return entry.journal_entry_lines.map(line => ({
+          'Fecha': new Date(entry.entry_date).toLocaleDateString('es-ES'),
+          'Número Asiento': entry.entry_number,
+          'Descripción': entry.description,
+          'Referencia': entry.reference,
+          'Cuenta': `${line.chart_accounts.code} - ${line.chart_accounts.name}`,
+          'Débito': line.debit_amount || '',
+          'Crédito': line.credit_amount || '',
+          'Estado': entry.status === 'posted' ? 'Publicado' : 'Borrador'
+        }));
+      });
+
+      // Crear un nuevo libro de trabajo
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(dataToExport);
+
+      // Ajustar el ancho de las columnas
+      const colWidths = [
+        { wch: 12 }, // Fecha
+        { wch: 15 }, // Número Asiento
+        { wch: 30 }, // Descripción
+        { wch: 15 }, // Referencia
+        { wch: 40 }, // Cuenta
+        { wch: 15 }, // Débito
+        { wch: 15 }, // Crédito
+        { wch: 12 }  // Estado
+      ];
+      ws['!cols'] = colWidths;
+
+      // Agregar la hoja al libro
+      XLSX.utils.book_append_sheet(wb, ws, 'Libro Diario');
+
+      // Generar el archivo Excel
+      const fileName = `libro_diario_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(wb, fileName);
+      
+    } catch (error) {
+      console.error('Error al exportar a Excel:', error);
+      alert('Error al generar el archivo Excel. Por favor, intente nuevamente.');
+    }
+  };
+
   const filteredEntries = entries.filter(entry => {
     const matchesSearch = entry.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          entry.entry_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -339,15 +386,25 @@ const GeneralJournalPage: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Diario General</h1>
             <p className="text-gray-600">Gestión de asientos contables</p>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={exportToExcel}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center"
+                title="Exportar a Excel"
+              >
+                <i className="ri-file-excel-2-line mr-2"></i>
+                Exportar Excel
+              </button>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
+              >
+                <i className="ri-add-line mr-2"></i>
+                Nuevo Asiento
+              </button>
+            </div>
           </div>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <i className="ri-add-line"></i>
-          Nuevo Asiento
-        </button>
       </div>
 
       {/* Stats Cards */}

@@ -1,112 +1,431 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { exportToPdf } from '../../../utils/exportImportUtils';
+import { toast } from 'sonner';
+import { useAuth } from '../../../hooks/useAuth';
+import { quotesService, customersService } from '../../../services/database';
+
+// Tipos de datos
+type StatusType = 'pending' | 'approved' | 'under_review' | 'rejected' | 'expired';
+
+interface QuoteItem {
+  description: string;
+  quantity: number;
+  price: number;
+  total: number;
+}
+
+interface NewQuoteFormProps {
+  customers: Array<{ id: string; name: string; email: string; phone: string }>;
+  onCancel: () => void;
+  onSaved: () => void;
+  userId?: string;
+}
+
+function NewQuoteForm({ customers, onCancel, onSaved, userId }: NewQuoteFormProps) {
+  const [customerId, setCustomerId] = useState('');
+  const [project, setProject] = useState('');
+  const [validUntil, setValidUntil] = useState<string>(new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+  const [probability, setProbability] = useState<number>(50);
+  const [items, setItems] = useState<QuoteItem[]>([
+    { description: '', quantity: 1, price: 0, total: 0 }
+  ]);
+  const ITBIS_RATE = 0.18;
+
+  const recomputeTotals = (its: QuoteItem[]) => {
+    return its.map(it => ({ ...it, total: (it.quantity || 0) * (it.price || 0) }));
+  };
+
+  const subtotal = items.reduce((s, it) => s + (it.total || 0), 0);
+  const tax = Math.round(subtotal * ITBIS_RATE * 100) / 100;
+  const total = subtotal + tax;
+
+  const addRow = () => setItems(prev => [...prev, { description: '', quantity: 1, price: 0, total: 0 }]);
+  const removeRow = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
+  const updateRow = (idx: number, field: keyof QuoteItem, value: any) => {
+    setItems(prev => {
+      const copy = [...prev];
+      const row = { ...copy[idx], [field]: field === 'quantity' || field === 'price' ? Number(value) : value } as QuoteItem;
+      row.total = (row.quantity || 0) * (row.price || 0);
+      copy[idx] = row;
+      return recomputeTotals(copy);
+    });
+  };
+
+  const save = async () => {
+    try {
+      if (!userId) {
+        toast.info('Sesión no iniciada. Guardado local de demostración.');
+        onSaved();
+        return;
+      }
+      if (!customerId) {
+        toast.error('Seleccione un cliente');
+        return;
+      }
+      if (items.length === 0 || items.every(it => !it.description || !it.quantity || !it.price)) {
+        toast.error('Agregue al menos una línea válida');
+        return;
+      }
+
+      const customer = customers.find(c => c.id === customerId);
+      const quotePayload = {
+        customer_id: customerId,
+        customer_name: customer?.name || '',
+        customer_email: customer?.email || '',
+        project,
+        date: new Date().toISOString().slice(0, 10),
+        valid_until: validUntil,
+        probability,
+        amount: subtotal,
+        tax,
+        total,
+        status: 'pending' as StatusType,
+      };
+      const linePayloads = items
+        .filter(it => it.description && it.quantity > 0 && it.price >= 0)
+        .map(it => ({ description: it.description, quantity: it.quantity, price: it.price, total: it.total }));
+
+      await quotesService.create(userId, quotePayload, linePayloads);
+      toast.success('Cotización creada exitosamente');
+      onSaved();
+    } catch (e) {
+      console.error(e);
+      toast.error('No se pudo crear la cotización');
+    }
+  };
+
+  return (
+    <div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
+          <select
+            value={customerId}
+            onChange={e => setCustomerId(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+          >
+            <option value="">Seleccionar cliente...</option>
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Nombre del Proyecto</label>
+          <input
+            type="text"
+            value={project}
+            onChange={e => setProject(e.target.value)}
+            placeholder="Nombre descriptivo del proyecto"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Válida Hasta</label>
+          <input
+            type="date"
+            value={validUntil}
+            onChange={e => setValidUntil(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Probabilidad de Cierre (%)</label>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={probability}
+            onChange={e => setProbability(Number(e.target.value))}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <h4 className="text-md font-medium text-gray-900 mb-4">Productos/Servicios</h4>
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cantidad</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Precio</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row, idx) => (
+                <tr key={idx}>
+                  <td className="px-4 py-3">
+                    <input
+                      type="text"
+                      value={row.description}
+                      onChange={e => updateRow(idx, 'description', e.target.value)}
+                      placeholder="Descripción del producto/servicio"
+                      className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <input
+                      type="number"
+                      min={1}
+                      value={row.quantity}
+                      onChange={e => updateRow(idx, 'quantity', e.target.value)}
+                      className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <input
+                      type="number"
+                      min={0}
+                      value={row.price}
+                      onChange={e => updateRow(idx, 'price', e.target.value)}
+                      className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-sm font-medium">RD$ {row.total.toLocaleString('es-DO')}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button onClick={() => removeRow(idx)} className="text-red-600 hover:text-red-800">
+                      <i className="ri-delete-bin-line"></i>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <button onClick={addRow} className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap">
+          <i className="ri-add-line mr-2"></i>
+          Agregar Línea
+        </button>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Términos y Condiciones</label>
+          <textarea rows={4} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Términos y condiciones de la propuesta..."></textarea>
+        </div>
+        <div className="bg-gray-50 p-4 rounded-lg">
+          <div className="space-y-2">
+            <div className="flex justify-between">
+              <span className="text-sm text-gray-600">Subtotal:</span>
+              <span className="text-sm font-medium">RD$ {subtotal.toLocaleString('es-DO')}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-sm text-gray-600">ITBIS (18%):</span>
+              <span className="text-sm font-medium">RD$ {tax.toLocaleString('es-DO')}</span>
+            </div>
+            <div className="border-t border-gray-200 pt-2">
+              <div className="flex justify-between">
+                <span className="text-base font-semibold">Total:</span>
+                <span className="text-base font-semibold">RD$ {total.toLocaleString('es-DO')}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-6 border-t border-gray-200 flex justify-end space-x-3 mt-6">
+        <button onClick={onCancel} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap">Cancelar</button>
+        <button onClick={save} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap">Crear Cotización</button>
+      </div>
+    </div>
+  );
+}
+
+interface Quote {
+  id: string;
+  customer: string;
+  customerEmail: string;
+  project: string;
+  amount: number;
+  tax: number;
+  total: number;
+  status: StatusType;
+  date: string;
+  validUntil: string;
+  probability: number;
+  items: QuoteItem[];
+  created_at?: string;
+}
+
+interface Customer {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+}
+
+interface Service {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+}
+
+// Configuración de tablas
+const TABLES = {
+  QUOTES: 'quotes',
+  CUSTOMERS: 'customers',
+  SERVICES: 'services',
+  QUOTE_ITEMS: 'quote_items'
+};
+
+// Verificar conexión con Supabase
+const checkSupabaseConnection = async () => {
+  try {
+    return { connected: true, error: null };
+  } catch (error) {
+    console.error('Error de conexión con Supabase:', error);
+    return { connected: false, error };
+  }
+};
 
 export default function QuotesPage() {
+  const { user } = useAuth();
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [customers, setCustomers] = useState<Array<{id: string, name: string, email: string, phone: string}>>([]);
+  const [services, setServices] = useState<Array<{id: string, name: string, description: string, price: number}>>([]);
 
-  const quotes = [
-    {
-      id: 'COT-2024-050',
-      customer: 'Constructora ABC SA',
-      customerEmail: 'proyectos@constructoraabc.com',
-      project: 'Sistema de Seguridad Edificio Central',
-      amount: 450000,
-      tax: 81000,
-      total: 531000,
-      status: 'pending',
-      date: '2024-01-15',
-      validUntil: '2024-02-15',
-      probability: 85,
+  // Estado para las cotizaciones
+  const [quotes, setQuotes] = useState<Array<{
+    id: string;
+    customer: string;
+    customerEmail: string;
+    project: string;
+    amount: number;
+    tax: number;
+    total: number;
+    status: 'pending' | 'approved' | 'under_review' | 'rejected' | 'expired';
+    date: string;
+    validUntil: string;
+    probability: number;
+    items: Array<{
+      description: string;
+      quantity: number;
+      price: number;
+      total: number;
+    }>;
+  }>>([]);
+
+  // Datos de ejemplo
+  const exampleData = {
+    quotes: [{
+      id: 'ej-001',
+      customer: 'Cliente de Ejemplo',
+      customerEmail: 'ejemplo@cliente.com',
+      project: 'Proyecto de Ejemplo',
+      amount: 10000,
+      tax: 1800,
+      total: 11800,
+      status: 'pending' as const,
+      date: new Date().toISOString().split('T')[0],
+      validUntil: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      probability: 50,
       items: [
-        { description: 'Cámaras de Seguridad IP', quantity: 24, price: 8500, total: 204000 },
-        { description: 'Sistema de Control de Acceso', quantity: 6, price: 15000, total: 90000 },
-        { description: 'Instalación y Configuración', quantity: 1, price: 156000, total: 156000 }
+        { description: 'Servicio de Ejemplo', quantity: 1, price: 10000, total: 10000 }
       ]
-    },
-    {
-      id: 'COT-2024-049',
-      customer: 'Hotel Paradise Resort',
-      customerEmail: 'gerencia@hotelparadise.com',
-      project: 'Renovación Sistema WiFi',
-      amount: 285000,
-      tax: 51300,
-      total: 336300,
-      status: 'approved',
-      date: '2024-01-14',
-      validUntil: '2024-02-14',
-      probability: 95,
-      items: [
-        { description: 'Access Points WiFi 6', quantity: 45, price: 4500, total: 202500 },
-        { description: 'Switch PoE 48 puertos', quantity: 3, price: 18500, total: 55500 },
-        { description: 'Cableado y Configuración', quantity: 1, price: 27000, total: 27000 }
-      ]
-    },
-    {
-      id: 'COT-2024-048',
-      customer: 'Clínica San Rafael',
-      customerEmail: 'administracion@clinicasanrafael.com',
-      project: 'Sistema de Gestión Hospitalaria',
-      amount: 650000,
-      tax: 117000,
-      total: 767000,
-      status: 'under_review',
-      date: '2024-01-13',
-      validUntil: '2024-02-13',
-      probability: 70,
-      items: [
-        { description: 'Software HMS Completo', quantity: 1, price: 450000, total: 450000 },
-        { description: 'Equipos de Cómputo', quantity: 15, price: 8000, total: 120000 },
-        { description: 'Capacitación y Soporte', quantity: 1, price: 80000, total: 80000 }
-      ]
-    },
-    {
-      id: 'COT-2024-047',
-      customer: 'Supermercado La Familia',
-      customerEmail: 'compras@supermercadolafamilia.com',
-      project: 'Sistema POS y Inventario',
-      amount: 125000,
-      tax: 22500,
-      total: 147500,
-      status: 'rejected',
-      date: '2024-01-12',
-      validUntil: '2024-01-27',
-      probability: 15,
-      items: [
-        { description: 'Terminales POS', quantity: 8, price: 12000, total: 96000 },
-        { description: 'Software de Inventario', quantity: 1, price: 29000, total: 29000 }
-      ]
-    },
-    {
-      id: 'COT-2024-046',
-      customer: 'Escuela Técnica Nacional',
-      customerEmail: 'direccion@escuelatecnica.edu.do',
-      project: 'Laboratorio de Computación',
-      amount: 380000,
-      tax: 68400,
-      total: 448400,
-      status: 'expired',
-      date: '2024-01-10',
-      validUntil: '2024-01-25',
-      probability: 60,
-      items: [
-        { description: 'Computadoras de Escritorio', quantity: 25, price: 12000, total: 300000 },
-        { description: 'Proyector Interactivo', quantity: 2, price: 25000, total: 50000 },
-        { description: 'Mobiliario Especializado', quantity: 1, price: 30000, total: 30000 }
-      ]
+    }],
+    customers: [
+      { id: '1', name: 'Cliente de Ejemplo', email: 'ejemplo@cliente.com', phone: '809-000-0000' }
+    ],
+    services: [
+      { id: '1', name: 'Servicio Básico', description: 'Servicio de ejemplo', price: 10000 }
+    ]
+  };
+
+  // Cargar datos iniciales
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        setLoading(true);
+        if (user?.id) {
+          const [cust, qts] = await Promise.all([
+            customersService.getAll(user.id),
+            quotesService.getAll(user.id)
+          ]);
+          // Map customers to expected shape
+          setCustomers((cust || []).map((c: any) => ({
+            id: c.id,
+            name: c.name || c.customer_name || c.full_name || c.fullname || c.company || c.company_name || 'Cliente',
+            email: c.email || c.contact_email || '',
+            phone: c.phone || c.contact_phone || ''
+          })));
+          // Map quotes to UI shape
+          const mapped = (qts || []).map((q: any) => ({
+            id: q.id,
+            customer: q.customer_name || q.customers?.name || 'Cliente',
+            customerEmail: q.customer_email || q.customers?.email || '',
+            project: q.project || '',
+            amount: q.amount || 0,
+            tax: q.tax || 0,
+            total: q.total || 0,
+            status: (q.status || 'pending') as StatusType,
+            date: q.date || q.created_at || new Date().toISOString(),
+            validUntil: q.valid_until || q.validUntil || new Date().toISOString(),
+            probability: q.probability || 0,
+            items: (q.quote_lines || q.items || []).map((it: any) => ({
+              description: it.description || '',
+              quantity: it.quantity || 1,
+              price: it.price || 0,
+              total: it.total || ((it.quantity || 1) * (it.price || 0)),
+            }))
+          }));
+          setQuotes(mapped);
+        } else {
+          // Demo fallback
+          setQuotes(exampleData.quotes);
+          setCustomers(exampleData.customers);
+          setServices(exampleData.services);
+          toast.info('Usando datos de ejemplo. Inicia sesión para guardar en la base de datos.');
+        }
+      } catch (error) {
+        console.error('Error al cargar datos:', error);
+        toast.error('Error al cargar los datos');
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadInitialData();
+  }, [user]);
+
+  // Función para guardar una nueva cotización
+  const saveQuote = async (quoteData: any) => {
+    try {
+      setLoading(true);
+      
+      // Crear un ID temporal para la cotización
+      const newQuote = {
+        ...quoteData,
+        id: `temp-${Date.now()}`,
+        created_at: new Date().toISOString()
+      };
+      
+      // Actualizar el estado local con la nueva cotización
+      setQuotes([newQuote, ...quotes]);
+      
+      toast.success('Cotización guardada localmente (modo demo)');
+      return true;
+      
+    } catch (error) {
+      console.error('Error al guardar la cotización:', error);
+      toast.error('Error al guardar la cotización');
+      return false;
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
 
-  const customers = [
-    { id: '1', name: 'Constructora ABC SA', email: 'proyectos@constructoraabc.com', phone: '809-555-0301' },
-    { id: '2', name: 'Hotel Paradise Resort', email: 'gerencia@hotelparadise.com', phone: '809-555-0302' },
-    { id: '3', name: 'Clínica San Rafael', email: 'administracion@clinicasanrafael.com', phone: '809-555-0303' },
-    { id: '4', name: 'Supermercado La Familia', email: 'compras@supermercadolafamilia.com', phone: '809-555-0304' },
-    { id: '5', name: 'Escuela Técnica Nacional', email: 'direccion@escuelatecnica.edu.do', phone: '809-555-0305' }
-  ];
-
-  const services = [
+  // Datos de ejemplo (puedes eliminarlos una vez que la base de datos esté configurada)
+  const exampleServices = [
     { id: '1', name: 'Sistema de Seguridad', basePrice: 450000 },
     { id: '2', name: 'Infraestructura de Red', basePrice: 285000 },
     { id: '3', name: 'Software de Gestión', basePrice: 650000 },
@@ -126,14 +445,14 @@ export default function QuotesPage() {
   };
 
   const getStatusText = (status: string) => {
-    switch (status) {
-      case 'pending': return 'Pendiente';
-      case 'under_review': return 'En Revisión';
-      case 'approved': return 'Aprobada';
-      case 'rejected': return 'Rechazada';
-      case 'expired': return 'Expirada';
-      default: return 'Desconocido';
-    }
+    const statusMap: {[key: string]: string} = {
+      'pending': 'Pendiente',
+      'under_review': 'En Revisión',
+      'approved': 'Aprobada',
+      'rejected': 'Rechazada',
+      'expired': 'Expirada'
+    };
+    return statusMap[status] || 'Desconocido';
   };
 
   const getProbabilityColor = (probability: number) => {
@@ -143,13 +462,22 @@ export default function QuotesPage() {
     return 'text-red-600';
   };
 
+  // Depuración: Mostrar los datos de cotizaciones
+  console.log('Cotizaciones cargadas:', quotes);
+  
   const filteredQuotes = quotes.filter(quote => {
     const matchesSearch = quote.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          quote.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         quote.project.toLowerCase().includes(searchTerm.toLowerCase());
+                         (quote.project && quote.project.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesStatus = statusFilter === 'all' || quote.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    const shouldShow = matchesSearch && matchesStatus;
+    if (shouldShow) {
+      console.log('Cotización mostrada:', quote.id, quote.customer, quote.status);
+    }
+    return shouldShow;
   });
+  
+  console.log('Total de cotizaciones filtradas:', filteredQuotes.length);
 
   const totalQuoteValue = quotes.reduce((sum, quote) => sum + quote.total, 0);
   const approvedQuoteValue = quotes.filter(q => q.status === 'approved').reduce((sum, quote) => sum + quote.total, 0);
@@ -158,6 +486,47 @@ export default function QuotesPage() {
   const handleCreateQuote = () => {
     setShowNewQuoteModal(true);
   };
+
+  const handleExportToPdf = () => {
+    try {
+      // Preparar los datos para la exportación
+      const columns = [
+        { key: 'id', label: 'Número' },
+        { key: 'customer', label: 'Cliente' },
+        { key: 'project', label: 'Proyecto' },
+        { key: 'date', label: 'Fecha' },
+        { key: 'validUntil', label: 'Válida Hasta' },
+        { key: 'total', label: 'Total' },
+        { key: 'status', label: 'Estado' },
+        { key: 'probability', label: 'Probabilidad (%)' }
+      ];
+
+      // Formatear los datos para la exportación
+      const dataToExport = quotes.map(quote => ({
+        id: quote.id,
+        customer: quote.customer,
+        project: quote.project || 'Sin proyecto',
+        date: new Date(quote.date).toLocaleDateString('es-DO'),
+        validUntil: new Date(quote.validUntil).toLocaleDateString('es-DO'),
+        total: `RD$ ${quote.total.toLocaleString('es-DO')}`,
+        status: getStatusText(quote.status),
+        probability: `${quote.probability}%`
+      }));
+
+      // Llamar a la función de exportación
+      exportToPdf(
+        dataToExport, 
+        columns, 
+        'cotizaciones_ventas', 
+        'ContaBi - Reporte de Cotizaciones de Ventas'
+      );
+      
+    } catch (error) {
+      console.error('Error al exportar a PDF:', error);
+      toast.error('Error al generar el PDF');
+    }
+  };
+
 
   const handleViewQuote = (quoteId: string) => {
     alert(`Visualizando cotización: ${quoteId}`);
@@ -195,6 +564,19 @@ export default function QuotesPage() {
     alert(`Programando seguimiento para cotización: ${quoteId}`);
   };
 
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="p-6">
+          <h1 className="text-2xl font-bold mb-6">Cotizaciones de Ventas</h1>
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -206,8 +588,8 @@ export default function QuotesPage() {
           </div>
           <div className="flex space-x-3">
             <button
-              onClick={() => alert('Exportando cotizaciones en PDF...')}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
+              onClick={handleExportToPdf}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap flex items-center"
             >
               <i className="ri-file-pdf-line mr-2"></i>
               Exportar PDF
@@ -494,144 +876,43 @@ export default function QuotesPage() {
                 </div>
               </div>
               <div className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
-                    <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8">
-                      <option value="">Seleccionar cliente...</option>
-                      {customers.map((customer) => (
-                        <option key={customer.id} value={customer.id}>{customer.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Nombre del Proyecto</label>
-                    <input
-                      type="text"
-                      placeholder="Nombre descriptivo del proyecto"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Válida Hasta</label>
-                    <input
-                      type="date"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Probabilidad de Cierre (%)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      placeholder="85"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-                
-                <div className="mt-6">
-                  <h4 className="text-md font-medium text-gray-900 mb-4">Productos/Servicios</h4>
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <table className="w-full">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cantidad</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Precio</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acción</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr>
-                          <td className="px-4 py-3">
-                            <input 
-                              type="text" 
-                              placeholder="Descripción del producto/servicio"
-                              className="w-full px-2 py-1 border border-gray-300 rounded text-sm" 
-                            />
-                          </td>
-                          <td className="px-4 py-3">
-                            <input type="number" min="1" className="w-full px-2 py-1 border border-gray-300 rounded text-sm" />
-                          </td>
-                          <td className="px-4 py-3">
-                            <input type="number" className="w-full px-2 py-1 border border-gray-300 rounded text-sm" />
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="text-sm font-medium">RD$ 0.00</span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <button className="text-red-600 hover:text-red-800">
-                              <i className="ri-delete-bin-line"></i>
-                            </button>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                  <button className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap">
-                    <i className="ri-add-line mr-2"></i>
-                    Agregar Línea
-                  </button>
-                </div>
-
-                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Términos y Condiciones</label>
-                    <textarea
-                      rows={4}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="Términos y condiciones de la propuesta..."
-                    ></textarea>
-                  </div>
-                  <div className="bg-gray-50 p-4 rounded-lg">
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-sm text-gray-600">Subtotal:</span>
-                        <span className="text-sm font-medium">RD$ 0.00</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-gray-600">ITBIS (18%):</span>
-                        <span className="text-sm font-medium">RD$ 0.00</span>
-                      </div>
-                      <div className="border-t border-gray-200 pt-2">
-                        <div className="flex justify-between">
-                          <span className="text-base font-semibold">Total:</span>
-                          <span className="text-base font-semibold">RD$ 0.00</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
-                <button
-                  onClick={() => setShowNewQuoteModal(false)}
-                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={() => {
-                    alert('Guardando cotización como borrador...');
+                {/* Form state for new quote */}
+                <NewQuoteForm
+                  customers={customers}
+                  onCancel={() => setShowNewQuoteModal(false)}
+                  onSaved={async () => {
                     setShowNewQuoteModal(false);
+                    // reload
+                    if (user?.id) {
+                      setLoading(true);
+                      const qts = await quotesService.getAll(user.id);
+                      const mapped = (qts || []).map((q: any) => ({
+                        id: q.id,
+                        customer: q.customer_name || q.customers?.name || 'Cliente',
+                        customerEmail: q.customer_email || q.customers?.email || '',
+                        project: q.project || '',
+                        amount: q.amount || 0,
+                        tax: q.tax || 0,
+                        total: q.total || 0,
+                        status: (q.status || 'pending') as StatusType,
+                        date: q.date || q.created_at || new Date().toISOString(),
+                        validUntil: q.valid_until || q.validUntil || new Date().toISOString(),
+                        probability: q.probability || 0,
+                        items: (q.quote_lines || []).map((it: any) => ({
+                          description: it.description || '',
+                          quantity: it.quantity || 1,
+                          price: it.price || 0,
+                          total: it.total || 0,
+                        }))
+                      }));
+                      setQuotes(mapped);
+                      setLoading(false);
+                    }
                   }}
-                  className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors whitespace-nowrap"
-                >
-                  Guardar Borrador
-                </button>
-                <button
-                  onClick={() => {
-                    alert('Creando y enviando cotización...');
-                    setShowNewQuoteModal(false);
-                  }}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
-                >
-                  Crear Cotización
-                </button>
+                  userId={user?.id}
+                />
               </div>
+              {/* Actions are handled inside NewQuoteForm */}
             </div>
           </div>
         )}

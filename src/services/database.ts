@@ -8,6 +8,142 @@ const handleDatabaseError = (error: any, fallbackData: any = []) => {
 };
 
 /* ==========================================================
+   Quotes (Sales Quotations) Service
+========================================================== */
+export const quotesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('quotes')
+        .select(`
+          *,
+          quote_lines (*),
+          customers (id, name, email)
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getById(id: string) {
+    try {
+      const { data, error } = await supabase
+        .from('quotes')
+        .select(`
+          *,
+          quote_lines (*)
+        `)
+        .eq('id', id)
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error getting quote by id:', error);
+      throw error;
+    }
+  },
+
+  async create(userId: string, quote: any, lines: any[]) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const quotePayload = {
+        ...quote,
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+      const { data: q, error: qErr } = await supabase
+        .from('quotes')
+        .insert(quotePayload)
+        .select()
+        .single();
+      if (qErr) throw qErr;
+
+      if (lines && lines.length > 0) {
+        const linePayloads = lines.map((l: any) => ({
+          ...l,
+          quote_id: q.id,
+          created_at: now,
+          updated_at: now,
+        }));
+        const { error: lErr } = await supabase
+          .from('quote_lines')
+          .insert(linePayloads);
+        if (lErr) throw lErr;
+      }
+      return q;
+    } catch (error) {
+      console.error('Error creating quote:', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, quote: any, lines?: any[]) {
+    try {
+      const now = new Date().toISOString();
+      const { data: q, error: qErr } = await supabase
+        .from('quotes')
+        .update({ ...quote, updated_at: now })
+        .eq('id', id)
+        .select()
+        .single();
+      if (qErr) throw qErr;
+
+      if (Array.isArray(lines)) {
+        // Replace strategy: delete existing lines and insert new ones
+        const { error: delErr } = await supabase
+          .from('quote_lines')
+          .delete()
+          .eq('quote_id', id);
+        if (delErr) throw delErr;
+
+        if (lines.length > 0) {
+          const linePayloads = lines.map((l: any) => ({
+            ...l,
+            quote_id: id,
+            created_at: now,
+            updated_at: now,
+          }));
+          const { error: insErr } = await supabase
+            .from('quote_lines')
+            .insert(linePayloads);
+          if (insErr) throw insErr;
+        }
+      }
+      return q;
+    } catch (error) {
+      console.error('Error updating quote:', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      // Delete lines first
+      const { error: lErr } = await supabase
+        .from('quote_lines')
+        .delete()
+        .eq('quote_id', id);
+      if (lErr) throw lErr;
+      const { error } = await supabase
+        .from('quotes')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error deleting quote:', error);
+      throw error;
+    }
+  }
+};
+
+/* ==========================================================
    Chart of Accounts Service
 ========================================================== */
 export const chartAccountsService = {
@@ -180,6 +316,17 @@ export const chartAccountsService = {
   },
 
   async generateIncomeStatement(userId: string, fromDate: string, toDate: string) {
+    if (!userId) {
+      return {
+        income: [],
+        expenses: [],
+        totalIncome: 0,
+        totalExpenses: 0,
+        netIncome: 0,
+        fromDate,
+        toDate
+      };
+    }
     try {
       const { data, error } = await supabase
         .from('chart_accounts')
@@ -295,6 +442,16 @@ export const chartAccountsService = {
   },
 
   async generateCashFlowStatement(userId: string, fromDate: string, toDate: string) {
+    if (!userId) {
+      return {
+        operatingCashFlow: 0,
+        investingCashFlow: 0,
+        financingCashFlow: 0,
+        netCashFlow: 0,
+        fromDate,
+        toDate
+      };
+    }
     try {
       // Obtener movimientos de efectivo del período
       const { data: journalEntries, error } = await supabase
@@ -964,12 +1121,56 @@ export const inventoryService = {
 export const customersService = {
   async getAll(userId: string) {
     try {
-      const { data, error } = await supabase
+      // First attempt: order by 'name'
+      let { data, error } = await supabase
         .from('customers')
         .select('*')
         .eq('user_id', userId)
         .order('name');
-      if (error) return handleDatabaseError(error, []);
+      if (error) {
+        console.warn('customersService.getAll(order by name) failed, retrying by customer_name:', error.message);
+        // Retry ordering by 'customer_name'
+        const retry = await supabase
+          .from('customers')
+          .select('*')
+          .eq('user_id', userId)
+          .order('customer_name');
+        if (retry.error) {
+          console.warn('customersService.getAll(order by customer_name) failed, fallback without order:', retry.error.message);
+          const fallback = await supabase
+            .from('customers')
+            .select('*')
+            .eq('user_id', userId);
+          if (fallback.error) return handleDatabaseError(fallback.error, []);
+          return fallback.data ?? [];
+        }
+        return retry.data ?? [];
+      }
+      // If no error but empty, attempt alternative order
+      if (!data || data.length === 0) {
+        const retry = await supabase
+          .from('customers')
+          .select('*')
+          .eq('user_id', userId)
+          .order('customer_name');
+        if (!retry.error && retry.data && retry.data.length > 0) return retry.data;
+      }
+
+      // Fallback to 'clients' table if customers is empty or errored previously
+      if (!data || data.length === 0) {
+        let clients = await supabase
+          .from('clients')
+          .select('*')
+          .eq('user_id', userId)
+          .order('name');
+        if (clients.error) {
+          clients = await supabase
+            .from('clients')
+            .select('*')
+            .eq('user_id', userId);
+        }
+        if (!clients.error && clients.data && clients.data.length > 0) return clients.data;
+      }
       return data ?? [];
     } catch (error) {
       return handleDatabaseError(error, []);

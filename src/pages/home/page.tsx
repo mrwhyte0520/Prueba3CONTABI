@@ -141,9 +141,9 @@ export default function HomePage() {
               >
                 Precios
               </button>
-              <Link to="/login" className="text-blue-600 hover:text-blue-700 cursor-pointer">Iniciar Sesión</Link>
+              <Link to="/auth/login" className="text-blue-600 hover:text-blue-700 cursor-pointer">Iniciar Sesión</Link>
               <Link 
-                to="/register" 
+                to="/auth/register" 
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 whitespace-nowrap cursor-pointer"
               >
                 Prueba Gratis
@@ -172,7 +172,7 @@ export default function HomePage() {
               </p>
               <div className="flex flex-col sm:flex-row gap-4">
                 <Link 
-                  to="/register"
+                  to="/auth/register"
                   className="bg-blue-600 text-white px-8 py-4 rounded-lg hover:bg-blue-700 text-center font-semibold whitespace-nowrap cursor-pointer"
                 >
                   Comenzar Prueba Gratis
@@ -260,7 +260,7 @@ export default function HomePage() {
                 </ul>
 
                 <Link
-                  to="/register"
+                  to="/auth/register"
                   className={`w-full py-3 px-4 rounded-lg font-semibold text-center block whitespace-nowrap cursor-pointer ${
                     plan.popular
                       ? 'bg-blue-600 text-white hover:bg-blue-700'
@@ -286,7 +286,7 @@ export default function HomePage() {
             para su gestión contable y fiscal.
           </p>
           <Link 
-            to="/register"
+            to="/auth/register"
             className="bg-white text-blue-600 px-8 py-4 rounded-lg hover:bg-gray-100 font-semibold text-lg whitespace-nowrap cursor-pointer"
           >
             Comenzar Prueba Gratis de 15 Días

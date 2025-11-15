@@ -212,8 +212,9 @@ export default function AccountingPage() {
           return;
       }
 
-      // Descargar el archivo
-      const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+      // Descargar el archivo (UTF-8 BOM + CRLF para compatibilidad con Excel)
+      const csvForExcel = '\uFEFF' + content.replace(/\n/g, '\r\n');
+      const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);

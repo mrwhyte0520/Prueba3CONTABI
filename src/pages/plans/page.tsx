@@ -1,6 +1,9 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { usePlans } from '../../hooks/usePlans';
+import { useAuth } from '../../hooks/useAuth';
+import { notifyPlanPurchase } from '../../utils/notify';
 
 interface Plan {
   id: string;
@@ -19,6 +22,8 @@ export default function PlansPage() {
   const [selectedPlan, setSelectedPlan] = useState<string>('');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const navigate = useNavigate();
+  const { user } = useAuth();
   
   const { 
     currentPlan, 
@@ -27,6 +32,28 @@ export default function PlansPage() {
     canSelectPlan, 
     getTrialStatus 
   } = usePlans();
+
+  // Student plan expiration (4 months)
+  const studentExpiresAt = Number(localStorage.getItem('contabi_student_expires_at') || '0');
+  const nowTs = Date.now();
+  const studentExpired = studentExpiresAt > 0 && nowTs > studentExpiresAt;
+  const studentMsLeft = Math.max(0, studentExpiresAt - nowTs);
+
+  const formatStudentLeft = () => {
+    if (!studentExpiresAt) return null;
+    const days = Math.floor(studentMsLeft / (1000 * 60 * 60 * 24));
+    if (studentExpired) return 'Expirado';
+    if (days >= 30) {
+      const months = Math.floor(days / 30);
+      const remDays = days % 30;
+      return `${months} mes${months !== 1 ? 'es' : ''}${remDays ? ` y ${remDays} día${remDays !== 1 ? 's' : ''}` : ''}`;
+    }
+    if (days > 0) return `${days} día${days !== 1 ? 's' : ''}`;
+    const hours = Math.floor(studentMsLeft / (1000 * 60 * 60));
+    if (hours > 0) return `${hours} hora${hours !== 1 ? 's' : ''}`;
+    const minutes = Math.floor(studentMsLeft / (1000 * 60));
+    return `${minutes} minuto${minutes !== 1 ? 's' : ''}`;
+  };
 
   const plans: Plan[] = [
     {
@@ -97,7 +124,7 @@ export default function PlansPage() {
     {
       id: 'student',
       name: 'ESTUDIANTIL',
-      price: 49.97,
+      price: 0,
       period: '/mes',
       description: 'Especial para estudiantes y emprendedores',
       features: [
@@ -123,6 +150,14 @@ export default function PlansPage() {
     if (!canSelectPlan()) {
       return;
     }
+    if (planId === 'student') {
+      // Siempre pasa por verificación para estudiantes
+      if (studentExpired) {
+        alert('Tu verificación estudiantil ha expirado. Debes volver a verificar.');
+      }
+      navigate('/plans/student-verify');
+      return;
+    }
     setSelectedPlan(planId);
     setShowPaymentModal(true);
   };
@@ -139,6 +174,18 @@ export default function PlansPage() {
         setShowPaymentModal(false);
         // Mostrar mensaje de éxito
         alert('¡Suscripción exitosa! Bienvenido a Contabi RD.');
+        try {
+          const plan = plans.find(p => p.id === selectedPlan);
+          await notifyPlanPurchase({
+            to: '+18299411224',
+            userEmail: user?.email || 'desconocido',
+            planId: selectedPlan,
+            planName: plan?.name || selectedPlan,
+            amount: plan?.price ?? 0,
+            method: (result as any)?.method || 'desconocido',
+            purchasedAt: new Date().toISOString(),
+          });
+        } catch {}
       } else {
         alert(result.error || 'Error al procesar el pago. Intente nuevamente.');
       }
@@ -181,6 +228,11 @@ export default function PlansPage() {
                   <div className="text-sm text-green-200">Plan Activo</div>
                   <div className="text-2xl font-bold text-green-100">{currentPlan.name}</div>
                   <div className="text-sm text-green-200">Suscripción activa</div>
+                  {currentPlan.name?.toUpperCase() === 'ESTUDIANTIL' && (
+                    <div className={`mt-2 text-sm ${studentExpired ? 'text-red-200' : 'text-green-100'}`}>
+                      {studentExpired ? 'Verificación expirada · Requiere reverificación' : `Tiempo restante: ${formatStudentLeft()}`}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className={`rounded-lg p-4 border ${
@@ -264,6 +316,11 @@ export default function PlansPage() {
                   Más Popular
                 </div>
               )}
+              {plan.id === 'student' && studentExpiresAt > 0 && (
+                <div className={`absolute top-0 right-0 m-2 text-xs px-2 py-1 rounded ${studentExpired ? 'bg-red-600 text-white' : 'bg-green-600 text-white'}`}>
+                  {studentExpired ? 'Expirado' : `Restante: ${formatStudentLeft()}`}
+                </div>
+              )}
 
               <div className={`bg-gradient-to-r ${plan.color} p-6 text-white ${plan.popular ? 'pt-12' : ''}`}>
                 <div className="text-center">
@@ -305,12 +362,13 @@ export default function PlansPage() {
                       : 'bg-gradient-to-r from-navy-600 to-navy-700 text-white hover:from-navy-700 hover:to-navy-800'
                   }`}
                 >
-                  {!canSelectPlan() 
-                    ? 'Pago Requerido' 
-                    : currentPlan?.active 
-                    ? 'Cambiar Plan' 
-                    : 'Seleccionar Plan'
-                  }
+                  {!canSelectPlan()
+                    ? 'Pago Requerido'
+                    : plan.id === 'student'
+                    ? 'Verificación Estudiantil'
+                    : currentPlan?.active
+                    ? 'Cambiar Plan'
+                    : 'Seleccionar Plan'}
                 </button>
 
                 <div className="text-center mt-3">

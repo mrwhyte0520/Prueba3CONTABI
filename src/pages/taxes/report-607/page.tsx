@@ -92,7 +92,8 @@ export default function Report607Page() {
       ].join(','))
     ].join('\n');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
+    const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);

@@ -152,8 +152,9 @@ export default function FinancialStatementsPage() {
       csvContent += `Flujo de Efectivo:,${statements.filter(s => s.type === 'cash_flow').length}\n`;
       csvContent += `Estado de Patrimonio:,${statements.filter(s => s.type === 'equity_statement').length}\n`;
 
-      // Crear y descargar archivo
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      // Crear y descargar archivo (UTF-8 BOM + CRLF para Excel)
+      const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
+      const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
@@ -218,7 +219,8 @@ export default function FinancialStatementsPage() {
       csvContent += `"Total Patrimonio","${totals.totalEquity.toLocaleString()}"\n\n`;
       csvContent += `"TOTAL PASIVOS Y PATRIMONIO","${(totals.totalLiabilities + totals.totalEquity).toLocaleString()}"\n`;
 
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
+      const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);

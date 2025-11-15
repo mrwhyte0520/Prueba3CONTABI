@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { supabase } from '../../lib/supabase';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -10,6 +11,11 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  // Usuarios (acceso por rol)
+  const [roleEmail, setRoleEmail] = useState('');
+  const [roleName, setRoleName] = useState('');
+  const [roleLoading, setRoleLoading] = useState(false);
+  const [roleMsg, setRoleMsg] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,6 +57,42 @@ export default function Login() {
     } catch (err: any) {
       setError('Error al iniciar sesión. Por favor intenta de nuevo.');
       setLoading(false);
+    }
+  };
+
+  const handleRoleAccess = async () => {
+    setError('');
+    setRoleMsg('');
+    if (!roleEmail || !roleName) {
+      setError('Ingresa email y nombre de rol');
+      return;
+    }
+    if (!/\S+@\S+\.\S+/.test(roleEmail)) {
+      setError('Ingresa un email válido');
+      return;
+    }
+    try {
+      setRoleLoading(true);
+      // Validación rápida contra RBAC local (si existe)
+      const roles = JSON.parse(localStorage.getItem('contabi_rbac_roles') || '[]');
+      const role = roles.find((r: any) => (r.name || '').toLowerCase() === roleName.toLowerCase());
+      if (!role) {
+        setError('Rol no encontrado. Verifica el nombre del rol.');
+        return;
+      }
+      const userRoles = JSON.parse(localStorage.getItem('contabi_rbac_user_roles') || '[]');
+      const hasAssign = userRoles.some((ur: any) => ur.user_id?.toLowerCase() === roleEmail.toLowerCase() && ur.role_id === role.id);
+      if (!hasAssign) {
+        // Permitimos continuar, pero avisamos (si usas Supabase, la verificación real será al entrar)
+        setRoleMsg('No se encontró asignación local, se enviará enlace de acceso. Los permisos se aplicarán si el rol está asignado en el servidor.');
+      }
+      // Enviar enlace mágico de acceso
+      await supabase.auth.signInWithOtp({ email: roleEmail, options: { emailRedirectTo: window.location.origin + '/dashboard' } });
+      setRoleMsg('Te enviamos un enlace de acceso a tu correo. Revisa tu bandeja de entrada.');
+    } catch (e) {
+      setError('No se pudo enviar el enlace. Intenta de nuevo.');
+    } finally {
+      setRoleLoading(false);
     }
   };
 
@@ -162,6 +204,28 @@ export default function Login() {
               )}
             </button>
           </form>
+
+          {/* Usuarios: acceso por rol */}
+          <div className="mt-8 border-t pt-6">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2"><i className="ri-team-line"></i> Usuarios</h3>
+            <p className="text-xs text-gray-500 mb-3">Acceso para subusuarios: ingresa tu email y el nombre del rol asignado por el administrador. Recibirás un enlace mágico.</p>
+            {roleMsg && (
+              <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">{roleMsg}</div>
+            )}
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email del usuario</label>
+                <input value={roleEmail} onChange={(e)=>setRoleEmail(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="usuario@gmail.com" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre del rol</label>
+                <input value={roleName} onChange={(e)=>setRoleName(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Ej. Vendedor" />
+              </div>
+              <button onClick={handleRoleAccess} disabled={roleLoading} className="w-full bg-slate-800 text-white py-3 px-4 rounded-lg font-medium hover:bg-slate-900 transition-all disabled:opacity-50">
+                {roleLoading ? 'Enviando enlace…' : 'Acceso por rol (enlace por email)'}
+              </button>
+            </div>
+          </div>
 
           {/* Registro */}
           <div className="mt-6 text-center">

@@ -1,0 +1,382 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import DashboardLayout from '../../components/layout/DashboardLayout';
+import { useAuth } from '../../hooks/useAuth';
+import { customersService } from '../../services/database';
+
+interface Customer {
+  id: string;
+  name: string;
+  document: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  type: 'regular' | 'vip';
+}
+
+export default function CustomersPage() {
+  const { user } = useAuth();
+
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [showNew, setShowNew] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editing, setEditing] = useState<Customer | null>(null);
+  const [form, setForm] = useState<Omit<Customer, 'id'>>({ name: '', document: '', phone: '', email: '', address: '', type: 'regular' });
+
+  const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+
+  const formatDocument = (raw: string) => {
+    const digits = (raw || '').replace(/\D/g, '').slice(0, 11);
+    const parts: string[] = [];
+    if (digits.length <= 3) return digits;
+    parts.push(digits.slice(0, 3));
+    if (digits.length <= 10) { parts.push(digits.slice(3)); return parts.join('-'); }
+    parts.push(digits.slice(3, 10));
+    parts.push(digits.slice(10));
+    return parts.join('-');
+  };
+  const formatPhone = (raw: string) => {
+    const digits = (raw || '').replace(/\D/g, '').slice(0, 10);
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0,3)}-${digits.slice(3)}`;
+    return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6)}`;
+  };
+
+  const anyModalOpen = showNew || showEdit;
+
+  useEffect(() => {
+    document.body.style.overflow = anyModalOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [anyModalOpen]);
+
+  const Modal = ({ children, onClose }: { children: ReactNode; onClose: () => void }) => {
+    useEffect(() => {
+      const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    return createPortal(
+      <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+        <div className="relative w-full max-w-xl bg-white rounded-lg shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[80vh] overflow-y-auto p-6">{children}</div>
+        </div>
+      </div>,
+      document.body
+    );
+  };
+
+  const load = async () => {
+    try {
+      if (user?.id) {
+        const rows = await customersService.getAll(user.id);
+        const mapped: Customer[] = (rows || []).map((c: any) => ({
+          id: c.id,
+          name: c.name || c.customer_name || 'Cliente',
+          document: c.document || c.tax_id || '',
+          phone: c.phone || c.contact_phone || '',
+          email: c.email || c.contact_email || '',
+          address: c.address || '',
+          type: (c.type === 'vip' ? 'vip' : 'regular') as 'regular' | 'vip'
+        }));
+        setCustomers(mapped);
+      } else {
+        const local = localStorage.getItem('contabi_customers');
+        setCustomers(local ? JSON.parse(local) : []);
+      }
+    } catch {
+      const local = localStorage.getItem('contabi_customers');
+      setCustomers(local ? JSON.parse(local) : []);
+    }
+  };
+
+  useEffect(() => { load(); }, [user]);
+
+  const filtered = useMemo(() => customers.filter(c =>
+    (c.name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (c.document || '').toLowerCase().includes(search.toLowerCase()) ||
+    (c.email || '').toLowerCase().includes(search.toLowerCase())
+  ), [customers, search]);
+
+  useEffect(() => { setPage(1); }, [search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paginated = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize]);
+
+  const saveLocal = (list: Customer[]) => {
+    localStorage.setItem('contabi_customers', JSON.stringify(list));
+    setCustomers(list);
+  };
+
+  const onCreate = async () => {
+    if (!form.name || !form.document) { alert('Nombre y Documento son requeridos'); return; }
+    const docOk = /^\d{3}-\d{7}-\d$/.test(form.document);
+    const phoneOk = !form.phone || /^\d{3}-\d{3}-\d{4}$/.test(form.phone);
+    if (!docOk) return alert('Documento inválido. 000-0000000-0');
+    if (!phoneOk) return alert('Teléfono inválido. 000-000-0000');
+
+    if (user?.id) {
+      try {
+        await customersService.create(user.id, form);
+        setShowNew(false);
+        setForm({ name: '', document: '', phone: '', email: '', address: '', type: 'regular' });
+        await load();
+        return;
+      } catch {}
+    }
+    const local: Customer = { id: `local-${Date.now()}`, ...form } as Customer;
+    saveLocal([local, ...customers]);
+    setShowNew(false);
+    setForm({ name: '', document: '', phone: '', email: '', address: '', type: 'regular' });
+  };
+
+  const onUpdate = async () => {
+    if (!editing) return;
+    if (!editing.name || !editing.document) { alert('Nombre y Documento son requeridos'); return; }
+    const docOk = /^\d{3}-\d{7}-\d$/.test(editing.document);
+    const phoneOk = !editing.phone || /^\d{3}-\d{3}-\d{4}$/.test(editing.phone);
+    if (!docOk) return alert('Documento inválido. 000-0000000-0');
+    if (!phoneOk) return alert('Teléfono inválido. 000-000-0000');
+
+    if (user?.id && isUuid(editing.id)) {
+      try {
+        await customersService.update(editing.id, editing);
+        setShowEdit(false);
+        setEditing(null);
+        await load();
+        return;
+      } catch {}
+    }
+    const next = customers.map(c => c.id === editing.id ? editing : c);
+    saveLocal(next);
+    setShowEdit(false);
+    setEditing(null);
+  };
+
+  const onDelete = async (id: string) => {
+    if (!confirm('¿Eliminar cliente?')) return;
+    if (user?.id && isUuid(id)) {
+      try {
+        await customersService.delete(id);
+        await load();
+        return;
+      } catch {}
+    }
+    saveLocal(customers.filter(c => c.id !== id));
+  };
+
+  const exportCSV = () => {
+    const rows = filtered;
+    const header = ['Nombre','Documento','Teléfono','Email','Dirección','Tipo'];
+    const body = rows.map(r => [
+      `"${(r.name||'').replace(/"/g,'""')}"`,
+      r.document || '',
+      r.phone || '',
+      r.email || '',
+      `"${(r.address||'').replace(/"/g,'""')}"`,
+      r.type === 'vip' ? 'VIP' : 'Regular'
+    ].join(','));
+    const csvContent = [header.join(','), ...body].join('\n');
+    const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
+    const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `clientes_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+  };
+
+  return (
+    <DashboardLayout>
+      <div className="p-6 space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Clientes</h1>
+            <p className="text-gray-600">Gestión centralizada de clientes</p>
+          </div>
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="relative flex-1 md:w-80">
+              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por nombre, documento o email..."
+                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              />
+            </div>
+            <button
+              onClick={exportCSV}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+            >
+              <i className="ri-download-line mr-2" />
+              Exportar CSV
+            </button>
+            <button
+              onClick={() => { setForm({ name: '', document: '', phone: '', email: '', address: '', type: 'regular' }); setShowNew(true); }}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+            >
+              <i className="ri-add-line mr-2" />
+              Nuevo Cliente
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nombre</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Documento</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Teléfono</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {paginated.map(c => (
+                  <tr key={c.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-sm font-medium text-gray-900">{c.name}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{c.document}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{c.phone || '—'}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{c.email || '—'}</td>
+                    <td className="px-4 py-3 text-sm">
+                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${c.type === 'vip' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'}`}>{c.type === 'vip' ? 'VIP' : 'Regular'}</span>
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => { setEditing({ ...c }); setShowEdit(true); }} className="px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700" title="Editar"><i className="ri-edit-line" /></button>
+                        <button onClick={() => onDelete(c.id)} className="px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700" title="Eliminar"><i className="ri-delete-bin-line" /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={6} className="px-4 py-6 text-center text-sm text-gray-500">No hay clientes</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-gray-600">
+            Página {page} de {totalPages} · {filtered.length} registros
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className={`px-3 py-1 rounded border ${page <= 1 ? 'text-gray-400 bg-gray-100 cursor-not-allowed' : 'bg-white hover:bg-gray-50'}`}
+            >Anterior</button>
+            <select
+              value={pageSize}
+              onChange={(e) => { setPageSize(parseInt(e.target.value, 10)); setPage(1); }}
+              className="px-2 py-1 border rounded"
+            >
+              {[10,20,50,100].map(s => <option key={s} value={s}>{s}/página</option>)}
+            </select>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className={`px-3 py-1 rounded border ${page >= totalPages ? 'text-gray-400 bg-gray-100 cursor-not-allowed' : 'bg-white hover:bg-gray-50'}`}
+            >Siguiente</button>
+          </div>
+        </div>
+
+        {showNew && (
+          <Modal onClose={() => setShowNew(false)}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Nuevo Cliente</h3>
+              <button onClick={() => setShowNew(false)} className="text-gray-400 hover:text-gray-600"><i className="ri-close-line" /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <input type="text" value={form.name} onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Documento *</label>
+                <input type="text" value={form.document} onChange={e => setForm(prev => ({ ...prev, document: e.target.value }))} onBlur={e => setForm(prev => ({ ...prev, document: formatDocument(e.target.value) }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="001-1234567-8" required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                <input type="tel" value={form.phone} onChange={e => setForm(prev => ({ ...prev, phone: e.target.value }))} onBlur={e => setForm(prev => ({ ...prev, phone: formatPhone(e.target.value) }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="809-123-4567" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input type="email" value={form.email} onChange={e => setForm(prev => ({ ...prev, email: e.target.value }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="cliente@email.com" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
+                <textarea value={form.address} onChange={e => setForm(prev => ({ ...prev, address: e.target.value }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" rows={2} placeholder="Dirección completa" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Cliente</label>
+                <select value={form.type} onChange={e => setForm(prev => ({ ...prev, type: e.target.value as 'regular' | 'vip' }))} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8">
+                  <option value="regular">Regular</option>
+                  <option value="vip">VIP</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={() => setShowNew(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50">Cancelar</button>
+                <button onClick={onCreate} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Guardar</button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {showEdit && editing && (
+          <Modal onClose={() => { setShowEdit(false); setEditing(null); }}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Editar Cliente</h3>
+              <button onClick={() => { setShowEdit(false); setEditing(null); }} className="text-gray-400 hover:text-gray-600"><i className="ri-close-line" /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <input type="text" value={editing.name} onChange={e => setEditing(prev => ({ ...(prev as Customer), name: e.target.value }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Documento *</label>
+                <input type="text" value={editing.document} onChange={e => setEditing(prev => ({ ...(prev as Customer), document: e.target.value }))} onBlur={e => setEditing(prev => ({ ...(prev as Customer), document: formatDocument(e.target.value) }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                <input type="tel" value={editing.phone} onChange={e => setEditing(prev => ({ ...(prev as Customer), phone: e.target.value }))} onBlur={e => setEditing(prev => ({ ...(prev as Customer), phone: formatPhone(e.target.value) }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input type="email" value={editing.email} onChange={e => setEditing(prev => ({ ...(prev as Customer), email: e.target.value }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
+                <textarea value={editing.address} onChange={e => setEditing(prev => ({ ...(prev as Customer), address: e.target.value }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" rows={2} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Cliente</label>
+                <select value={editing.type} onChange={e => setEditing(prev => ({ ...(prev as Customer), type: e.target.value as 'regular' | 'vip' }))} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8">
+                  <option value="regular">Regular</option>
+                  <option value="vip">VIP</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={() => { setShowEdit(false); setEditing(null); }} className="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50">Cancelar</button>
+                <button onClick={onUpdate} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Guardar Cambios</button>
+              </div>
+            </div>
+          </Modal>
+        )}
+      </div>
+    </DashboardLayout>
+  );
+}

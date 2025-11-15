@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
+import * as ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 
 interface Account {
   id: string;
@@ -96,58 +98,76 @@ const GeneralLedgerPage: React.FC = () => {
     }
   };
 
-  const downloadExcel = () => {
+  const downloadExcel = async () => {
     try {
       if (!selectedAccount) {
         alert('Por favor seleccione una cuenta primero');
         return;
       }
-
-      // Crear contenido CSV
-      let csvContent = `Mayor General - ${selectedAccount.code} ${selectedAccount.name}\n`;
-      csvContent += `Período: ${dateFrom || 'Inicio'} - ${dateTo || 'Actual'}\n`;
-      csvContent += `Tipo de Cuenta: ${getAccountTypeName(selectedAccount.type)}\n`;
-      csvContent += `Balance Normal: ${selectedAccount.normalBalance === 'debit' ? 'Débito' : 'Crédito'}\n\n`;
-      csvContent += 'Fecha,Asiento,Descripción,Referencia,Débito,Crédito,Balance\n';
       
+      if (ledgerEntries.length === 0) {
+        alert('No hay movimientos para exportar');
+        return;
+      }
+
+      // Crear un nuevo libro de Excel
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Mayor General');
+
+      // Agregar encabezados
+      worksheet.addRow(['Mayor General']);
+      worksheet.addRow([`Cuenta: ${selectedAccount.code} - ${selectedAccount.name}`]);
+      worksheet.addRow([`Período: ${dateFrom || 'Inicio'} - ${dateTo || 'Actual'}`]);
+      worksheet.addRow([]); // Línea en blanco
+      
+      // Encabezados de la tabla
+      const headerRow = worksheet.addRow([
+        'Fecha', 'Asiento', 'Descripción', 'Débito', 'Crédito', 'Balance'
+      ]);
+      
+      // Estilo para los encabezados
+      headerRow.font = { bold: true };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFD9EAD3' }
+      };
+
+      // Agregar los datos
       ledgerEntries.forEach(entry => {
-        const row = [
+        worksheet.addRow([
           new Date(entry.date).toLocaleDateString(),
           entry.entryNumber,
-          `"${entry.description}"`,
-          entry.reference,
-          entry.debit > 0 ? entry.debit.toLocaleString() : '',
-          entry.credit > 0 ? entry.credit.toLocaleString() : '',
-          Math.abs(entry.balance).toLocaleString()
-        ].join(',');
-        csvContent += row + '\n';
+          entry.description || '',
+          entry.debit > 0 ? entry.debit : '',
+          entry.credit > 0 ? entry.credit : '',
+          entry.balance || 0
+        ]);
       });
 
-      // Agregar totales
-      csvContent += '\nTotales:,,,';
-      csvContent += `,${ledgerEntries.reduce((sum, entry) => sum + entry.debit, 0).toLocaleString()}`;
-      csvContent += `,${ledgerEntries.reduce((sum, entry) => sum + entry.credit, 0).toLocaleString()}`;
-      csvContent += `,${Math.abs(ledgerEntries[ledgerEntries.length - 1]?.balance || 0).toLocaleString()}`;
+      // Ajustar el ancho de las columnas
+      worksheet.columns = [
+        { key: 'fecha', width: 15 },
+        { key: 'asiento', width: 10 },
+        { key: 'descripcion', width: 40 },
+        { key: 'debito', width: 15 },
+        { key: 'credito', width: 15 },
+        { key: 'balance', width: 15 }
+      ];
 
-      // Agregar resumen
-      csvContent += '\n\nResumen:\n';
-      csvContent += `Total Movimientos:,${ledgerEntries.length}\n`;
-      csvContent += `Balance Final:,RD$${Math.abs(selectedAccount.balance).toLocaleString()}\n`;
-      csvContent += `Saldo ${selectedAccount.normalBalance === 'debit' ? 'Deudor' : 'Acreedor'}:,${selectedAccount.balance >= 0 ? 'Sí' : 'No'}\n`;
-
-      // Crear y descargar archivo
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `mayor_${selectedAccount.code}_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Generar el archivo Excel
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { 
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
+      
+      // Descargar el archivo
+      const fileName = `mayor_${selectedAccount.code}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      saveAs(blob, fileName);
+      
     } catch (error) {
-      console.error('Error downloading Excel:', error);
-      alert('Error al descargar el archivo');
+      console.error('Error al exportar a Excel:', error);
+      alert('Error al generar el archivo Excel. Por favor, intente nuevamente.');
     }
   };
 

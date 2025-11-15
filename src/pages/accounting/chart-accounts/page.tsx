@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { chartAccountsService } from '../../../services/database';
 import { useAuth } from '../../../hooks/useAuth';
+import * as XLSX from 'xlsx';
 
 interface ChartAccount {
   id: string;
@@ -96,14 +97,6 @@ export default function ChartAccountsPage() {
       color: 'bg-green-100 text-green-800'
     },
     {
-      id: 'quickbooks',
-      name: 'QuickBooks',
-      description: 'Formato IIF de QuickBooks Desktop y Online',
-      fileTypes: ['.iif', '.qbx', '.csv'],
-      icon: 'ri-file-chart-line',
-      color: 'bg-blue-100 text-blue-800'
-    },
-    {
       id: 'excel',
       name: 'Microsoft Excel',
       description: 'Archivos Excel con formato estructurado (.xlsx, .xls)',
@@ -112,36 +105,12 @@ export default function ChartAccountsPage() {
       color: 'bg-green-100 text-green-800'
     },
     {
-      id: 'sage',
-      name: 'Sage 50/100/200',
-      description: 'Formato de exportación de Sage Accounting',
-      fileTypes: ['.csv', '.txt'],
-      icon: 'ri-file-list-line',
-      color: 'bg-purple-100 text-purple-800'
-    },
-    {
-      id: 'sap',
-      name: 'SAP Business One',
-      description: 'Formato XML/CSV de SAP para plan de cuentas',
-      fileTypes: ['.xml', '.csv'],
-      icon: 'ri-file-code-line',
-      color: 'bg-orange-100 text-orange-800'
-    },
-    {
-      id: 'xero',
-      name: 'Xero Accounting',
-      description: 'Formato CSV de Xero para importación de cuentas',
-      fileTypes: ['.csv'],
-      icon: 'ri-cloud-line',
-      color: 'bg-indigo-100 text-indigo-800'
-    },
-    {
-      id: 'json',
-      name: 'JSON Universal',
-      description: 'Formato JSON para sistemas modernos y APIs',
-      fileTypes: ['.json'],
-      icon: 'ri-code-s-slash-line',
-      color: 'bg-gray-100 text-gray-800'
+      id: 'quickbooks',
+      name: 'QuickBooks',
+      description: 'Formato IIF de QuickBooks Desktop y Online',
+      fileTypes: ['.iif', '.csv'],
+      icon: 'ri-file-chart-line',
+      color: 'bg-blue-100 text-blue-800'
     },
     {
       id: 'xml',
@@ -150,6 +119,14 @@ export default function ChartAccountsPage() {
       fileTypes: ['.xml'],
       icon: 'ri-file-code-line',
       color: 'bg-yellow-100 text-yellow-800'
+    },
+    {
+      id: 'json',
+      name: 'JSON Universal',
+      description: 'Formato JSON para sistemas modernos y APIs',
+      fileTypes: ['.json'],
+      icon: 'ri-code-s-slash-line',
+      color: 'bg-gray-100 text-gray-800'
     }
   ];
 
@@ -227,23 +204,59 @@ export default function ChartAccountsPage() {
     setShowImportModal(true);
   };
 
+  const mapSpanishTypeToInternal = (type: string): string => {
+    const normalized = type.trim().toLowerCase();
+    switch (normalized) {
+      case 'activo':
+        return 'asset';
+      case 'pasivo':
+        return 'liability';
+      case 'patrimonio':
+        return 'equity';
+      case 'ingreso':
+        return 'income';
+      case 'gasto':
+      case 'gastos':
+        return 'expense';
+      default:
+        return normalized || 'asset';
+    }
+  };
+
   const parseCSVContent = (content: string): ImportData[] => {
     const lines = content.split('\n');
     const importedData: ImportData[] = [];
+
+    const cleanText = (value: string) =>
+      value.replace(/[\u0000-\u001F\u007F]/g, '').trim();
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
 
-      const columns = line.split(',').map(col => col.trim().replace(/"/g, ''));
+      const columns = line.split(',').map(col => cleanText(col.replace(/"/g, '')));
       if (columns.length >= 3) {
+        const rawType = columns[2];
+        const mappedType = mapSpanishTypeToInternal(rawType);
+
+        // Reconstruir balance en caso de tener separadores de miles con coma (ej: 35,000)
+        let balance = 0;
+        if (columns.length > 5) {
+          const balanceParts = columns.slice(5, 7); // intenta tomar 2 partes para montos tipo 35,000
+          const balanceString = balanceParts.join('').replace(/[^0-9.-]/g, '');
+          balance = balanceString ? parseFloat(balanceString) : 0;
+        } else if (columns[5]) {
+          const balanceString = columns[5].replace(/[^0-9.-]/g, '');
+          balance = balanceString ? parseFloat(balanceString) : 0;
+        }
+
         importedData.push({
           code: columns[0],
           name: columns[1],
-          type: columns[2].toLowerCase(),
+          type: mappedType.toLowerCase(),
           parentCode: columns[3] || undefined,
           description: columns[4] || undefined,
-          balance: columns[5] ? parseFloat(columns[5]) : 0
+          balance
         });
       }
     }
@@ -277,8 +290,51 @@ export default function ChartAccountsPage() {
   };
 
   const parseExcelData = async (file: File): Promise<ImportData[]> => {
-    const text = await file.text();
-    return parseCSVContent(text);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+      const importedData: ImportData[] = [];
+      // Asumimos primera fila como encabezados
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i] || [];
+        // Esperado: [code, name, type, parentCode, description, balance]
+        const code = String(row[0] ?? '').trim();
+        const name = String(row[1] ?? '').trim();
+        const rawType = String(row[2] ?? '').trim();
+        const parentCode = String(row[3] ?? '').trim();
+        const description = String(row[4] ?? '').trim();
+        const balanceVal = row[5];
+
+        if (!code || !name) continue;
+
+        const mappedType = mapSpanishTypeToInternal(rawType).toLowerCase();
+        let balance = 0;
+        if (typeof balanceVal === 'number') {
+          balance = balanceVal;
+        } else if (typeof balanceVal === 'string') {
+          const cleaned = balanceVal.replace(/[^0-9.-]/g, '');
+          balance = cleaned ? parseFloat(cleaned) : 0;
+        }
+
+        importedData.push({
+          code,
+          name,
+          type: mappedType,
+          parentCode: parentCode || undefined,
+          description: description || undefined,
+          balance,
+        });
+      }
+
+      return importedData;
+    } catch (err) {
+      console.error('Error parsing Excel:', err);
+      return [];
+    }
   };
 
   const parseXMLContent = (content: string): ImportData[] => {
@@ -345,84 +401,67 @@ export default function ChartAccountsPage() {
     return typeMap[qbType] || 'asset';
   };
 
-  const mapSageType = (sageType: string): string => {
-    const typeMap: { [key: string]: string } = {
-      'nominal': 'expense',
-      'bank': 'asset',
-      'customer': 'asset',
-      'supplier': 'liability',
-      'asset': 'asset',
-      'liability': 'liability',
-      'capital': 'equity',
-      'sales': 'income',
-      'purchase': 'expense'
-    };
-    
-    return typeMap[sageType.toLowerCase()] || 'asset';
-  };
-
   const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file || !selectedFormat || !user) return;
+    if (!file || !user || !selectedFormat) return;
 
     setIsImporting(true);
     setImportProgress(0);
 
     try {
       let importedData: ImportData[] = [];
-      const fileExtension = file.name.toLowerCase().split('.').pop();
+      const extension = file.name.toLowerCase().split('.').pop();
 
       setImportProgress(25);
 
       switch (selectedFormat.id) {
-        case 'csv':
-        case 'sage':
-        case 'xero':
-          const csvContent = await file.text();
-          importedData = parseCSVContent(csvContent);
+        case 'csv': {
+          const content = await file.text();
+          importedData = parseCSVContent(content);
           break;
-
-        case 'quickbooks':
-          if (fileExtension === 'iif') {
-            const iifContent = await file.text();
-            importedData = parseQuickBooksIIF(iifContent);
-          } else {
-            const csvContent = await file.text();
-            importedData = parseCSVContent(csvContent);
-          }
-          break;
-
-        case 'excel':
+        }
+        case 'excel': {
           importedData = await parseExcelData(file);
           break;
-
-        case 'xml':
-        case 'sap':
-          const xmlContent = await file.text();
-          importedData = parseXMLContent(xmlContent);
+        }
+        case 'quickbooks': {
+          if (extension === 'iif') {
+            const content = await file.text();
+            importedData = parseQuickBooksIIF(content);
+          } else {
+            const content = await file.text();
+            importedData = parseCSVContent(content);
+          }
           break;
-
-        case 'json':
-          const jsonContent = await file.text();
-          importedData = parseJSONContent(jsonContent);
+        }
+        case 'xml': {
+          const content = await file.text();
+          importedData = parseXMLContent(content);
           break;
-
-        default:
-          throw new Error('Formato no soportado');
+        }
+        case 'json': {
+          const content = await file.text();
+          importedData = parseJSONContent(content);
+          break;
+        }
+        default: {
+          const content = await file.text();
+          importedData = parseCSVContent(content);
+          break;
+        }
       }
 
       setImportProgress(75);
 
       await processImportedData(importedData);
-      
+
       setImportProgress(100);
       setTimeout(() => {
         setIsImporting(false);
         setImportProgress(0);
         setShowImportModal(false);
         alert(`Se importaron ${importedData.length} cuentas exitosamente desde ${selectedFormat.name}.`);
-      }, 500);
-
+      }, 400);
     } catch (error) {
       setIsImporting(false);
       setImportProgress(0);
@@ -440,15 +479,19 @@ export default function ChartAccountsPage() {
       if (!data.code || !data.name) continue;
 
       try {
+        const rawType = (data.type || '').toLowerCase();
+        const validTypes = new Set(['asset', 'liability', 'equity', 'income', 'expense']);
+        const safeType = (validTypes.has(rawType) ? rawType : mapSpanishTypeToInternal(rawType)) as any;
+
         const account = {
           code: data.code,
           name: data.name,
-          type: data.type as any || 'asset',
+          type: (safeType || 'asset') as any,
           level: 1,
           balance: data.balance || 0,
           is_active: true,
           description: data.description,
-          normal_balance: getNormalBalance(data.type || 'asset'),
+          normal_balance: getNormalBalance(safeType || 'asset'),
           allow_posting: true,
           parent_id: null
         };
@@ -528,7 +571,14 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
         return;
     }
 
-    const blob = new Blob([template], { type: 'text/plain' });
+    // Ajustar tipo y codificación para Excel cuando sea CSV
+    let dataForDownload = template;
+    let mime = 'text/plain';
+    if (formatId === 'csv') {
+      dataForDownload = '\uFEFF' + template.replace(/\n/g, '\r\n');
+      mime = 'text/csv;charset=utf-8;';
+    }
+    const blob = new Blob([dataForDownload], { type: mime });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -663,8 +713,9 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
         csvContent += `${getAccountTypeName(type)},${count}\n`;
       });
 
-      // Crear y descargar archivo
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      // Crear y descargar archivo (UTF-8 BOM + CRLF para Excel)
+      const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
+      const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);

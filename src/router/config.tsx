@@ -2,6 +2,7 @@
 import { type RouteObject } from 'react-router';
 import { lazy } from 'react';
 import DashboardLayout from '../components/layout/DashboardLayout';
+import ProtectedRoute from '../components/auth/ProtectedRoute';
 
 import TaxConfigurationPage from '../pages/taxes/configuration/page';
 import NcfManagementPage from '../pages/taxes/ncf/page';
@@ -47,6 +48,8 @@ const AccountingPeriodsPage = lazy(() => import('../pages/accounting/periods/pag
 
 const POSPage = lazy(() => import('../pages/pos/page'));
 const ProductsPage = lazy(() => import('../pages/products/page'));
+const CustomersPage = lazy(() => import('../pages/customers/page'));
+const UsersPage = lazy(() => import('../pages/users/page'));
 const InventoryPage = lazy(() => import('../pages/inventory/page'));
 const FixedAssetsPage = lazy(() => import('../pages/fixed-assets/page'));
 const AccountsReceivablePage = lazy(() => import('../pages/accounts-receivable/page'));
@@ -54,6 +57,7 @@ const AccountsPayablePage = lazy(() => import('../pages/accounts-payable/page'))
 const BillingPage = lazy(() => import('../pages/billing/page'));
 const TaxesPage = lazy(() => import('../pages/taxes/page'));
 const PlansPage = lazy(() => import('../pages/plans/page'));
+const StudentVerifyPage = lazy(() => import('../pages/plans/student-verify'));
 const ProfilePage = lazy(() => import('../pages/profile/page'));
 const LoginPage = lazy(() => import('../pages/auth/login'));
 const RegisterPage = lazy(() => import('../pages/auth/register'));
@@ -119,7 +123,7 @@ const routes: RouteObject[] = [
   },
   {
     path: '/accounting',
-    element: <AccountingPage />
+    element: <ProtectedRoute><AccountingPage /></ProtectedRoute>
   },
   {
     path: '/accounting/chart-accounts',
@@ -128,35 +132,35 @@ const routes: RouteObject[] = [
   // Accounting Sub-routes
   {
     path: '/accounting/banks',
-    element: <BanksPage />
+    element: <ProtectedRoute><BanksPage /></ProtectedRoute>
   },
   {
     path: '/accounting/bank-reconciliation',
-    element: <BankReconciliationPage />
+    element: <ProtectedRoute><BankReconciliationPage /></ProtectedRoute>
   },
   {
     path: '/accounting/petty-cash',
-    element: <PettyCashPage />
+    element: <ProtectedRoute><PettyCashPage /></ProtectedRoute>
   },
   {
     path: '/accounting/financial-statements',
-    element: <FinancialStatementsPage />
+    element: <ProtectedRoute><FinancialStatementsPage /></ProtectedRoute>
   },
   {
     path: '/accounting/general-journal',
-    element: <GeneralJournalPage />
+    element: <ProtectedRoute><GeneralJournalPage /></ProtectedRoute>
   },
   {
     path: '/accounting/general-ledger',
-    element: <GeneralLedgerPage />
+    element: <ProtectedRoute><GeneralLedgerPage /></ProtectedRoute>
   },
   {
     path: '/accounting/periods',
-    element: <AccountingPeriodsPage />
+    element: <ProtectedRoute><AccountingPeriodsPage /></ProtectedRoute>
   },
   {
     path: '/payroll',
-    element: <PayrollPage />
+    element: <ProtectedRoute><PayrollPage /></ProtectedRoute>
   },
   {
     path: '/payroll/configuration',
@@ -216,110 +220,118 @@ const routes: RouteObject[] = [
   },
   {
     path: '/pos',
-    element: <POSPage />
+    element: <ProtectedRoute><POSPage /></ProtectedRoute>
   },
   {
     path: '/products',
-    element: <ProductsPage />
+    element: <ProtectedRoute><ProductsPage /></ProtectedRoute>
+  },
+  {
+    path: '/customers',
+    element: <ProtectedRoute><CustomersPage /></ProtectedRoute>
+  },
+  {
+    path: '/users',
+    element: <ProtectedRoute><UsersPage /></ProtectedRoute>
   },
   {
     path: '/inventory',
-    element: <InventoryPage />
+    element: <ProtectedRoute><InventoryPage /></ProtectedRoute>
   },
   {
     path: '/fixed-assets',
-    element: <FixedAssetsPage />
+    element: <ProtectedRoute><FixedAssetsPage /></ProtectedRoute>
   },
   // Fixed Assets Sub-routes
   {
     path: '/fixed-assets/register',
-    element: <AssetRegisterPage />
+    element: <ProtectedRoute><AssetRegisterPage /></ProtectedRoute>
   },
   {
     path: '/fixed-assets/types',
-    element: <AssetTypesPage />
+    element: <ProtectedRoute><AssetTypesPage /></ProtectedRoute>
   },
   {
     path: '/fixed-assets/depreciation',
-    element: <DepreciationPage />
+    element: <ProtectedRoute><DepreciationPage /></ProtectedRoute>
   },
   {
     path: '/fixed-assets/revaluation',
-    element: <RevaluationPage />
+    element: <ProtectedRoute><RevaluationPage /></ProtectedRoute>
   },
   {
     path: '/fixed-assets/disposal',
-    element: <AssetDisposalPage />
+    element: <ProtectedRoute><AssetDisposalPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable',
-    element: <AccountsReceivablePage />
+    element: <ProtectedRoute><AccountsReceivablePage /></ProtectedRoute>
   },
   // Accounts Receivable Sub-routes
   {
     path: '/accounts-receivable/invoices',
-    element: <ARInvoicesPage />
+    element: <ProtectedRoute><ARInvoicesPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable/customers',
-    element: <ARCustomersPage />
+    element: <ProtectedRoute><ARCustomersPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable/payments',
-    element: <ARPaymentsPage />
+    element: <ProtectedRoute><ARPaymentsPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable/reports',
-    element: <ARReportsPage />
+    element: <ProtectedRoute><ARReportsPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable/receipts',
-    element: <ARReceiptsPage />
+    element: <ProtectedRoute><ARReceiptsPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable/advances',
-    element: <ARAdvancesPage />
+    element: <ProtectedRoute><ARAdvancesPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable/credit-notes',
-    element: <ARCreditNotesPage />
+    element: <ProtectedRoute><ARCreditNotesPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable/debit-notes',
-    element: <ARDebitNotesPage />
+    element: <ProtectedRoute><ARDebitNotesPage /></ProtectedRoute>
   },
   {
     path: '/accounts-payable',
-    element: <AccountsPayablePage />
+    element: <ProtectedRoute><AccountsPayablePage /></ProtectedRoute>
   },
   // Accounts Payable Sub-routes
   {
     path: '/accounts-payable/reports',
-    element: <APReportsPage />
+    element: <ProtectedRoute><APReportsPage /></ProtectedRoute>
   },
   {
     path: '/accounts-payable/suppliers',
-    element: <SuppliersPage />
+    element: <ProtectedRoute><SuppliersPage /></ProtectedRoute>
   },
   {
     path: '/accounts-payable/payments',
-    element: <PaymentsPage />
+    element: <ProtectedRoute><PaymentsPage /></ProtectedRoute>
   },
   {
     path: '/accounts-payable/purchase-orders',
-    element: <PurchaseOrdersPage />
+    element: <ProtectedRoute><PurchaseOrdersPage /></ProtectedRoute>
   },
   {
     path: '/accounts-payable/quotes',
-    element: <APQuotesPage />
+    element: <ProtectedRoute><APQuotesPage /></ProtectedRoute>
   },
   {
     path: '/accounts-payable/advances',
-    element: <AdvancesPage />
+    element: <ProtectedRoute><AdvancesPage /></ProtectedRoute>
   },
   {
     path: '/billing',
-    element: <BillingPage />
+    element: <ProtectedRoute><BillingPage /></ProtectedRoute>
   },
   // Billing Sub-routes
   {
@@ -348,88 +360,92 @@ const routes: RouteObject[] = [
   },
   {
     path: '/taxes',
-    element: <TaxesPage />
+    element: <ProtectedRoute><TaxesPage /></ProtectedRoute>
   },
   {
     path: '/taxes/configuration',
-    element: <TaxConfigurationPage />
+    element: <ProtectedRoute><TaxConfigurationPage /></ProtectedRoute>
   },
   {
     path: '/taxes/ncf',
-    element: <NcfManagementPage />
+    element: <ProtectedRoute><NcfManagementPage /></ProtectedRoute>
   },
   {
     path: '/taxes/fiscal-series',
-    element: <FiscalSeriesPage />
+    element: <ProtectedRoute><FiscalSeriesPage /></ProtectedRoute>
   },
   {
     path: '/taxes/report-606',
-    element: <Report606Page />
+    element: <ProtectedRoute><Report606Page /></ProtectedRoute>
   },
   {
     path: '/taxes/report-607',
-    element: <Report607Page />
+    element: <ProtectedRoute><Report607Page /></ProtectedRoute>
   },
   {
     path: '/taxes/report-608',
-    element: <Report608Page />
+    element: <ProtectedRoute><Report608Page /></ProtectedRoute>
   },
   {
     path: '/taxes/report-623',
-    element: <Report623Page />
+    element: <ProtectedRoute><Report623Page /></ProtectedRoute>
   },
   {
     path: '/taxes/report-it1',
-    element: <ReportIT1Page />
+    element: <ProtectedRoute><ReportIT1Page /></ProtectedRoute>
   },
   {
     path: '/taxes/report-ir17',
-    element: <ReportIR17Page />
+    element: <ProtectedRoute><ReportIR17Page /></ProtectedRoute>
   },
   {
     path: '/taxes/formulario-607',
-    element: <DashboardLayout><Formulario607Page /></DashboardLayout>
+    element: <ProtectedRoute><DashboardLayout><Formulario607Page /></DashboardLayout></ProtectedRoute>
   },
   {
     path: '/plans',
-    element: <PlansPage />
+    element: <ProtectedRoute><PlansPage /></ProtectedRoute>
+  },
+  {
+    path: '/plans/student-verify',
+    element: <StudentVerifyPage />
   },
   // Settings Routes
   {
     path: '/settings',
-    element: <SettingsPage />
+    element: <ProtectedRoute><SettingsPage /></ProtectedRoute>
   },
   {
     path: '/settings/company',
-    element: <CompanySettingsPage />
+    element: <ProtectedRoute><CompanySettingsPage /></ProtectedRoute>
   },
   {
     path: '/settings/users',
-    element: <UsersSettingsPage />
+    element: <ProtectedRoute><UsersSettingsPage /></ProtectedRoute>
   },
   {
     path: '/settings/accounting',
-    element: <AccountingSettingsPage />
+    element: <ProtectedRoute><AccountingSettingsPage /></ProtectedRoute>
   },
   {
     path: '/settings/taxes',
-    element: <TaxSettingsPage />
+    element: <ProtectedRoute><TaxSettingsPage /></ProtectedRoute>
   },
   {
     path: '/settings/inventory',
-    element: <InventorySettingsPage />
+    element: <ProtectedRoute><InventorySettingsPage /></ProtectedRoute>
   },
   {
     path: '/settings/payroll',
-    element: <PayrollSettingsPage />
+    element: <ProtectedRoute><PayrollSettingsPage /></ProtectedRoute>
   },
   {
     path: '/settings/backup',
-    element: <BackupSettingsPage />
+    element: <ProtectedRoute><BackupSettingsPage /></ProtectedRoute>
   },
   {
     path: '/settings/integrations',
-    element: <IntegrationsSettingsPage />
+    element: <ProtectedRoute><IntegrationsSettingsPage /></ProtectedRoute>
   },
   // Auth Routes
   {

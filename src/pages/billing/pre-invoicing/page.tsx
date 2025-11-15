@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { exportToPdf } from '../../../../src/utils/exportImportUtils';
+import { toast } from 'sonner';
 
 export default function PreInvoicingPage() {
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
@@ -149,6 +151,51 @@ export default function PreInvoicingPage() {
     alert(`Enviando cotización ${quoteId} a ${customerEmail}`);
   };
 
+  const handleExportToPdf = () => {
+    // Mostrar mensaje de carga
+    const loadingToast = toast.loading('Generando PDF...');
+    
+    // Usar setTimeout para asegurar que el mensaje de carga se muestre
+    setTimeout(async () => {
+      try {
+        // Verificar si hay cotizaciones para exportar
+        if (!quotes || quotes.length === 0) {
+          toast.warning('No hay cotizaciones para exportar');
+          return;
+        }
+        
+        // Preparar los datos para la exportación
+        const columns = [
+          { key: 'id', label: 'Número' },
+          { key: 'customer', label: 'Cliente' },
+          { key: 'date', label: 'Fecha' },
+          { key: 'validUntil', label: 'Válida Hasta' },
+          { key: 'total', label: 'Total' },
+          { key: 'status', label: 'Estado' }
+        ];
+
+        // Formatear los datos para la exportación
+        const dataToExport = quotes.map(quote => ({
+          id: quote.id,
+          customer: quote.customer,
+          date: new Date(quote.date).toLocaleDateString('es-DO'),
+          validUntil: new Date(quote.validUntil).toLocaleDateString('es-DO'),
+          total: `RD$ ${quote.total.toLocaleString()}`,
+          status: getStatusText(quote.status)
+        }));
+
+        // Llamar a la función de exportación
+        await exportToPdf(dataToExport, columns, 'cotizaciones', 'ContaBi - Reporte de Cotizaciones');
+        
+        // Mostrar mensaje de éxito
+        toast.success('PDF generado correctamente', { id: loadingToast });
+      } catch (error) {
+        console.error('Error al generar el PDF:', error);
+        toast.error('Error al generar el PDF', { id: loadingToast });
+      }
+    }, 100);
+  };
+
   const handlePrintQuote = (quoteId: string) => {
     alert(`Imprimiendo cotización: ${quoteId}`);
   };
@@ -186,15 +233,16 @@ export default function PreInvoicingPage() {
           </div>
           <div className="flex space-x-3">
             <button
-              onClick={() => alert('Exportando cotizaciones en PDF...')}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
+              onClick={handleExportToPdf}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center transition-colors"
+              title="Exportar a PDF"
             >
               <i className="ri-file-pdf-line mr-2"></i>
               Exportar PDF
             </button>
             <button
               onClick={handleCreateQuote}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
             >
               <i className="ri-add-line mr-2"></i>
               Nueva Cotización

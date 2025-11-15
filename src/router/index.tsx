@@ -29,7 +29,7 @@ export function AppRoutes() {
   }, [navigate]);
 
   useEffect(() => {
-    if (!loading) {
+    if (!loading && false) {
       const publicRoutes = ['/auth/login', '/auth/register', '/auth/reset-password', '/'];
       const isPublicRoute = publicRoutes.includes(location.pathname);
 

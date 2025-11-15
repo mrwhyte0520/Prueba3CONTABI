@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import * as ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 
 export default function SalesReportsPage() {
   const [selectedPeriod, setSelectedPeriod] = useState('today');
@@ -63,8 +67,190 @@ export default function SalesReportsPage() {
     alert(`Generando reporte: ${reportTypes.find(r => r.id === selectedReport)?.name} para el período: ${periods.find(p => p.id === selectedPeriod)?.name}`);
   };
 
-  const handleExportReport = (format: string) => {
-    alert(`Exportando reporte en formato ${format.toUpperCase()}`);
+  const handleExportReport = async (format: 'excel' | 'pdf') => {
+    try {
+      if (format === 'excel') {
+        await exportToExcel();
+      } else {
+        await exportToPdf();
+      }
+    } catch (error) {
+      console.error('Error al exportar:', error);
+      alert('Error al exportar el reporte. Por favor, intente nuevamente.');
+    }
+  };
+
+  const exportToExcel = async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Reporte de Ventas');
+
+    // Título del reporte
+    const reportTitle = reportTypes.find(r => r.id === selectedReport)?.name || 'Reporte de Ventas';
+    const periodTitle = periods.find(p => p.id === selectedPeriod)?.name || 'Período';
+    
+    // Encabezados
+    worksheet.addRow([reportTitle]);
+    worksheet.addRow([`Período: ${periodTitle}`]);
+    worksheet.addRow([`Generado el: ${new Date().toLocaleDateString()}`]);
+    worksheet.addRow([]);
+
+    // Datos según el tipo de reporte seleccionado
+    if (selectedReport === 'sales-summary') {
+      // Encabezados del resumen de ventas
+      const headerRow = worksheet.addRow([
+        'Total de Ventas', 'Facturas', 'Ticket Promedio', 'Impuestos', 'Ventas Netas', 'Ganancia Bruta', 'Margen de Ganancia'
+      ]);
+      
+      // Datos del resumen
+      worksheet.addRow([
+        salesSummary.totalSales,
+        salesSummary.totalInvoices,
+        salesSummary.averageTicket,
+        salesSummary.totalTax,
+        salesSummary.netSales,
+        salesSummary.grossProfit,
+        salesSummary.profitMargin
+      ]);
+      
+      // Estilo para los encabezados
+      headerRow.font = { bold: true };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFD9EAD3' }
+      };
+      
+      // Ajustar anchos de columna
+      worksheet.columns = [
+        { key: 'totalSales', width: 20 },
+        { key: 'totalInvoices', width: 15 },
+        { key: 'averageTicket', width: 20 },
+        { key: 'totalTax', width: 15 },
+        { key: 'netSales', width: 20 },
+        { key: 'grossProfit', width: 20 },
+        { key: 'profitMargin', width: 20 }
+      ];
+      
+    } else if (selectedReport === 'product-sales') {
+      // Encabezados de productos más vendidos
+      const headerRow = worksheet.addRow([
+        'Producto', 'Cantidad', 'Ingresos', 'Margen'
+      ]);
+      
+      // Datos de productos
+      topProducts.forEach(product => {
+        worksheet.addRow([
+          product.name,
+          product.quantity,
+          product.revenue,
+          product.margin
+        ]);
+      });
+      
+      // Estilo para los encabezados
+      headerRow.font = { bold: true };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFD9EAD3' }
+      };
+      
+      // Ajustar anchos de columna
+      worksheet.columns = [
+        { key: 'name', width: 40 },
+        { key: 'quantity', width: 15 },
+        { key: 'revenue', width: 20 },
+        { key: 'margin', width: 15 }
+      ];
+    }
+    
+    // Generar archivo
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { 
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+    });
+    
+    const fileName = `reporte_ventas_${selectedReport}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    saveAs(blob, fileName);
+  };
+
+  const exportToPdf = () => {
+    const doc = new jsPDF();
+    const reportTitle = reportTypes.find(r => r.id === selectedReport)?.name || 'Reporte de Ventas';
+    const periodTitle = periods.find(p => p.id === selectedPeriod)?.name || 'Período';
+    
+    // Título
+    doc.setFontSize(18);
+    doc.text(reportTitle, 14, 22);
+    
+    // Subtítulo
+    doc.setFontSize(12);
+    doc.setTextColor(100);
+    doc.text(`Período: ${periodTitle}`, 14, 30);
+    doc.text(`Generado el: ${new Date().toLocaleDateString()}`, 14, 36);
+    
+    // Datos según el tipo de reporte
+    if (selectedReport === 'sales-summary') {
+      // Datos del resumen de ventas
+      const data = [
+        ['Total de Ventas', salesSummary.totalSales],
+        ['Número de Facturas', salesSummary.totalInvoices],
+        ['Ticket Promedio', salesSummary.averageTicket],
+        ['Total de Impuestos', salesSummary.totalTax],
+        ['Ventas Netas', salesSummary.netSales],
+        ['Ganancia Bruta', salesSummary.grossProfit],
+        ['Margen de Ganancia', salesSummary.profitMargin]
+      ];
+      
+      // Añadir tabla
+      (doc as any).autoTable({
+        startY: 45,
+        head: [['Concepto', 'Valor']],
+        body: data,
+        theme: 'grid',
+        headStyles: {
+          fillColor: [41, 128, 185],
+          textColor: 255,
+          fontStyle: 'bold'
+        },
+        columnStyles: {
+          0: { cellWidth: 60, fontStyle: 'bold' },
+          1: { cellWidth: 40 }
+        }
+      });
+      
+    } else if (selectedReport === 'product-sales') {
+      // Datos de productos más vendidos
+      const headers = ['Producto', 'Cantidad', 'Ingresos', 'Margen'];
+      const data = topProducts.map(product => [
+        product.name,
+        product.quantity,
+        product.revenue,
+        product.margin
+      ]);
+      
+      // Añadir tabla
+      (doc as any).autoTable({
+        startY: 45,
+        head: [headers],
+        body: data,
+        theme: 'grid',
+        headStyles: {
+          fillColor: [41, 128, 185],
+          textColor: 255,
+          fontStyle: 'bold'
+        },
+        columnStyles: {
+          0: { cellWidth: 80 },
+          1: { cellWidth: 30 },
+          2: { cellWidth: 40 },
+          3: { cellWidth: 30 }
+        }
+      });
+    }
+    
+    // Guardar el PDF
+    doc.save(`reporte_ventas_${selectedReport}_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const handlePrintReport = () => {

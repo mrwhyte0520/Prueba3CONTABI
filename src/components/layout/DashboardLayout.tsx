@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { usePlans } from '../../hooks/usePlans';
 import { customersService, invoicesService, inventoryService } from '../../services/database';
+import { supabase } from '../../lib/supabase';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -37,6 +38,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { currentPlan, getTrialStatus, trialInfo } = usePlans();
   const [kpiCounts, setKpiCounts] = useState({ invoices: 0, customers: 0, products: 0 });
   const trialStatus = getTrialStatus();
+  const [allowedModules, setAllowedModules] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     setUserProfile(prev => ({
@@ -45,6 +47,38 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       email: user?.email ?? prev.email,
     }));
   }, [user]);
+
+  // RBAC: fetch allowed modules
+  useEffect(() => {
+    const STORAGE_PREFIX = 'contabi_rbac_';
+    const fetchAllowed = async () => {
+      try {
+        if (!user?.id) {
+          // local fallback
+          const perms = JSON.parse(localStorage.getItem(STORAGE_PREFIX + 'permissions') || '[]');
+          const rolePerms = JSON.parse(localStorage.getItem(STORAGE_PREFIX + 'role_permissions') || '[]');
+          const userRoles = JSON.parse(localStorage.getItem(STORAGE_PREFIX + 'user_roles') || '[]');
+          const myRoleIds = userRoles.filter((ur: any) => ur.user_id === 'local').map((ur: any) => ur.role_id);
+          const permIds = rolePerms.filter((rp: any) => myRoleIds.includes(rp.role_id)).map((rp: any) => rp.permission_id);
+          const modules = new Set<string>();
+          perms.forEach((p: any) => { if (p.action === 'access' && permIds.includes(p.id)) modules.add(p.module); });
+          setAllowedModules(modules);
+          return;
+        }
+        const { data: ur } = await supabase.from('user_roles').select('*').eq('user_id', user.id);
+        const roleIds = (ur || []).map((r: any) => r.role_id);
+        if (roleIds.length === 0) { setAllowedModules(new Set()); return; }
+        const { data: rp } = await supabase.from('role_permissions').select('permission_id').in('role_id', roleIds);
+        const permIds = (rp || []).map((r: any) => r.permission_id);
+        if (permIds.length === 0) { setAllowedModules(new Set()); return; }
+        const { data: perms } = await supabase.from('permissions').select('*').in('id', permIds).eq('action', 'access');
+        setAllowedModules(new Set((perms || []).map((p: any) => p.module)));
+      } catch {
+        setAllowedModules(new Set());
+      }
+    };
+    fetchAllowed();
+  }, [user?.id]);
 
   useEffect(() => {
     const fetchCounts = async () => {
@@ -125,6 +159,18 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       href: '/products',
       icon: 'ri-product-hunt-line',
       current: location.pathname.startsWith('/products')
+    },
+    {
+      name: 'Clientes',
+      href: '/customers',
+      icon: 'ri-user-line',
+      current: location.pathname.startsWith('/customers')
+    },
+    {
+      name: 'Usuarios',
+      href: '/users',
+      icon: 'ri-shield-user-line',
+      current: location.pathname.startsWith('/users')
     },
     {
       name: 'Inventario',
@@ -222,6 +268,17 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     const hasSubmenu = item.submenu && item.submenu.length > 0;
     const isExpanded = expandedMenus.includes(item.href);
 
+    // RBAC filter: allow all if allowedModules is null (loading) or empty (no RBAC configured)
+    const rbacOff = allowedModules === null || allowedModules.size === 0;
+    const moduleOf = (href: string) => (href.split('/').filter(Boolean)[0] || 'dashboard');
+    const itemAllowed = rbacOff || allowedModules!.has(moduleOf(item.href));
+    if (!itemAllowed) return null;
+
+    const submenu = hasSubmenu
+      ? item.submenu.filter((s: any) => rbacOff || allowedModules!.has(moduleOf(s.href)))
+      : null;
+    const hasFilteredSubmenu = submenu && submenu.length > 0;
+
     return (
       <div key={item.name} className="mb-1">
         <div className="flex items-center">
@@ -237,7 +294,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <i className={`${item.icon} mr-3 text-lg flex-shrink-0`}></i>
             <span className="truncate">{item.name}</span>
           </Link>
-          {hasSubmenu && (
+          {hasFilteredSubmenu && (
             <button
               onClick={() => toggleSubmenu(item.href)}
               className="p-2 ml-1 text-slate-400 hover:text-white transition-colors duration-200 rounded-md hover:bg-slate-700/50"
@@ -246,9 +303,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </button>
           )}
         </div>
-        {hasSubmenu && isExpanded && (
+        {hasFilteredSubmenu && isExpanded && (
           <div className="ml-6 mt-2 space-y-1 border-l border-slate-700 pl-4">
-            {item.submenu.map((subItem: any) => (
+            {submenu!.map((subItem: any) => (
               <Link
                 key={subItem.name}
                 to={subItem.href}
@@ -272,7 +329,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     try {
       setProfileDropdownOpen(false);
       await signOut();
-      navigate('/login');
+      navigate('/auth/login');
     } catch (error) {
       console.error('Error al cerrar sesión:', error);
     }
@@ -343,7 +400,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               />
               <div className="ml-3">
                 <h1 className="brand-serif text-xl font-bold text-white">Contabi RD</h1>
-                <p className="text-xs text-slate-400">Sistema Contable</p>
+                <p className="text-xs text-slate-400">Sistema de Finanzas</p>
               </div>
             </div>
           </div>

@@ -9,15 +9,15 @@ export default function InventoryPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [items, setItems] = useState([]);
-  const [movements, setMovements] = useState([]);
-  const [warehouses, setWarehouses] = useState([]);
+  const [items, setItems] = useState<any[]>([]);
+  const [movements, setMovements] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
-  const [selectedItem, setSelectedItem] = useState(null);
-  const [formData, setFormData] = useState({});
-  const fileInputRef = useRef(null);
+  const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [formData, setFormData] = useState<any>({});
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Filtros y búsqueda
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,7 +47,7 @@ export default function InventoryPage() {
       
       if (activeTab === 'items' || activeTab === 'dashboard') {
         try {
-          itemsData = await inventoryService.getItems(user.id);
+          itemsData = await inventoryService.getItems(user!.id);
           // Si no hay datos, dejar vacío
           if (!itemsData || itemsData.length === 0) {
             itemsData = [];
@@ -61,7 +61,7 @@ export default function InventoryPage() {
       
       if (activeTab === 'movements' || activeTab === 'dashboard') {
         try {
-          movementsData = await inventoryService.getMovements(user.id);
+          movementsData = await inventoryService.getMovements(user!.id);
           // Si no hay datos, dejar vacío
           if (!movementsData || movementsData.length === 0) {
             movementsData = [];
@@ -92,7 +92,7 @@ export default function InventoryPage() {
     }
   };
 
-  const handleImageUpload = (event) => {
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       const imageUrl = URL.createObjectURL(file);
@@ -100,7 +100,7 @@ export default function InventoryPage() {
     }
   };
 
-  const handleOpenModal = (type, item = null) => {
+  const handleOpenModal = (type: string, item: any = null) => {
     setModalType(type);
     setSelectedItem(item);
     setFormData(item || {});
@@ -114,7 +114,7 @@ export default function InventoryPage() {
     setFormData({});
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       if (modalType === 'item') {
@@ -123,7 +123,7 @@ export default function InventoryPage() {
           if (selectedItem) {
             await inventoryService.updateItem(selectedItem.id, formData);
           } else {
-            await inventoryService.createItem(user.id, {
+            await inventoryService.createItem(user!.id, {
               ...formData,
               sku: formData.sku || `SKU${Date.now()}`,
               current_stock: formData.current_stock || 0,
@@ -133,7 +133,7 @@ export default function InventoryPage() {
         }
       } else if (modalType === 'movement') {
         if (user) {
-          await inventoryService.createMovement(user.id, {
+          await inventoryService.createMovement(user!.id, {
             ...formData,
             movement_date: formData.movement_date || new Date().toISOString().split('T')[0],
             total_cost: (formData.quantity || 0) * (formData.unit_cost || 0)
@@ -155,7 +155,7 @@ export default function InventoryPage() {
     }
   };
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (id: any) => {
     if (!confirm('¿Está seguro de que desea eliminar este elemento?')) return;
     
     try {
@@ -207,7 +207,8 @@ export default function InventoryPage() {
       });
     }
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const csvForExcel = csvContent.replace(/\n/g, '\r\n');
+    const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);

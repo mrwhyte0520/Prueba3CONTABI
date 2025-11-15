@@ -1,6 +1,10 @@
 
 import { useState, useEffect } from 'react';
+import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import { useAuth } from '../../hooks/useAuth';
+import { customersService } from '../../services/database';
 
 interface Product {
   id: string;
@@ -51,6 +55,7 @@ interface Sale {
 }
 
 export default function POSPage() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -73,6 +78,63 @@ export default function POSPage() {
     address: '',
     type: 'regular' as 'regular' | 'vip'
   });
+  const [showEditCustomerModal, setShowEditCustomerModal] = useState(false);
+  const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
+  const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+
+  // Helpers: input masks
+  const formatDocument = (raw: string) => {
+    const digits = (raw || '').replace(/\D/g, '').slice(0, 11);
+    // Pattern: ###-#######-#
+    const parts: string[] = [];
+    if (digits.length <= 3) return digits;
+    parts.push(digits.slice(0, 3));
+    if (digits.length <= 10) {
+      parts.push(digits.slice(3));
+      return parts.join('-');
+    }
+    parts.push(digits.slice(3, 10));
+    parts.push(digits.slice(10));
+    return parts.join('-');
+  };
+
+  const formatPhone = (raw: string) => {
+    const digits = (raw || '').replace(/\D/g, '').slice(0, 10);
+    // Pattern: ###-###-####
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `${digits.slice(0,3)}-${digits.slice(3)}`;
+    return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6)}`;
+  };
+
+  const anyModalOpen =
+    showCustomerModal ||
+    showPaymentModal ||
+    showNewCustomerModal ||
+    showEditCustomerModal;
+
+  useEffect(() => {
+    document.body.style.overflow = anyModalOpen ? 'hidden' : '';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [anyModalOpen]);
+
+  // Close Customers modals when navigating away from Customers tab
+  useEffect(() => {
+    if (activeTab !== 'customers') {
+      setShowEditCustomerModal(false);
+      setShowNewCustomerModal(false);
+    }
+  }, [activeTab]);
+
+  const Modal = ({ children }: { children: ReactNode }) =>
+    createPortal(
+      <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/50" />
+        <div className="relative w-full max-w-lg">{children}</div>
+      </div>,
+      document.body
+    );
 
   // Load data from localStorage
   useEffect(() => {
@@ -134,12 +196,32 @@ export default function POSPage() {
     }
   };
 
-  const loadCustomers = () => {
-    const savedCustomers = localStorage.getItem('contabi_pos_customers');
-    if (savedCustomers) {
-      setCustomers(JSON.parse(savedCustomers));
-    } else {
-      setCustomers([]);
+  const loadCustomers = async () => {
+    try {
+      if (user?.id) {
+        const rows = await customersService.getAll(user.id);
+        const mapped: Customer[] = (rows || []).map((c: any) => ({
+          id: c.id,
+          name: c.name || c.customer_name || 'Cliente',
+          document: c.document || c.tax_id || '',
+          phone: c.phone || c.contact_phone || '',
+          email: c.email || c.contact_email || '',
+          address: c.address || '',
+          type: (c.type === 'vip' ? 'vip' : 'regular') as 'regular' | 'vip'
+        }));
+        setCustomers(mapped);
+      } else {
+        const savedCustomers = localStorage.getItem('contabi_pos_customers');
+        if (savedCustomers) {
+          setCustomers(JSON.parse(savedCustomers));
+        } else {
+          setCustomers([]);
+        }
+      }
+    } catch (e) {
+      console.warn('loadCustomers failed, using localStorage fallback');
+      const savedCustomers = localStorage.getItem('contabi_pos_customers');
+      setCustomers(savedCustomers ? JSON.parse(savedCustomers) : []);
     }
   };
 
@@ -265,20 +347,48 @@ export default function POSPage() {
     }
   };
 
-  const addNewCustomer = () => {
+  const addNewCustomer = async () => {
     if (!newCustomer.name || !newCustomer.document) {
       alert('Nombre y documento son requeridos');
       return;
     }
 
-    const customer: Customer = {
-      id: Date.now().toString(),
-      ...newCustomer
-    };
+    // Basic validation (allow phone empty)
+    const docOk = /^\d{3}-\d{7}-\d$/.test(newCustomer.document);
+    const phoneOk = !newCustomer.phone || /^\d{3}-\d{3}-\d{4}$/.test(newCustomer.phone);
+    if (!docOk) {
+      alert('Documento inválido. Formato esperado: 000-0000000-0');
+      return;
+    }
+    if (!phoneOk) {
+      alert('Teléfono inválido. Formato esperado: 000-000-0000');
+      return;
+    }
 
-    const updatedCustomers = [...customers, customer];
-    setCustomers(updatedCustomers);
-    localStorage.setItem('contabi_pos_customers', JSON.stringify(updatedCustomers));
+    if (user?.id) {
+      try {
+        await customersService.create(user.id, {
+          name: newCustomer.name,
+          document: newCustomer.document,
+          phone: newCustomer.phone,
+          email: newCustomer.email,
+          address: newCustomer.address,
+          type: newCustomer.type
+        });
+        await loadCustomers();
+      } catch (error) {
+        console.error('Error creating customer in DB, falling back to localStorage:', error);
+        const customer: Customer = { id: Date.now().toString(), ...newCustomer };
+        const updatedCustomers = [...customers, customer];
+        setCustomers(updatedCustomers);
+        localStorage.setItem('contabi_pos_customers', JSON.stringify(updatedCustomers));
+      }
+    } else {
+      const customer: Customer = { id: Date.now().toString(), ...newCustomer };
+      const updatedCustomers = [...customers, customer];
+      setCustomers(updatedCustomers);
+      localStorage.setItem('contabi_pos_customers', JSON.stringify(updatedCustomers));
+    }
     
     setNewCustomer({
       name: '',
@@ -290,6 +400,50 @@ export default function POSPage() {
     });
     setShowNewCustomerModal(false);
     alert('Cliente agregado exitosamente');
+  };
+
+
+  const saveEditedCustomer = async () => {
+    if (!editCustomer) return;
+    if (!editCustomer.name || !editCustomer.document) {
+      alert('Nombre y documento son requeridos');
+      return;
+    }
+    try {
+      if (user?.id && isUuid(editCustomer.id)) {
+        await customersService.update(editCustomer.id, {
+          name: editCustomer.name,
+          document: editCustomer.document,
+          phone: editCustomer.phone,
+          email: editCustomer.email,
+          address: editCustomer.address,
+          type: editCustomer.type
+        });
+        await loadCustomers();
+      } else {
+        const savedCustomers = JSON.parse(localStorage.getItem('contabi_pos_customers') || '[]') as Customer[];
+        const next = savedCustomers.map(c => (c.id === editCustomer.id ? editCustomer : c));
+        localStorage.setItem('contabi_pos_customers', JSON.stringify(next));
+        setCustomers(next);
+      }
+      if (selectedCustomer?.id === editCustomer.id) setSelectedCustomer(editCustomer);
+      setShowEditCustomerModal(false);
+      alert('Cliente actualizado');
+    } catch (error) {
+      console.error('Error updating POS customer:', error);
+      // Fallback local even if logged in
+      try {
+        const savedCustomers = JSON.parse(localStorage.getItem('contabi_pos_customers') || '[]') as Customer[];
+        const next = savedCustomers.map(c => (c.id === (editCustomer as Customer).id ? (editCustomer as Customer) : c));
+        localStorage.setItem('contabi_pos_customers', JSON.stringify(next));
+        setCustomers(next);
+        if (selectedCustomer?.id === (editCustomer as Customer).id) setSelectedCustomer(editCustomer as Customer);
+        setShowEditCustomerModal(false);
+        alert('Cliente actualizado (modo local)');
+      } catch (e2) {
+        alert('No se pudo actualizar el cliente.');
+      }
+    }
   };
 
   const getTodayStats = () => {
@@ -671,6 +825,88 @@ export default function POSPage() {
               ))}
             </div>
           )}
+
+
+        {/* Edit Customer Modal (root level) */}
+        {showEditCustomerModal && editCustomer && (
+          <Modal>
+            <div className="bg-white rounded-lg p-6 w-96 max-h-[80vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold">Editar Cliente</h3>
+                <button onClick={() => setShowEditCustomerModal(false)} className="text-gray-400 hover:text-gray-600">
+                  <i className="ri-close-line"></i>
+                </button>
+              </div>
+
+              <form onSubmit={(e) => { e.preventDefault(); saveEditedCustomer(); }} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                  <input
+                    type="text"
+                    value={editCustomer.name}
+                    onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), name: e.target.value }))}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Documento *</label>
+                  <input
+                    type="text"
+                    value={editCustomer.document}
+                    onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), document: formatDocument(e.target.value) }))}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                  <input
+                    type="tel"
+                    value={editCustomer.phone}
+                    onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), phone: formatPhone(e.target.value) }))}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={editCustomer.email}
+                    onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), email: e.target.value }))}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
+                  <textarea
+                    value={editCustomer.address}
+                    onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), address: e.target.value }))}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    rows={2}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Cliente</label>
+                  <select
+                    value={editCustomer.type}
+                    onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), type: e.target.value as 'regular' | 'vip' }))}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="regular">Regular</option>
+                    <option value="vip">VIP</option>
+                  </select>
+                </div>
+
+                <div className="flex space-x-3 pt-4">
+                  <button type="button" onClick={() => setShowEditCustomerModal(false)} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">Cancelar</button>
+                  <button type="submit" className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">Guardar Cambios</button>
+                </div>
+              </form>
+            </div>
+          </Modal>
+        )}
+
         </div>
 
         {cart.length > 0 && (
@@ -768,60 +1004,6 @@ export default function POSPage() {
     </div>
   );
 
-  const renderCustomers = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-bold text-gray-900">Gestión de Clientes</h2>
-        <button
-          onClick={() => setShowNewCustomerModal(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
-        >
-          <i className="ri-add-line mr-2"></i>
-          Nuevo Cliente
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {customers.map((customer) => (
-          <div key={customer.id} className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                  customer.type === 'vip' ? 'bg-yellow-100' : 'bg-gray-100'
-                }`}>
-                  <i className={`${customer.type === 'vip' ? 'ri-vip-crown-line text-yellow-600' : 'ri-user-line text-gray-600'}`}></i>
-                </div>
-                <div className="ml-3">
-                  <h3 className="font-medium text-gray-900">{customer.name}</h3>
-                  <p className="text-sm text-gray-500">{customer.document}</p>
-                </div>
-              </div>
-              <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                customer.type === 'vip' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'
-              }`}>
-                {customer.type === 'vip' ? 'VIP' : 'Regular'}
-              </span>
-            </div>
-            
-            <div className="space-y-2 text-sm text-gray-600">
-              <div className="flex items-center">
-                <i className="ri-phone-line mr-2"></i>
-                <span>{customer.phone}</span>
-              </div>
-              <div className="flex items-center">
-                <i className="ri-mail-line mr-2"></i>
-                <span>{customer.email}</span>
-              </div>
-              <div className="flex items-center">
-                <i className="ri-map-pin-line mr-2"></i>
-                <span className="truncate">{customer.address}</span>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 
   const renderReports = () => {
     const todayStats = getTodayStats();
@@ -953,7 +1135,6 @@ export default function POSPage() {
               { id: 'dashboard', name: 'Dashboard', icon: 'ri-dashboard-line' },
               { id: 'pos', name: 'Punto de Venta', icon: 'ri-shopping-cart-line' },
               { id: 'sales', name: 'Ventas', icon: 'ri-file-list-line' },
-              { id: 'customers', name: 'Clientes', icon: 'ri-user-line' },
               { id: 'reports', name: 'Reportes', icon: 'ri-bar-chart-line' }
             ].map((tab) => (
               <button
@@ -976,12 +1157,11 @@ export default function POSPage() {
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'pos' && renderPOS()}
         {activeTab === 'sales' && renderSales()}
-        {activeTab === 'customers' && renderCustomers()}
         {activeTab === 'reports' && renderReports()}
 
         {/* Customer Selection Modal */}
         {showCustomerModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <Modal>
             <div className="bg-white rounded-lg p-6 w-96 max-h-96 overflow-y-auto">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-semibold">Seleccionar Cliente</h3>
@@ -1029,12 +1209,12 @@ export default function POSPage() {
                 ))}
               </div>
             </div>
-          </div>
+          </Modal>
         )}
 
         {/* Payment Modal */}
         {showPaymentModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <Modal>
             <div className="bg-white rounded-lg p-6 w-96">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-semibold">Procesar Pago</h3>
@@ -1094,12 +1274,12 @@ export default function POSPage() {
                 Confirmar Pago
               </button>
             </div>
-          </div>
+          </Modal>
         )}
 
         {/* New Customer Modal */}
         {showNewCustomerModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <Modal>
             <div className="bg-white rounded-lg p-6 w-96 max-h-[80vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-semibold">Nuevo Cliente</h3>
@@ -1119,7 +1299,7 @@ export default function POSPage() {
                   <input
                     type="text"
                     value={newCustomer.name}
-                    onChange={(e) => setNewCustomer({...newCustomer, name: e.target.value})}
+                    onChange={(e) => setNewCustomer(prev => ({ ...prev, name: e.target.value }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     required
                   />
@@ -1132,7 +1312,7 @@ export default function POSPage() {
                   <input
                     type="text"
                     value={newCustomer.document}
-                    onChange={(e) => setNewCustomer({...newCustomer, document: e.target.value})}
+                    onChange={(e) => setNewCustomer(prev => ({ ...prev, document: formatDocument(e.target.value) }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="001-1234567-8"
                     required
@@ -1146,7 +1326,7 @@ export default function POSPage() {
                   <input
                     type="tel"
                     value={newCustomer.phone}
-                    onChange={(e) => setNewCustomer({...newCustomer, phone: e.target.value})}
+                    onChange={(e) => setNewCustomer(prev => ({ ...prev, phone: formatPhone(e.target.value) }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="809-123-4567"
                   />
@@ -1159,7 +1339,7 @@ export default function POSPage() {
                   <input
                     type="email"
                     value={newCustomer.email}
-                    onChange={(e) => setNewCustomer({...newCustomer, email: e.target.value})}
+                    onChange={(e) => setNewCustomer(prev => ({ ...prev, email: e.target.value }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="cliente@email.com"
                   />
@@ -1171,7 +1351,7 @@ export default function POSPage() {
                   </label>
                   <textarea
                     value={newCustomer.address}
-                    onChange={(e) => setNewCustomer({...newCustomer, address: e.target.value})}
+                    onChange={(e) => setNewCustomer(prev => ({ ...prev, address: e.target.value }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     rows={2}
                     placeholder="Dirección completa"
@@ -1184,7 +1364,7 @@ export default function POSPage() {
                   </label>
                   <select
                     value={newCustomer.type}
-                    onChange={(e) => setNewCustomer({...newCustomer, type: e.target.value as 'regular' | 'vip'})}
+                    onChange={(e) => setNewCustomer(prev => ({ ...prev, type: e.target.value as 'regular' | 'vip' }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="regular">Regular</option>
@@ -1209,7 +1389,7 @@ export default function POSPage() {
                 </div>
               </form>
             </div>
-          </div>
+          </Modal>
         )}
       </div>
     </DashboardLayout>
