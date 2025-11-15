@@ -152,6 +152,7 @@ export const chartAccountsService = {
       const { data, error } = await supabase
         .from('chart_accounts')
         .select('*')
+        .eq('user_id', userId)
         .order('code');
       
       if (error) {
@@ -194,7 +195,7 @@ export const chartAccountsService = {
 
       const { data, error } = await supabase
         .from('chart_accounts')
-        .insert(accountData)
+        .upsert(accountData, { onConflict: 'user_id,code' })
         .select()
         .single();
       

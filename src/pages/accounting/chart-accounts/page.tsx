@@ -89,6 +89,7 @@ export default function ChartAccountsPage() {
 
   const importFormats: ImportFormat[] = [
     {
+<<<<<<< HEAD
       id: 'csv',
       name: 'CSV Estándar',
       description: 'Formato CSV compatible con Excel y sistemas contables básicos',
@@ -97,12 +98,15 @@ export default function ChartAccountsPage() {
       color: 'bg-green-100 text-green-800'
     },
     {
+=======
+>>>>>>> 46ccfc25 (Guardando cambios antes del pull)
       id: 'excel',
       name: 'Microsoft Excel',
       description: 'Archivos Excel con formato estructurado (.xlsx, .xls)',
       fileTypes: ['.xlsx', '.xls'],
       icon: 'ri-file-excel-line',
       color: 'bg-green-100 text-green-800'
+<<<<<<< HEAD
     },
     {
       id: 'quickbooks',
@@ -127,6 +131,8 @@ export default function ChartAccountsPage() {
       fileTypes: ['.json'],
       icon: 'ri-code-s-slash-line',
       color: 'bg-gray-100 text-gray-800'
+=======
+>>>>>>> 46ccfc25 (Guardando cambios antes del pull)
     }
   ];
 
@@ -415,15 +421,19 @@ export default function ChartAccountsPage() {
       setImportProgress(25);
 
       switch (selectedFormat.id) {
+<<<<<<< HEAD
         case 'csv': {
           const content = await file.text();
           importedData = parseCSVContent(content);
           break;
         }
+=======
+>>>>>>> 46ccfc25 (Guardando cambios antes del pull)
         case 'excel': {
           importedData = await parseExcelData(file);
           break;
         }
+<<<<<<< HEAD
         case 'quickbooks': {
           if (extension === 'iif') {
             const content = await file.text();
@@ -449,6 +459,13 @@ export default function ChartAccountsPage() {
           importedData = parseCSVContent(content);
           break;
         }
+=======
+        default: {
+          const content = await file.text();
+          importedData = parseCSVContent(content);
+          break;
+        }
+>>>>>>> 46ccfc25 (Guardando cambios antes del pull)
       }
 
       setImportProgress(75);
@@ -474,9 +491,16 @@ export default function ChartAccountsPage() {
     if (!user) return;
 
     const codeToIdMap: { [key: string]: string } = {};
+    // Traer cuentas existentes para evitar duplicados por (user_id, code)
+    const existing = await chartAccountsService.getAll(user.id);
+    const existingCodes = new Set(existing.map(acc => acc.code));
 
     for (const data of importedData) {
       if (!data.code || !data.name) continue;
+      if (existingCodes.has(data.code)) {
+        // Saltar cuentas que ya existen para este usuario
+        continue;
+      }
 
       try {
         const rawType = (data.type || '').toLowerCase();
@@ -496,8 +520,8 @@ export default function ChartAccountsPage() {
           parent_id: null
         };
 
-        const createdAccount = await chartAccountsService.create(user.id, account);
-        codeToIdMap[data.code] = createdAccount.id;
+        const created = await chartAccountsService.create(user.id, account);
+        codeToIdMap[data.code] = created.id;
       } catch (error) {
         console.error('Error importing account:', data.code, error);
       }
@@ -506,6 +530,7 @@ export default function ChartAccountsPage() {
     await loadAccounts();
   };
 
+<<<<<<< HEAD
   const downloadTemplate = (formatId: string) => {
     let template = '';
     let filename = '';
@@ -587,12 +612,13 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
     window.URL.revokeObjectURL(url);
   };
 
+=======
+>>>>>>> 46ccfc25 (Guardando cambios antes del pull)
   const handleAddAccount = async () => {
     if (!user || !newAccount.code || !newAccount.name) {
-      alert('Por favor complete todos los campos requeridos.');
+      alert('Por favor complete código y nombre.');
       return;
     }
-
     try {
       const account = {
         code: newAccount.code,
@@ -609,7 +635,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
 
       await chartAccountsService.create(user.id, account);
       await loadAccounts();
-      
+
       setNewAccount({
         code: '',
         name: '',
@@ -684,46 +710,64 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
 
   const downloadExcel = () => {
     try {
-      // Crear contenido CSV
-      let csvContent = 'Catálogo de Cuentas\n';
-      csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
-      csvContent += 'Código,Nombre,Tipo,Nivel,Saldo,Estado,Descripción\n';
-      
-      filteredAccounts.forEach(account => {
-        const row = [
-          account.code,
-          `"${account.name}"`,
-          getAccountTypeName(account.type),
-          account.level,
-          Math.abs(account.balance).toLocaleString(),
-          account.isActive ? 'Activa' : 'Inactiva',
-          `"${account.description || ''}"`
-        ].join(',');
-        csvContent += row + '\n';
-      });
+      // Construir datos en formato de hoja
+      const header = ['Código', 'Nombre', 'Tipo', 'Nivel', 'Saldo', 'Estado', 'Descripción'];
+      const rows = filteredAccounts.map(acc => ([
+        acc.code,
+        acc.name,
+        getAccountTypeName(acc.type),
+        acc.level,
+        Math.abs(acc.balance), // número
+        acc.isActive ? 'Activa' : 'Inactiva',
+        acc.description || ''
+      ]));
+      const aoa = [header, ...rows];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-      // Agregar resumen por tipo
-      csvContent += '\nResumen por Tipo:\n';
-      const accountsByType = filteredAccounts.reduce((acc, account) => {
-        acc[account.type] = (acc[account.type] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
+      // Anchos de columnas para legibilidad en Excel
+      ws['!cols'] = [
+        { wch: 12 }, // Código
+        { wch: 30 }, // Nombre
+        { wch: 16 }, // Tipo
+        { wch: 8 },  // Nivel
+        { wch: 14 }, // Saldo
+        { wch: 12 }, // Estado
+        { wch: 40 }  // Descripción
+      ];
 
-      Object.entries(accountsByType).forEach(([type, count]) => {
-        csvContent += `${getAccountTypeName(type)},${count}\n`;
-      });
+      // Formato numérico para la columna Saldo (E = 5ta columna indexada desde 1)
+      const startRow = 2; // datos desde la fila 2
+      const endRow = rows.length + 1;
+      for (let r = startRow; r <= endRow; r++) {
+        const cellRef = XLSX.utils.encode_cell({ r: r - 1, c: 4 }); // 0-based indices; c:4 es 5ta col
+        const cell = ws[cellRef];
+        if (cell) {
+          cell.t = 'n';
+          cell.z = '#,##0.00';
+        }
+      }
 
+<<<<<<< HEAD
       // Crear y descargar archivo (UTF-8 BOM + CRLF para Excel)
       const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
       const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
+=======
+      // Congelar primera fila (encabezados)
+      (ws as any)['!freeze'] = { rows: 1, columns: 0 };
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Catálogo');
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+>>>>>>> 46ccfc25 (Guardando cambios antes del pull)
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `catalogo_cuentas_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
+      link.href = url;
+      link.download = `catalogo_cuentas_${new Date().toISOString().split('T')[0]}.xlsx`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error downloading Excel:', error);
       alert('Error al descargar el archivo');
@@ -901,8 +945,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
             <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[80vh] overflow-y-auto">
               <h3 className="text-lg font-semibold mb-4">Seleccionar Formato de Importación</h3>
               <p className="text-gray-600 mb-6">Elija el formato del sistema contable desde el cual desea importar el catálogo de cuentas:</p>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+              <div className="grid grid-cols-1 gap-4 mb-6 max-w-md mx-auto">
                 {importFormats.map((format) => (
                   <div
                     key={format.id}
@@ -951,16 +994,6 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                   <p className="text-xs">Formatos soportados: {selectedFormat.fileTypes.join(', ')}</p>
                 </div>
                 
-                <div>
-                  <button
-                    onClick={() => downloadTemplate(selectedFormat.id)}
-                    className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap mb-4"
-                  >
-                    <i className="ri-download-line mr-2"></i>
-                    Descargar Plantilla {selectedFormat.name}
-                  </button>
-                </div>
-
                 {isImporting && (
                   <div className="mb-4">
                     <div className="flex justify-between text-sm text-gray-600 mb-1">

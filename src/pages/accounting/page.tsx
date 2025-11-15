@@ -53,15 +53,22 @@ export default function AccountingPage() {
   });
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (user?.id) {
+      loadData();
+    }
+  }, [user?.id]);
 
   const loadData = async () => {
     setLoading(true);
     try {
+      if (!user?.id) {
+        setAccounts([]);
+        setJournalEntries([]);
+        return;
+      }
       const [accountsData, entriesData] = await Promise.all([
-        chartAccountsService.getAll(user?.id || ''),
-        journalEntriesService.getAll(user?.id || '')
+        chartAccountsService.getAll(user.id),
+        journalEntriesService.getAll(user.id)
       ]);
       
       setAccounts(accountsData);
@@ -120,6 +127,10 @@ export default function AccountingPage() {
     }
 
     try {
+      if (!user?.id) {
+        alert('Debes iniciar sesión para crear asientos.');
+        return;
+      }
       const entry = {
         entry_number: journalForm.entry_number || generateEntryNumber(),
         entry_date: journalForm.entry_date,
@@ -139,7 +150,7 @@ export default function AccountingPage() {
           credit_amount: parseFloat(line.credit) || 0
         }));
 
-      await journalEntriesService.createWithLines(user?.id || '', entry, lines);
+      await journalEntriesService.createWithLines(user.id, entry, lines);
       await loadData();
       
       setJournalForm({
@@ -163,6 +174,10 @@ export default function AccountingPage() {
   const handleGenerateReport = async (reportType: string) => {
     setReportLoading(true);
     try {
+      if (!user?.id) {
+        alert('Debes iniciar sesión para generar reportes.');
+        return;
+      }
       const today = new Date().toISOString().split('T')[0];
       const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
       
@@ -172,37 +187,37 @@ export default function AccountingPage() {
 
       switch (reportType) {
         case 'balance-sheet':
-          reportData = await chartAccountsService.generateBalanceSheet(user?.id || '', today);
+          reportData = await chartAccountsService.generateBalanceSheet(user.id, today);
           filename = `balance_general_${today}.csv`;
           content = generateBalanceSheetCSV(reportData);
           break;
 
         case 'income-statement':
-          reportData = await chartAccountsService.generateIncomeStatement(user?.id || '', firstDayOfMonth, today);
+          reportData = await chartAccountsService.generateIncomeStatement(user.id, firstDayOfMonth, today);
           filename = `estado_resultados_${today}.csv`;
           content = generateIncomeStatementCSV(reportData);
           break;
 
         case 'trial-balance':
-          reportData = await chartAccountsService.generateTrialBalance(user?.id || '', today);
+          reportData = await chartAccountsService.generateTrialBalance(user.id, today);
           filename = `balanza_comprobacion_${today}.csv`;
           content = generateTrialBalanceCSV(reportData);
           break;
 
         case 'cash-flow':
-          reportData = await chartAccountsService.generateCashFlowStatement(user?.id || '', firstDayOfMonth, today);
+          reportData = await chartAccountsService.generateCashFlowStatement(user.id, firstDayOfMonth, today);
           filename = `flujo_efectivo_${today}.csv`;
           content = generateCashFlowCSV(reportData);
           break;
 
         case 'general-ledger':
-          const entries = await journalEntriesService.getAll(user?.id || '');
+          const entries = await journalEntriesService.getAll(user.id);
           filename = `mayor_general_${today}.csv`;
           content = generateGeneralLedgerCSV(entries);
           break;
 
         case 'journal-report':
-          const journalData = await journalEntriesService.getAll(user?.id || '');
+          const journalData = await journalEntriesService.getAll(user.id);
           filename = `libro_diario_${today}.csv`;
           content = generateJournalReportCSV(journalData);
           break;

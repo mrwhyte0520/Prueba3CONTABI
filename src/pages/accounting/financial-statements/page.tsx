@@ -1,5 +1,5 @@
-
 import { useState, useEffect } from 'react';
+import { exportToExcel } from '../../../lib/excel';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 
 interface FinancialStatement {
@@ -127,22 +127,25 @@ export default function FinancialStatementsPage() {
 
   const downloadExcel = () => {
     try {
-      // Crear contenido CSV
-      let csvContent = 'Estados Financieros\n';
-      csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
-      csvContent += 'Nombre,Tipo,Período,Estado,Fecha Creación\n';
-      
-      statements.forEach(statement => {
-        const row = [
-          `"${statement.name}"`,
-          getTypeLabel(statement.type),
-          statement.period,
-          statement.status === 'draft' ? 'Borrador' : 
-          statement.status === 'final' ? 'Final' : 'Aprobado',
-          new Date(statement.created_at).toLocaleDateString()
-        ].join(',');
-        csvContent += row + '\n';
+      exportToExcel({
+        sheetName: 'Estados',
+        fileName: `estados_financieros_${new Date().toISOString().split('T')[0]}`,
+        columns: [
+          { header: 'Nombre', width: 30, key: 'name' },
+          { header: 'Tipo', width: 22 },
+          { header: 'Período', width: 14, key: 'period' },
+          { header: 'Estado', width: 12 },
+          { header: 'Fecha Creación', width: 16 }
+        ],
+        rows: statements.map(s => ([
+          s.name,
+          getTypeLabel(s.type),
+          s.period,
+          s.status === 'draft' ? 'Borrador' : s.status === 'final' ? 'Final' : 'Aprobado',
+          new Date(s.created_at).toLocaleDateString('es-DO')
+        ]))
       });
+<<<<<<< HEAD
 
       // Agregar resumen
       csvContent += '\nResumen:\n';
@@ -163,6 +166,8 @@ export default function FinancialStatementsPage() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+=======
+>>>>>>> 46ccfc25 (Guardando cambios antes del pull)
     } catch (error) {
       console.error('Error downloading Excel:', error);
       alert('Error al descargar el archivo');
@@ -171,54 +176,21 @@ export default function FinancialStatementsPage() {
 
   const downloadBalanceSheetExcel = () => {
     try {
-      let csvContent = 'Balance General\n';
-      csvContent += `Período: Diciembre 2024\n`;
-      csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
-      
-      // Activos Corrientes
-      csvContent += 'ACTIVOS\n';
-      csvContent += 'Activos Corrientes\n';
-      csvContent += 'Cuenta,Monto\n';
-      financialData.assets.current.forEach(item => {
-        csvContent += `"${item.name}","${item.amount.toLocaleString()}"\n`;
-      });
-      csvContent += `"Total Activos Corrientes","${totals.totalCurrentAssets.toLocaleString()}"\n\n`;
-      
-      // Activos No Corrientes
-      csvContent += 'Activos No Corrientes\n';
-      csvContent += 'Cuenta,Monto\n';
-      financialData.assets.nonCurrent.forEach(item => {
-        csvContent += `"${item.name}","${item.amount.toLocaleString()}"\n`;
-      });
-      csvContent += `"Total Activos No Corrientes","${totals.totalNonCurrentAssets.toLocaleString()}"\n\n`;
-      csvContent += `"TOTAL ACTIVOS","${totals.totalAssets.toLocaleString()}"\n\n`;
-      
-      // Pasivos Corrientes
-      csvContent += 'PASIVOS Y PATRIMONIO\n';
-      csvContent += 'Pasivos Corrientes\n';
-      csvContent += 'Cuenta,Monto\n';
-      financialData.liabilities.current.forEach(item => {
-        csvContent += `"${item.name}","${item.amount.toLocaleString()}"\n`;
-      });
-      csvContent += `"Total Pasivos Corrientes","${totals.totalCurrentLiabilities.toLocaleString()}"\n\n`;
-      
-      // Pasivos No Corrientes
-      csvContent += 'Pasivos No Corrientes\n';
-      csvContent += 'Cuenta,Monto\n';
-      financialData.liabilities.nonCurrent.forEach(item => {
-        csvContent += `"${item.name}","${item.amount.toLocaleString()}"\n`;
-      });
-      csvContent += `"Total Pasivos No Corrientes","${totals.totalNonCurrentLiabilities.toLocaleString()}"\n\n`;
-      
-      // Patrimonio
-      csvContent += 'Patrimonio\n';
-      csvContent += 'Cuenta,Monto\n';
-      financialData.equity.forEach(item => {
-        csvContent += `"${item.name}","${item.amount.toLocaleString()}"\n`;
-      });
-      csvContent += `"Total Patrimonio","${totals.totalEquity.toLocaleString()}"\n\n`;
-      csvContent += `"TOTAL PASIVOS Y PATRIMONIO","${(totals.totalLiabilities + totals.totalEquity).toLocaleString()}"\n`;
+      const rows: any[] = [];
+      financialData.assets.current.forEach(i => rows.push(['ACTIVOS', 'Activos Corrientes', i.name, i.amount]));
+      rows.push(['', 'Total Activos Corrientes', '', totals.totalCurrentAssets]);
+      financialData.assets.nonCurrent.forEach(i => rows.push(['', 'Activos No Corrientes', i.name, i.amount]));
+      rows.push(['', 'Total Activos No Corrientes', '', totals.totalNonCurrentAssets]);
+      rows.push(['', 'TOTAL ACTIVOS', '', totals.totalAssets]);
+      financialData.liabilities.current.forEach(i => rows.push(['PASIVOS Y PATRIMONIO', 'Pasivos Corrientes', i.name, i.amount]));
+      rows.push(['', 'Total Pasivos Corrientes', '', totals.totalCurrentLiabilities]);
+      financialData.liabilities.nonCurrent.forEach(i => rows.push(['', 'Pasivos No Corrientes', i.name, i.amount]));
+      rows.push(['', 'Total Pasivos No Corrientes', '', totals.totalNonCurrentLiabilities]);
+      financialData.equity.forEach(i => rows.push(['', 'Patrimonio', i.name, i.amount]));
+      rows.push(['', 'Total Patrimonio', '', totals.totalEquity]);
+      rows.push(['', 'TOTAL PASIVOS Y PATRIMONIO', '', totals.totalLiabilities + totals.totalEquity]);
 
+<<<<<<< HEAD
       const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
       const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
       const link = document.createElement('a');
@@ -229,6 +201,19 @@ export default function FinancialStatementsPage() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+=======
+      exportToExcel({
+        sheetName: 'Balance',
+        fileName: `balance_general_${new Date().toISOString().split('T')[0]}`,
+        columns: [
+          { header: 'Grupo', width: 16 },
+          { header: 'Cuenta', width: 36 },
+          { header: 'Nombre', width: 30 },
+          { header: 'Monto', width: 14, numFmt: '#,##0.00' }
+        ],
+        rows
+      });
+>>>>>>> 46ccfc25 (Guardando cambios antes del pull)
     } catch (error) {
       console.error('Error downloading Balance Sheet:', error);
       alert('Error al descargar el Balance General');
@@ -237,46 +222,23 @@ export default function FinancialStatementsPage() {
 
   const downloadIncomeStatementExcel = () => {
     try {
-      let csvContent = 'Estado de Resultados\n';
-      csvContent += `Período: Diciembre 2024\n`;
-      csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
-      
-      // Ingresos
-      csvContent += 'INGRESOS\n';
-      csvContent += 'Cuenta,Monto\n';
-      financialData.revenue.forEach(item => {
-        csvContent += `"${item.name}","${item.amount.toLocaleString()}"\n`;
-      });
-      csvContent += `"Total Ingresos","${totals.totalRevenue.toLocaleString()}"\n\n`;
-      
-      // Gastos
-      csvContent += 'GASTOS\n';
-      csvContent += 'Cuenta,Monto\n';
-      financialData.expenses.forEach(item => {
-        csvContent += `"${item.name}","${item.amount.toLocaleString()}"\n`;
-      });
-      csvContent += `"Total Gastos","${totals.totalExpenses.toLocaleString()}"\n\n`;
-      
-      // Utilidad Neta
-      csvContent += `"UTILIDAD NETA","${totals.netIncome.toLocaleString()}"\n\n`;
-      
-      // Análisis de Márgenes
-      csvContent += 'ANÁLISIS DE MÁRGENES\n';
-      csvContent += 'Indicador,Porcentaje\n';
-      const grossMargin = ((totals.totalRevenue - financialData.expenses.find(e => e.name === 'Costo de Ventas')!.amount) / totals.totalRevenue * 100).toFixed(2);
-      const netMargin = (totals.netIncome / totals.totalRevenue * 100).toFixed(2);
-      csvContent += `"Margen Bruto","${grossMargin}%"\n`;
-      csvContent += `"Margen Neto","${netMargin}%"\n`;
+      const rows: any[] = [];
+      financialData.revenue.forEach(i => rows.push(['INGRESOS', i.name, i.amount]));
+      rows.push(['', 'Total Ingresos', totals.totalRevenue]);
+      financialData.expenses.forEach(i => rows.push(['GASTOS', i.name, i.amount]));
+      rows.push(['', 'Total Gastos', totals.totalExpenses]);
+      rows.push(['', 'UTILIDAD NETA', totals.netIncome]);
 
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `estado_resultados_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      exportToExcel({
+        sheetName: 'Resultados',
+        fileName: `estado_resultados_${new Date().toISOString().split('T')[0]}`,
+        columns: [
+          { header: 'Grupo', width: 16 },
+          { header: 'Cuenta', width: 36 },
+          { header: 'Monto', width: 14, numFmt: '#,##0.00' }
+        ],
+        rows
+      });
     } catch (error) {
       console.error('Error downloading Income Statement:', error);
       alert('Error al descargar el Estado de Resultados');
@@ -285,52 +247,32 @@ export default function FinancialStatementsPage() {
 
   const downloadCashFlowExcel = () => {
     try {
-      let csvContent = 'Estado de Flujo de Efectivo\n';
-      csvContent += `Período: Diciembre 2024\n`;
-      csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
-      
-      // Actividades de Operación
-      csvContent += 'ACTIVIDADES DE OPERACIÓN\n';
-      csvContent += 'Concepto,Monto\n';
-      csvContent += '"Utilidad Neta","3400000"\n';
-      csvContent += '"Depreciación","180000"\n';
-      csvContent += '"Cambios en Cuentas por Cobrar","-120000"\n';
-      csvContent += '"Cambios en Inventarios","-200000"\n';
-      csvContent += '"Cambios en Cuentas por Pagar","80000"\n';
-      csvContent += '"Efectivo de Actividades de Operación","3340000"\n\n';
-      
-      // Actividades de Inversión
-      csvContent += 'ACTIVIDADES DE INVERSIÓN\n';
-      csvContent += 'Concepto,Monto\n';
-      csvContent += '"Compra de Equipos","-450000"\n';
-      csvContent += '"Venta de Activos","120000"\n';
-      csvContent += '"Inversiones","-200000"\n';
-      csvContent += '"Efectivo de Actividades de Inversión","-530000"\n\n';
-      
-      // Actividades de Financiamiento
-      csvContent += 'ACTIVIDADES DE FINANCIAMIENTO\n';
-      csvContent += 'Concepto,Monto\n';
-      csvContent += '"Préstamos Obtenidos","800000"\n';
-      csvContent += '"Pago de Préstamos","-600000"\n';
-      csvContent += '"Dividendos Pagados","-500000"\n';
-      csvContent += '"Efectivo de Actividades de Financiamiento","-300000"\n\n';
-      
-      // Resumen
-      csvContent += 'RESUMEN\n';
-      csvContent += 'Concepto,Monto\n';
-      csvContent += '"Aumento Neto en Efectivo","2510000"\n';
-      csvContent += '"Efectivo al Inicio del Período","1200000"\n';
-      csvContent += '"Efectivo al Final del Período","3710000"\n';
+      const rows: any[] = [];
+      rows.push(['ACTIVIDADES DE OPERACIÓN', 'Utilidad Neta', 3400000]);
+      rows.push(['', 'Depreciación', 180000]);
+      rows.push(['', 'Cambios en Cuentas por Cobrar', -120000]);
+      rows.push(['', 'Cambios en Inventarios', -200000]);
+      rows.push(['', 'Cambios en Cuentas por Pagar', 80000]);
+      rows.push(['ACTIVIDADES DE INVERSIÓN', 'Compra de Equipos', -450000]);
+      rows.push(['', 'Venta de Activos', 120000]);
+      rows.push(['', 'Inversiones', -200000]);
+      rows.push(['ACTIVIDADES DE FINANCIAMIENTO', 'Préstamos Obtenidos', 800000]);
+      rows.push(['', 'Pago de Préstamos', -600000]);
+      rows.push(['', 'Dividendos Pagados', -500000]);
+      rows.push(['RESUMEN', 'Aumento Neto en Efectivo', 2510000]);
+      rows.push(['', 'Efectivo al Inicio del Período', 1200000]);
+      rows.push(['', 'Efectivo al Final del Período', 3710000]);
 
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `flujo_efectivo_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      exportToExcel({
+        sheetName: 'Flujo',
+        fileName: `flujo_efectivo_${new Date().toISOString().split('T')[0]}`,
+        columns: [
+          { header: 'Actividad', width: 18 },
+          { header: 'Concepto', width: 36 },
+          { header: 'Monto', width: 14, numFmt: '#,##0.00' }
+        ],
+        rows
+      });
     } catch (error) {
       console.error('Error downloading Cash Flow:', error);
       alert('Error al descargar el Flujo de Efectivo');
