@@ -145,29 +145,6 @@ export default function FinancialStatementsPage() {
           new Date(s.created_at).toLocaleDateString('es-DO')
         ]))
       });
-<<<<<<< HEAD
-
-      // Agregar resumen
-      csvContent += '\nResumen:\n';
-      csvContent += `Total Estados:,${statements.length}\n`;
-      csvContent += `Balance General:,${statements.filter(s => s.type === 'balance_sheet').length}\n`;
-      csvContent += `Estado de Resultados:,${statements.filter(s => s.type === 'income_statement').length}\n`;
-      csvContent += `Flujo de Efectivo:,${statements.filter(s => s.type === 'cash_flow').length}\n`;
-      csvContent += `Estado de Patrimonio:,${statements.filter(s => s.type === 'equity_statement').length}\n`;
-
-      // Crear y descargar archivo (UTF-8 BOM + CRLF para Excel)
-      const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
-      const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `estados_financieros_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-=======
->>>>>>> 46ccfc25 (Guardando cambios antes del pull)
     } catch (error) {
       console.error('Error downloading Excel:', error);
       alert('Error al descargar el archivo');
@@ -189,19 +166,6 @@ export default function FinancialStatementsPage() {
       financialData.equity.forEach(i => rows.push(['', 'Patrimonio', i.name, i.amount]));
       rows.push(['', 'Total Patrimonio', '', totals.totalEquity]);
       rows.push(['', 'TOTAL PASIVOS Y PATRIMONIO', '', totals.totalLiabilities + totals.totalEquity]);
-
-<<<<<<< HEAD
-      const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
-      const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `balance_general_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-=======
       exportToExcel({
         sheetName: 'Balance',
         fileName: `balance_general_${new Date().toISOString().split('T')[0]}`,
@@ -213,7 +177,6 @@ export default function FinancialStatementsPage() {
         ],
         rows
       });
->>>>>>> 46ccfc25 (Guardando cambios antes del pull)
     } catch (error) {
       console.error('Error downloading Balance Sheet:', error);
       alert('Error al descargar el Balance General');
