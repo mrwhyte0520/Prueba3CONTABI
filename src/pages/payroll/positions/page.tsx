@@ -1,6 +1,7 @@
 
 import { useState } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 
 interface Position {
   id: string;
@@ -213,29 +214,38 @@ export default function PositionsPage() {
     ));
   };
 
-  const downloadExcel = () => {
-    let csvContent = 'Cargos y Posiciones\\n';
-    csvContent += `Generado: ${new Date().toLocaleDateString()}\\n\\n`;
-    csvContent += 'Título,Departamento,Nivel,Salario Mín,Salario Máx,Empleados,Estado\\n';
-    
-    filteredPositions.forEach(position => {
-      const row = [
-        `"${position.title}"`,
-        `"${position.department}"`,
-        position.level,
-        position.salaryRange.min.toLocaleString(),
-        position.salaryRange.max.toLocaleString(),
-        position.employeeCount,
-        position.status === 'active' ? 'Activo' : 'Inactivo'
-      ].join(',');
-      csvContent += row + '\\n';
-    });
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `posiciones_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+  const downloadExcel = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const rows = filteredPositions.map(position => ({
+        title: position.title,
+        department: position.department,
+        level: position.level === 'junior' ? 'Junior' : position.level === 'mid' ? 'Intermedio' : position.level === 'senior' ? 'Senior' : 'Ejecutivo',
+        salaryMin: position.salaryRange.min || 0,
+        salaryMax: position.salaryRange.max || 0,
+        employees: position.employeeCount,
+        status: position.status === 'active' ? 'Activo' : 'Inactivo',
+        createdAt: position.createdAt,
+      }));
+      await exportToExcelStyled(
+        rows,
+        [
+          { key: 'title', title: 'Título', width: 28 },
+          { key: 'department', title: 'Departamento', width: 22 },
+          { key: 'level', title: 'Nivel', width: 14 },
+          { key: 'salaryMin', title: 'Salario Mín', width: 16, numFmt: '#,##0.00' },
+          { key: 'salaryMax', title: 'Salario Máx', width: 16, numFmt: '#,##0.00' },
+          { key: 'employees', title: 'Empleados', width: 12 },
+          { key: 'status', title: 'Estado', width: 12 },
+          { key: 'createdAt', title: 'Creado', width: 14 },
+        ],
+        `posiciones_${today}`,
+        'Posiciones'
+      );
+    } catch (error) {
+      console.error('Error exporting positions:', error);
+      alert('Error al exportar a Excel');
+    }
   };
 
   const getLevelBadge = (level: string) => {

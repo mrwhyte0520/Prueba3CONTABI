@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '../../../hooks/useAuth';
+ 
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 
 interface PayrollConfig {
   id: string;
@@ -32,13 +33,12 @@ interface TaxBracket {
 }
 
 export default function PayrollConfigurationPage() {
-  const { user } = useAuth();
   const [config, setConfig] = useState<PayrollConfig | null>(null);
   const [taxBrackets, setTaxBrackets] = useState<TaxBracket[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const [showModal, setShowModal] = useState(false);
-  const [modalType, setModalType] = useState('');
+  
   const [formData, setFormData] = useState<any>({});
 
   useEffect(() => {
@@ -72,13 +72,11 @@ export default function PayrollConfigurationPage() {
   };
 
   const handleAddTaxBracket = () => {
-    setModalType('tax-bracket');
     setFormData({});
     setShowModal(true);
   };
 
   const handleEditTaxBracket = (bracket: TaxBracket) => {
-    setModalType('tax-bracket');
     setFormData(bracket);
     setShowModal(true);
   };
@@ -108,43 +106,71 @@ export default function PayrollConfigurationPage() {
     }
   };
 
-  const exportConfiguration = () => {
-    const configData = {
-      'Configuración General': config,
-      'Tramos Fiscales': taxBrackets
-    };
+  const exportConfiguration = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      
 
-    const csvContent = [
-      'Configuración de Nómina',
-      `Generado: ${new Date().toLocaleDateString()}`,
-      '',
-      'CONFIGURACIÓN GENERAL',
-      `Empresa,${config?.company_name}`,
-      `RNC,${config?.tax_id}`,
-      `Seguridad Social,${config?.social_security_rate}%`,
-      `ISR,${config?.income_tax_rate}%`,
-      `Regalía Pascual,${config?.christmas_bonus_rate}%`,
-      `Días de Vacaciones,${config?.vacation_days}`,
-      `Días por Enfermedad,${config?.sick_days}`,
-      `Horas Extras,${config?.overtime_rate}x`,
-      `Turno Nocturno,${config?.night_shift_rate}x`,
-      `Domingo,${config?.sunday_rate}x`,
-      `Días Feriados,${config?.holiday_rate}x`,
-      `Salario Mínimo,RD$${config?.min_wage?.toLocaleString()}`,
-      `Frecuencia de Pago,${config?.pay_frequency}`,
-      '',
-      'TRAMOS FISCALES',
-      'Desde,Hasta,Tasa,Monto Fijo',
-      ...taxBrackets.map(bracket => 
-        `RD$${bracket.min_amount.toLocaleString()},${bracket.max_amount === Infinity ? 'En adelante' : `RD$${bracket.max_amount.toLocaleString()}`},${bracket.rate}%,RD$${bracket.fixed_amount.toLocaleString()}`
-      )
-    ].join('\n');
+      const rows: any[] = [];
+      // General configuration rows
+      if (config) {
+        const generalPairs: [string, any][] = [
+          ['Empresa', config.company_name],
+          ['RNC', config.tax_id],
+          ['Seguridad Social (%)', config.social_security_rate],
+          ['ISR Base (%)', config.income_tax_rate],
+          ['Regalía Pascual (%)', config.christmas_bonus_rate],
+          ['Días de Vacaciones', config.vacation_days],
+          ['Días por Enfermedad', config.sick_days],
+          ['Horas Extras (Factor)', config.overtime_rate],
+          ['Turno Nocturno (Factor)', config.night_shift_rate],
+          ['Domingo (Factor)', config.sunday_rate],
+          ['Días Feriados (Factor)', config.holiday_rate],
+          ['Salario Mínimo', config.min_wage],
+          ['Moneda', config.currency],
+          ['Frecuencia de Pago', config.pay_frequency],
+          ['Inicio Año Fiscal', config.fiscal_year_start],
+          ['Cálculo Automático de Impuestos', (config.auto_calculate_taxes ? 'Sí' : 'No')],
+          ['Generación Automática de Reportes', (config.auto_generate_reports ? 'Sí' : 'No')],
+          ['Frecuencia de Respaldo', config.backup_frequency],
+        ];
+        generalPairs.forEach(([k, v]) => rows.push({ section: 'General', key: k, value: v ?? '', from: '', to: '', rate: '', fixed: '' }));
+      }
 
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `configuracion_nomina_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+      // Separator row
+      rows.push({ section: '', key: '', value: '', from: '', to: '', rate: '', fixed: '' });
+
+      // Tax brackets rows
+      taxBrackets.forEach(br => {
+        rows.push({
+          section: 'Tramos',
+          key: '',
+          value: '',
+          from: br.min_amount || 0,
+          to: br.max_amount === Infinity ? 'En adelante' : (br.max_amount || 0),
+          rate: br.rate || 0,
+          fixed: br.fixed_amount || 0,
+        });
+      });
+
+      await exportToExcelStyled(
+        rows,
+        [
+          { key: 'section', title: 'Sección', width: 12 },
+          { key: 'key', title: 'Clave', width: 28 },
+          { key: 'value', title: 'Valor', width: 28 },
+          { key: 'from', title: 'Desde', width: 16, numFmt: '#,##0.00' },
+          { key: 'to', title: 'Hasta', width: 16 },
+          { key: 'rate', title: 'Tasa (%)', width: 12, numFmt: '0.00' },
+          { key: 'fixed', title: 'Monto Fijo', width: 16, numFmt: '#,##0.00' },
+        ],
+        `configuracion_nomina_${today}`,
+        'Configuración'
+      );
+    } catch (error) {
+      console.error('Error exporting payroll configuration:', error);
+      alert('Error al exportar la configuración a Excel');
+    }
   };
 
   const renderGeneralConfig = () => (

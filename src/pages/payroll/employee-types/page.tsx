@@ -1,6 +1,7 @@
 
 import { useState } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 
 interface EmployeeType {
   id: string;
@@ -161,29 +162,38 @@ export default function EmployeeTypesPage() {
     ));
   };
 
-  const downloadExcel = () => {
-    let csvContent = 'Tipos de Empleados\\n';
-    csvContent += `Generado: ${new Date().toLocaleDateString()}\\n\\n`;
-    csvContent += 'Nombre,Descripción,Horas de Trabajo,Horas Extras,Días de Vacaciones,Beneficios,Estado\\n';
-    
-    filteredTypes.forEach(type => {
-      const row = [
-        `"${type.name}"`,
-        `"${type.description}"`,
-        type.workingHours,
-        type.overtimeEligible ? 'Sí' : 'No',
-        type.vacationDays,
-        `"${type.benefits.join(', ')}"`,
-        type.status === 'active' ? 'Activo' : 'Inactivo'
-      ].join(',');
-      csvContent += row + '\\n';
-    });
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `tipos_empleados_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+  const downloadExcel = async () => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const rows = filteredTypes.map(type => ({
+        name: type.name,
+        description: type.description,
+        workingHours: type.workingHours,
+        overtime: type.overtimeEligible ? 'Sí' : 'No',
+        vacationDays: type.vacationDays,
+        benefits: type.benefits.join(', '),
+        status: type.status === 'active' ? 'Activo' : 'Inactivo',
+        createdAt: type.createdAt,
+      }));
+      await exportToExcelStyled(
+        rows,
+        [
+          { key: 'name', title: 'Nombre', width: 22 },
+          { key: 'description', title: 'Descripción', width: 40 },
+          { key: 'workingHours', title: 'Horas Trabajo/Día', width: 18 },
+          { key: 'overtime', title: 'Horas Extras', width: 14 },
+          { key: 'vacationDays', title: 'Vacaciones/Año', width: 16 },
+          { key: 'benefits', title: 'Beneficios', width: 36 },
+          { key: 'status', title: 'Estado', width: 12 },
+          { key: 'createdAt', title: 'Creado', width: 14 },
+        ],
+        `tipos_empleados_${today}`,
+        'Tipos de Empleados'
+      );
+    } catch (error) {
+      console.error('Error exporting employee types:', error);
+      alert('Error al exportar a Excel');
+    }
   };
 
   return (

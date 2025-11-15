@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { exportToExcel } from '../../../lib/excel';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { useAuth } from '../../../hooks/useAuth';
+import { chartAccountsService } from '../../../services/database';
 
 interface FinancialStatement {
   id: string;
@@ -32,6 +34,7 @@ interface FinancialData {
 }
 
 export default function FinancialStatementsPage() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'statements' | 'balance' | 'income' | 'cashflow'>('statements');
   const [statements, setStatements] = useState<FinancialStatement[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState('');
@@ -127,115 +130,95 @@ export default function FinancialStatementsPage() {
 
   const downloadExcel = () => {
     try {
-      exportToExcel({
-        sheetName: 'Estados',
-        fileName: `estados_financieros_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: 'Nombre', width: 30, key: 'name' },
-          { header: 'Tipo', width: 22 },
-          { header: 'Período', width: 14, key: 'period' },
-          { header: 'Estado', width: 12 },
-          { header: 'Fecha Creación', width: 16 }
-        ],
-        rows: statements.map(s => ([
-          s.name,
-          getTypeLabel(s.type),
-          s.period,
-          s.status === 'draft' ? 'Borrador' : s.status === 'final' ? 'Final' : 'Aprobado',
-          new Date(s.created_at).toLocaleDateString('es-DO')
-        ]))
-      });
+      const headers = [
+        { key: 'name', title: 'Nombre' },
+        { key: 'type', title: 'Tipo' },
+        { key: 'period', title: 'Período' },
+        { key: 'status', title: 'Estado' },
+        { key: 'created', title: 'Fecha Creación' },
+      ];
+      const rows = statements.map(s => ({
+        name: s.name,
+        type: getTypeLabel(s.type),
+        period: s.period,
+        status: s.status === 'draft' ? 'Borrador' : s.status === 'final' ? 'Final' : 'Aprobado',
+        created: new Date(s.created_at).toLocaleDateString('es-DO')
+      }));
+      exportToExcelWithHeaders(rows, headers, `estados_financieros_${new Date().toISOString().split('T')[0]}`, 'Estados', [30,22,14,12,16]);
     } catch (error) {
       console.error('Error downloading Excel:', error);
       alert('Error al descargar el archivo');
     }
   };
 
-  const downloadBalanceSheetExcel = () => {
+  const downloadBalanceSheetExcel = async () => {
     try {
+      const today = new Date().toISOString().split('T')[0];
+      if (!user?.id) { alert('Debes iniciar sesión'); return; }
+      const data = await chartAccountsService.generateBalanceSheet(user.id, today);
+      const headers = [
+        { key: 'section', title: 'Sección' },
+        { key: 'group', title: 'Grupo' },
+        { key: 'name', title: 'Nombre' },
+        { key: 'amount', title: 'Monto' },
+      ];
       const rows: any[] = [];
-      financialData.assets.current.forEach(i => rows.push(['ACTIVOS', 'Activos Corrientes', i.name, i.amount]));
-      rows.push(['', 'Total Activos Corrientes', '', totals.totalCurrentAssets]);
-      financialData.assets.nonCurrent.forEach(i => rows.push(['', 'Activos No Corrientes', i.name, i.amount]));
-      rows.push(['', 'Total Activos No Corrientes', '', totals.totalNonCurrentAssets]);
-      rows.push(['', 'TOTAL ACTIVOS', '', totals.totalAssets]);
-      financialData.liabilities.current.forEach(i => rows.push(['PASIVOS Y PATRIMONIO', 'Pasivos Corrientes', i.name, i.amount]));
-      rows.push(['', 'Total Pasivos Corrientes', '', totals.totalCurrentLiabilities]);
-      financialData.liabilities.nonCurrent.forEach(i => rows.push(['', 'Pasivos No Corrientes', i.name, i.amount]));
-      rows.push(['', 'Total Pasivos No Corrientes', '', totals.totalNonCurrentLiabilities]);
-      financialData.equity.forEach(i => rows.push(['', 'Patrimonio', i.name, i.amount]));
-      rows.push(['', 'Total Patrimonio', '', totals.totalEquity]);
-      rows.push(['', 'TOTAL PASIVOS Y PATRIMONIO', '', totals.totalLiabilities + totals.totalEquity]);
-      exportToExcel({
-        sheetName: 'Balance',
-        fileName: `balance_general_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: 'Grupo', width: 16 },
-          { header: 'Cuenta', width: 36 },
-          { header: 'Nombre', width: 30 },
-          { header: 'Monto', width: 14, numFmt: '#,##0.00' }
-        ],
-        rows
-      });
+      data.assets.forEach((i: any) => rows.push({ section: 'ACTIVOS', group: 'Activos', name: i.name, amount: Math.abs(i.balance || 0) }));
+      rows.push({ section: '', group: 'TOTAL ACTIVOS', name: '', amount: data.totalAssets || 0 });
+      data.liabilities.forEach((i: any) => rows.push({ section: 'PASIVOS Y PATRIMONIO', group: 'Pasivos', name: i.name, amount: Math.abs(i.balance || 0) }));
+      rows.push({ section: '', group: 'Total Pasivos', name: '', amount: data.totalLiabilities || 0 });
+      data.equity.forEach((i: any) => rows.push({ section: '', group: 'Patrimonio', name: i.name, amount: Math.abs(i.balance || 0) }));
+      rows.push({ section: '', group: 'Total Patrimonio', name: '', amount: data.totalEquity || 0 });
+      rows.push({ section: '', group: 'TOTAL PASIVOS Y PATRIMONIO', name: '', amount: (data.totalLiabilities || 0) + (data.totalEquity || 0) });
+      exportToExcelWithHeaders(rows, headers, `balance_general_${today}`, 'Balance', [18,24,36,16]);
     } catch (error) {
       console.error('Error downloading Balance Sheet:', error);
       alert('Error al descargar el Balance General');
     }
   };
 
-  const downloadIncomeStatementExcel = () => {
+  const downloadIncomeStatementExcel = async () => {
     try {
+      const today = new Date().toISOString().split('T')[0];
+      if (!user?.id) { alert('Debes iniciar sesión'); return; }
+      const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+      const data = await chartAccountsService.generateIncomeStatement(user.id, firstDay, today);
+      const headers = [
+        { key: 'section', title: 'Sección' },
+        { key: 'name', title: 'Nombre' },
+        { key: 'amount', title: 'Monto' },
+      ];
       const rows: any[] = [];
-      financialData.revenue.forEach(i => rows.push(['INGRESOS', i.name, i.amount]));
-      rows.push(['', 'Total Ingresos', totals.totalRevenue]);
-      financialData.expenses.forEach(i => rows.push(['GASTOS', i.name, i.amount]));
-      rows.push(['', 'Total Gastos', totals.totalExpenses]);
-      rows.push(['', 'UTILIDAD NETA', totals.netIncome]);
-
-      exportToExcel({
-        sheetName: 'Resultados',
-        fileName: `estado_resultados_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: 'Grupo', width: 16 },
-          { header: 'Cuenta', width: 36 },
-          { header: 'Monto', width: 14, numFmt: '#,##0.00' }
-        ],
-        rows
-      });
+      (data.income || []).forEach((i: any) => rows.push({ section: 'INGRESOS', name: i.name, amount: Math.abs(i.balance || 0) }));
+      rows.push({ section: '', name: 'Total Ingresos', amount: data.totalIncome || 0 });
+      (data.expenses || []).forEach((i: any) => rows.push({ section: 'GASTOS', name: i.name, amount: Math.abs(i.balance || 0) }));
+      rows.push({ section: '', name: 'Total Gastos', amount: data.totalExpenses || 0 });
+      rows.push({ section: '', name: 'UTILIDAD NETA', amount: data.netIncome || 0 });
+      exportToExcelWithHeaders(rows, headers, `estado_resultados_${today}`, 'Resultados', [18,40,16]);
     } catch (error) {
       console.error('Error downloading Income Statement:', error);
       alert('Error al descargar el Estado de Resultados');
     }
   };
 
-  const downloadCashFlowExcel = () => {
+  const downloadCashFlowExcel = async () => {
     try {
-      const rows: any[] = [];
-      rows.push(['ACTIVIDADES DE OPERACIÓN', 'Utilidad Neta', 3400000]);
-      rows.push(['', 'Depreciación', 180000]);
-      rows.push(['', 'Cambios en Cuentas por Cobrar', -120000]);
-      rows.push(['', 'Cambios en Inventarios', -200000]);
-      rows.push(['', 'Cambios en Cuentas por Pagar', 80000]);
-      rows.push(['ACTIVIDADES DE INVERSIÓN', 'Compra de Equipos', -450000]);
-      rows.push(['', 'Venta de Activos', 120000]);
-      rows.push(['', 'Inversiones', -200000]);
-      rows.push(['ACTIVIDADES DE FINANCIAMIENTO', 'Préstamos Obtenidos', 800000]);
-      rows.push(['', 'Pago de Préstamos', -600000]);
-      rows.push(['', 'Dividendos Pagados', -500000]);
-      rows.push(['RESUMEN', 'Aumento Neto en Efectivo', 2510000]);
-      rows.push(['', 'Efectivo al Inicio del Período', 1200000]);
-      rows.push(['', 'Efectivo al Final del Período', 3710000]);
-
-      exportToExcel({
-        sheetName: 'Flujo',
-        fileName: `flujo_efectivo_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: 'Actividad', width: 18 },
-          { header: 'Concepto', width: 36 },
-          { header: 'Monto', width: 14, numFmt: '#,##0.00' }
-        ],
-        rows
-      });
+      const today = new Date().toISOString().split('T')[0];
+      if (!user?.id) { alert('Debes iniciar sesión'); return; }
+      const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+      const data = await chartAccountsService.generateCashFlowStatement(user.id, firstDay, today);
+      const headers = [
+        { key: 'activity', title: 'Actividad' },
+        { key: 'concept', title: 'Concepto' },
+        { key: 'amount', title: 'Monto' },
+      ];
+      const rows = [
+        { activity: 'OPERACIÓN', concept: 'Flujo de Efectivo Operativo', amount: data.operatingCashFlow || 0 },
+        { activity: 'INVERSIÓN', concept: 'Flujo de Efectivo de Inversión', amount: data.investingCashFlow || 0 },
+        { activity: 'FINANCIAMIENTO', concept: 'Flujo de Efectivo de Financiamiento', amount: data.financingCashFlow || 0 },
+        { activity: 'RESUMEN', concept: 'Flujo Neto de Efectivo', amount: data.netCashFlow || 0 },
+      ];
+      exportToExcelWithHeaders(rows, headers, `flujo_efectivo_${today}`, 'Flujo', [18,36,16]);
     } catch (error) {
       console.error('Error downloading Cash Flow:', error);
       alert('Error al descargar el Flujo de Efectivo');

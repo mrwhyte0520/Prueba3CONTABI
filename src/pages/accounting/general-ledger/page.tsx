@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import * as ExcelJS from 'exceljs';
-import { saveAs } from 'file-saver';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 
 interface Account {
   id: string;
@@ -90,11 +89,55 @@ const GeneralLedgerPage: React.FC = () => {
     if (!user) return;
 
     try {
-      // No generar datos de ejemplo
-      setLedgerEntries([]);
+      setLoading(true);
+      let query = supabase
+        .from('journal_entry_lines')
+        .select(`
+          id,
+          description,
+          debit_amount,
+          credit_amount,
+          journal_entries:journal_entries!inner(entry_date, entry_number, reference),
+          chart_accounts:chart_accounts!inner(id)
+        `)
+        .eq('account_id', accountId);
+
+      if (dateFrom) {
+        query = query.gte('journal_entries.entry_date', dateFrom);
+      }
+      if (dateTo) {
+        query = query.lte('journal_entries.entry_date', dateTo);
+      }
+
+      // Orden por fecha de asiento ascendente para balance acumulado
+      const { data, error } = await query.order('entry_date', { ascending: true, foreignTable: 'journal_entries' });
+
+      if (error) throw error;
+
+      const normal = selectedAccount?.normalBalance || 'debit';
+      let running = 0;
+      const mapped: LedgerEntry[] = (data || []).map((line: any) => {
+        const debit = Number(line.debit_amount || 0);
+        const credit = Number(line.credit_amount || 0);
+        if (normal === 'debit') running += debit - credit; else running += credit - debit;
+        return {
+          id: line.id,
+          date: line.journal_entries.entry_date,
+          description: line.description || '',
+          reference: line.journal_entries.reference || '',
+          debit,
+          credit,
+          balance: running,
+          entryNumber: line.journal_entries.entry_number || ''
+        } as LedgerEntry;
+      });
+
+      setLedgerEntries(mapped);
     } catch (error) {
       console.error('Error loading ledger entries:', error);
       setLedgerEntries([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -104,67 +147,34 @@ const GeneralLedgerPage: React.FC = () => {
         alert('Por favor seleccione una cuenta primero');
         return;
       }
-      
       if (ledgerEntries.length === 0) {
         alert('No hay movimientos para exportar');
         return;
       }
 
-      // Crear un nuevo libro de Excel
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Mayor General');
+      const rows = ledgerEntries.map(e => ({
+        date: new Date(e.date).toLocaleDateString(),
+        entry: e.entryNumber,
+        description: e.description || '',
+        debit: e.debit > 0 ? e.debit : 0,
+        credit: e.credit > 0 ? e.credit : 0,
+        balance: e.balance || 0,
+      }));
 
-      // Agregar encabezados
-      worksheet.addRow(['Mayor General']);
-      worksheet.addRow([`Cuenta: ${selectedAccount.code} - ${selectedAccount.name}`]);
-      worksheet.addRow([`Período: ${dateFrom || 'Inicio'} - ${dateTo || 'Actual'}`]);
-      worksheet.addRow([]); // Línea en blanco
-      
-      // Encabezados de la tabla
-      const headerRow = worksheet.addRow([
-        'Fecha', 'Asiento', 'Descripción', 'Débito', 'Crédito', 'Balance'
-      ]);
-      
-      // Estilo para los encabezados
-      headerRow.font = { bold: true };
-      headerRow.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFD9EAD3' }
-      };
-
-      // Agregar los datos
-      ledgerEntries.forEach(entry => {
-        worksheet.addRow([
-          new Date(entry.date).toLocaleDateString(),
-          entry.entryNumber,
-          entry.description || '',
-          entry.debit > 0 ? entry.debit : '',
-          entry.credit > 0 ? entry.credit : '',
-          entry.balance || 0
-        ]);
-      });
-
-      // Ajustar el ancho de las columnas
-      worksheet.columns = [
-        { key: 'fecha', width: 15 },
-        { key: 'asiento', width: 10 },
-        { key: 'descripcion', width: 40 },
-        { key: 'debito', width: 15 },
-        { key: 'credito', width: 15 },
-        { key: 'balance', width: 15 }
-      ];
-
-      // Generar el archivo Excel
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], { 
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
-      });
-      
-      // Descargar el archivo
-      const fileName = `mayor_${selectedAccount.code}_${new Date().toISOString().split('T')[0]}.xlsx`;
-      saveAs(blob, fileName);
-      
+      const fileBase = `mayor_${selectedAccount.code}_${new Date().toISOString().split('T')[0]}`;
+      await exportToExcelStyled(
+        rows,
+        [
+          { key: 'date', title: 'Fecha', width: 12 },
+          { key: 'entry', title: 'Asiento', width: 12 },
+          { key: 'description', title: 'Descripción', width: 40 },
+          { key: 'debit', title: 'Débito', width: 14, numFmt: '#,##0.00' },
+          { key: 'credit', title: 'Crédito', width: 14, numFmt: '#,##0.00' },
+          { key: 'balance', title: 'Balance', width: 14, numFmt: '#,##0.00' },
+        ],
+        fileBase,
+        'Mayor General'
+      );
     } catch (error) {
       console.error('Error al exportar a Excel:', error);
       alert('Error al generar el archivo Excel. Por favor, intente nuevamente.');

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface PettyCashFund {
   id: string;
@@ -84,41 +85,56 @@ const PettyCashPage: React.FC = () => {
 
   const downloadExcel = () => {
     try {
-      // Crear contenido CSV
-      let csvContent = 'Caja Chica\n';
-      csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
-      csvContent += 'Fecha,Descripción,Categoría,Monto,Estado,Aprobado Por\n';
-      
-      expenses.forEach(expense => {
-        const row = [
-          expense.date,
-          `"${expense.description}"`,
-          expense.category,
-          expense.amount.toLocaleString(),
-          expense.status === 'approved' ? 'Aprobado' : expense.status === 'pending' ? 'Pendiente' : 'Rechazado',
-          expense.approvedBy || 'N/A'
-        ].join(',');
-        csvContent += row + '\n';
-      });
+      const today = new Date().toISOString().split('T')[0];
+      if (activeTab === 'funds') {
+        const headers = [
+          { key: 'name', title: 'Fondo' },
+          { key: 'location', title: 'Ubicación' },
+          { key: 'custodian', title: 'Custodio' },
+          { key: 'initialAmount', title: 'Monto Inicial' },
+          { key: 'currentBalance', title: 'Balance Actual' },
+          { key: 'status', title: 'Estado' },
+          { key: 'createdAt', title: 'Creado' },
+        ];
+        const rows = funds.map(f => ({
+          name: f.name,
+          location: f.location,
+          custodian: f.custodian,
+          initialAmount: f.initialAmount || 0,
+          currentBalance: f.currentBalance || 0,
+          status: f.status === 'active' ? 'Activo' : 'Inactivo',
+          createdAt: f.createdAt,
+        }));
+        exportToExcelWithHeaders(rows, headers, `caja_chica_fondos_${today}`, 'Fondos', [24,18,18,16,16,12,14]);
+        return;
+      }
 
-      // Agregar resumen
-      csvContent += '\nResumen:\n';
-      csvContent += `Total Gastos:,${expenses.length}\n`;
-      csvContent += `Gastos Aprobados:,${expenses.filter(e => e.status === 'approved').length}\n`;
-      csvContent += `Gastos Pendientes:,${expenses.filter(e => e.status === 'pending').length}\n`;
-      csvContent += `Total Monto:,RD$${getTotalExpenses().toLocaleString()}\n`;
-      csvContent += `Saldo Total Fondos:,RD$${getTotalFunds().toLocaleString()}\n`;
+      if (activeTab === 'expenses') {
+        const headers = [
+          { key: 'date', title: 'Fecha' },
+          { key: 'fund', title: 'Fondo' },
+          { key: 'description', title: 'Descripción' },
+          { key: 'category', title: 'Categoría' },
+          { key: 'amount', title: 'Monto' },
+          { key: 'status', title: 'Estado' },
+          { key: 'approvedBy', title: 'Aprobado Por' },
+        ];
+        const fundNameById = new Map(funds.map(f => [f.id, f.name] as const));
+        const rows = expenses.map(e => ({
+          date: e.date,
+          fund: fundNameById.get(e.fundId) || e.fundId || '',
+          description: e.description,
+          category: e.category,
+          amount: e.amount || 0,
+          status: e.status === 'approved' ? 'Aprobado' : e.status === 'pending' ? 'Pendiente' : 'Rechazado',
+          approvedBy: e.approvedBy || 'N/A',
+        }));
+        exportToExcelWithHeaders(rows, headers, `caja_chica_gastos_${today}`, 'Gastos', [12,22,40,18,14,12,18]);
+        return;
+      }
 
-      // Crear y descargar archivo
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `caja_chica_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Reembolsos u otras pestañas (si se agregan)
+      alert('No hay datos para exportar en esta pestaña.');
     } catch (error) {
       console.error('Error downloading Excel:', error);
       alert('Error al descargar el archivo');
