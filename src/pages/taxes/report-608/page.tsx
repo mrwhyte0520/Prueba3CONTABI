@@ -18,6 +18,7 @@ interface Report608Data {
 export default function Report608Page() {
   const navigate = useNavigate();
   const [selectedPeriod, setSelectedPeriod] = useState('');
+  const [reportPeriod, setReportPeriod] = useState('');
   const [cancelledDocuments, setCancelledDocuments] = useState<Report608Data[]>([]);
   const [generating, setGenerating] = useState(false);
 
@@ -28,12 +29,36 @@ export default function Report608Page() {
     setSelectedPeriod(currentPeriod);
   }, []);
 
+  const formatPeriodLabel = (period: string) => {
+    if (!period) return '';
+    const [yearStr, monthStr] = period.split('-');
+    const monthIndex = Number(monthStr) - 1;
+    const months = [
+      'enero',
+      'febrero',
+      'marzo',
+      'abril',
+      'mayo',
+      'junio',
+      'julio',
+      'agosto',
+      'septiembre',
+      'octubre',
+      'noviembre',
+      'diciembre'
+    ];
+
+    const monthName = months[monthIndex] || '';
+    return monthName ? `${monthName} de ${yearStr}` : period;
+  };
+
   const generateReport = async () => {
     if (!selectedPeriod) return;
     
     setGenerating(true);
     try {
       const data = await taxService.generateReport608(selectedPeriod);
+      setReportPeriod(selectedPeriod);
       setCancelledDocuments(data);
     } catch (error) {
       console.error('Error generating report 608:', error);
@@ -243,7 +268,7 @@ export default function Report608Page() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">
-              Detalle del Reporte 608 - {selectedPeriod && new Date(selectedPeriod + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}
+              Detalle del Reporte 608 - {formatPeriodLabel(reportPeriod)}
             </h3>
           </div>
           <div className="overflow-x-auto">

@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
 import * as XLSX from 'xlsx';
@@ -36,39 +36,55 @@ interface Report606Summary {
 
 export default function Report606Page() {
   const [selectedPeriod, setSelectedPeriod] = useState('');
+  const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
+  const [selectedMonth, setSelectedMonth] = useState<string>(String(new Date().getMonth() + 1).padStart(2, '0'));
   const [reportData, setReportData] = useState<Report606Data[]>([]);
   const [summary, setSummary] = useState<Report606Summary | null>(null);
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
 
-  const periods = [
-    { value: '2024-01', label: 'Enero 2024' },
-    { value: '2024-02', label: 'Febrero 2024' },
-    { value: '2024-03', label: 'Marzo 2024' },
-    { value: '2024-04', label: 'Abril 2024' },
-    { value: '2024-05', label: 'Mayo 2024' },
-    { value: '2024-06', label: 'Junio 2024' },
-    { value: '2024-07', label: 'Julio 2024' },
-    { value: '2024-08', label: 'Agosto 2024' },
-    { value: '2024-09', label: 'Septiembre 2024' },
-    { value: '2024-10', label: 'Octubre 2024' },
-    { value: '2024-11', label: 'Noviembre 2024' },
-    { value: '2024-12', label: 'Diciembre 2024' }
+  const months = [
+    { value: '01', label: 'Enero' },
+    { value: '02', label: 'Febrero' },
+    { value: '03', label: 'Marzo' },
+    { value: '04', label: 'Abril' },
+    { value: '05', label: 'Mayo' },
+    { value: '06', label: 'Junio' },
+    { value: '07', label: 'Julio' },
+    { value: '08', label: 'Agosto' },
+    { value: '09', label: 'Septiembre' },
+    { value: '10', label: 'Octubre' },
+    { value: '11', label: 'Noviembre' },
+    { value: '12', label: 'Diciembre' },
   ];
 
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 5 }, (_, idx) => String(currentYear - idx));
+
   const generateReport = async () => {
-    if (!selectedPeriod) {
-      alert('Por favor selecciona un período');
+    const period = `${selectedYear}-${selectedMonth}`;
+    setSelectedPeriod(period);
+
+    if (!selectedYear || !selectedMonth) {
+      alert('Por favor selecciona mes y año');
       return;
     }
 
     setLoading(true);
     try {
-      const data = await taxService.generateReport606(selectedPeriod);
-      const summaryData = await taxService.getReport606Summary(selectedPeriod);
-      
-      setReportData(data);
-      setSummary(summaryData);
+      // Construir los datos del 606 para el período antes de consultar el reporte
+      await taxService.buildReport606(period);
+
+      const data = await taxService.generateReport606(period);
+      const summaryData = await taxService.getReport606Summary(period) as any;
+
+      const totalRecords = Array.isArray(data) ? data.length : 0;
+      const totalAmount = Number(summaryData?.totalMonto ?? 0);
+      const totalItbis = Number(summaryData?.totalItbis ?? 0);
+      const totalRetention = Number(summaryData?.totalRetenido ?? 0);
+
+      setReportData(Array.isArray(data) ? data : []);
+      setSummary({ totalRecords, totalAmount, totalItbis, totalRetention });
       setShowResults(true);
     } catch (error) {
       console.error('Error generating report:', error);
@@ -112,16 +128,16 @@ export default function Report606Page() {
         row.ncf_modificado || '',
         row.fecha_comprobante,
         row.fecha_pago,
-        row.servicios_facturados.toFixed(2),
-        row.bienes_facturados.toFixed(2),
-        row.monto_facturado.toFixed(2),
-        row.itbis_facturado.toFixed(2),
-        row.itbis_retenido.toFixed(2),
-        row.retencion_renta.toFixed(2),
-        row.isr_percibido.toFixed(2),
-        row.impuesto_selectivo_consumo.toFixed(2),
-        row.otros_impuestos.toFixed(2),
-        row.monto_propina_legal.toFixed(2),
+        Number(row.servicios_facturados ?? 0).toFixed(2),
+        Number(row.bienes_facturados ?? 0).toFixed(2),
+        Number(row.monto_facturado ?? 0).toFixed(2),
+        Number(row.itbis_facturado ?? 0).toFixed(2),
+        Number(row.itbis_retenido ?? 0).toFixed(2),
+        Number(row.retencion_renta ?? 0).toFixed(2),
+        Number(row.isr_percibido ?? 0).toFixed(2),
+        Number(row.impuesto_selectivo_consumo ?? 0).toFixed(2),
+        Number(row.otros_impuestos ?? 0).toFixed(2),
+        Number(row.monto_propina_legal ?? 0).toFixed(2),
         row.forma_pago
       ].join(','))
     ].join('\n');
@@ -255,21 +271,37 @@ export default function Report606Page() {
         {/* Filtros */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Generar Reporte</h2>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Período
+                Año
               </label>
               <select
-                value={selectedPeriod}
-                onChange={(e) => setSelectedPeriod(e.target.value)}
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">Seleccionar período</option>
-                {periods.map((period) => (
-                  <option key={period.value} value={period.value}>
-                    {period.label}
+                {years.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Mes
+              </label>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {months.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
                   </option>
                 ))}
               </select>
@@ -278,7 +310,7 @@ export default function Report606Page() {
 
           <button
             onClick={generateReport}
-            disabled={loading || !selectedPeriod}
+            disabled={loading || !selectedYear || !selectedMonth}
             className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed whitespace-nowrap"
           >
             {loading ? 'Generando...' : 'Generar Reporte'}

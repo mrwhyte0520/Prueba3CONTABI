@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { exportToExcel } from '../../../lib/excel';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { financialReportsService, chartAccountsService, financialStatementsService } from '../../../services/database';
 
 interface FinancialStatement {
   id: string;
@@ -32,6 +34,7 @@ interface FinancialData {
 }
 
 export default function FinancialStatementsPage() {
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'statements' | 'balance' | 'income' | 'cashflow'>('statements');
   const [statements, setStatements] = useState<FinancialStatement[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState('');
@@ -41,32 +44,148 @@ export default function FinancialStatementsPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedStatement, setSelectedStatement] = useState<FinancialStatement | null>(null);
 
-  // Estructuras vacías (sin datos de prueba)
-  const financialData: FinancialData = {
+  const [financialData, setFinancialData] = useState<FinancialData>({
     assets: { current: [], nonCurrent: [] },
     liabilities: { current: [], nonCurrent: [] },
     equity: [],
     revenue: [],
     expenses: []
-  };
+  });
+
+  const [cashFlow, setCashFlow] = useState<{
+    operatingCashFlow: number;
+    investingCashFlow: number;
+    financingCashFlow: number;
+    netCashFlow: number;
+  }>({
+    operatingCashFlow: 0,
+    investingCashFlow: 0,
+    financingCashFlow: 0,
+    netCashFlow: 0,
+  });
 
   useEffect(() => {
     loadStatements();
-  }, []);
+  }, [user, selectedPeriod]);
 
-  const loadStatements = () => {
-    setStatements([]);
+  useEffect(() => {
+    // Cargar datos financieros / cash flow cuando cambie el período o la pestaña relevante
+    if (!user) return;
+
+    const period = selectedPeriod || new Date().toISOString().slice(0, 7); // YYYY-MM
+    const [yearStr, monthStr] = period.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    if (!year || !month) return;
+
+    const fromDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
+    const toDate = new Date(year, month, 0).toISOString().slice(0, 10);
+
+    const loadFinancialData = async () => {
+      try {
+        const trialBalance = await financialReportsService.getTrialBalance(user.id, fromDate, toDate);
+
+        const nextData: FinancialData = {
+          assets: { current: [], nonCurrent: [] },
+          liabilities: { current: [], nonCurrent: [] },
+          equity: [],
+          revenue: [],
+          expenses: []
+        };
+
+        (trialBalance || []).forEach((acc: any) => {
+          const balance = Number(acc.balance) || 0;
+          if (Math.abs(balance) < 0.005) return; // omitir saldos cero
+
+          const label = `${acc.code} - ${acc.name}`;
+
+          switch (acc.type) {
+            case 'asset':
+            case 'activo':
+              nextData.assets.current.push({ name: label, amount: balance });
+              break;
+            case 'liability':
+            case 'pasivo':
+              nextData.liabilities.current.push({ name: label, amount: balance });
+              break;
+            case 'equity':
+            case 'patrimonio':
+              nextData.equity.push({ name: label, amount: balance });
+              break;
+            case 'income':
+            case 'ingreso':
+              nextData.revenue.push({ name: label, amount: balance });
+              break;
+            case 'expense':
+            case 'gasto':
+              nextData.expenses.push({ name: label, amount: balance });
+              break;
+            default:
+              break;
+          }
+        });
+
+        setFinancialData(nextData);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading financial data for statements:', error);
+      }
+    };
+
+    const loadCashFlow = async () => {
+      try {
+        const result = await chartAccountsService.generateCashFlowStatement(user.id, fromDate, toDate);
+        setCashFlow({
+          operatingCashFlow: result.operatingCashFlow || 0,
+          investingCashFlow: result.investingCashFlow || 0,
+          financingCashFlow: result.financingCashFlow || 0,
+          netCashFlow: result.netCashFlow || 0,
+        });
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading cash flow statement:', error);
+        setCashFlow({ operatingCashFlow: 0, investingCashFlow: 0, financingCashFlow: 0, netCashFlow: 0 });
+      }
+    };
+
+    if (activeTab === 'balance' || activeTab === 'income') {
+      void loadFinancialData();
+    } else if (activeTab === 'cashflow') {
+      void loadCashFlow();
+    }
+  }, [user, selectedPeriod, activeTab]);
+
+  const loadStatements = async () => {
+    try {
+      if (!user) {
+        setStatements([]);
+        return;
+      }
+      const period = selectedPeriod || new Date().toISOString().slice(0, 7); // YYYY-MM
+      const data = await financialStatementsService.getAll(user.id, period);
+      setStatements(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading financial statements:', error);
+      setStatements([]);
+    }
   };
 
-  const generateStatement = async (type: string) => {
-    setIsGenerating(true);
-    // Simular generación
-    setTimeout(() => {
+  const generateStatement = async (type: string, period: string) => {
+    try {
+      if (!user) return;
+      setIsGenerating(true);
+      await financialStatementsService.create(user.id, { type, period });
       setIsGenerating(false);
       setShowNewStatementModal(false);
-      loadStatements();
+      await loadStatements();
       alert('Estado financiero generado exitosamente');
-    }, 2000);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error generating financial statement:', error);
+      setIsGenerating(false);
+      alert('Error al generar el estado financiero');
+    }
   };
 
   const formatCurrency = (amount: number) => {
@@ -211,20 +330,10 @@ export default function FinancialStatementsPage() {
   const downloadCashFlowExcel = () => {
     try {
       const rows: any[] = [];
-      rows.push(['ACTIVIDADES DE OPERACIÓN', 'Utilidad Neta', 3400000]);
-      rows.push(['', 'Depreciación', 180000]);
-      rows.push(['', 'Cambios en Cuentas por Cobrar', -120000]);
-      rows.push(['', 'Cambios en Inventarios', -200000]);
-      rows.push(['', 'Cambios en Cuentas por Pagar', 80000]);
-      rows.push(['ACTIVIDADES DE INVERSIÓN', 'Compra de Equipos', -450000]);
-      rows.push(['', 'Venta de Activos', 120000]);
-      rows.push(['', 'Inversiones', -200000]);
-      rows.push(['ACTIVIDADES DE FINANCIAMIENTO', 'Préstamos Obtenidos', 800000]);
-      rows.push(['', 'Pago de Préstamos', -600000]);
-      rows.push(['', 'Dividendos Pagados', -500000]);
-      rows.push(['RESUMEN', 'Aumento Neto en Efectivo', 2510000]);
-      rows.push(['', 'Efectivo al Inicio del Período', 1200000]);
-      rows.push(['', 'Efectivo al Final del Período', 3710000]);
+      rows.push(['ACTIVIDADES DE OPERACIÓN', 'Efectivo de Actividades de Operación', cashFlow.operatingCashFlow]);
+      rows.push(['ACTIVIDADES DE INVERSIÓN', 'Efectivo de Actividades de Inversión', cashFlow.investingCashFlow]);
+      rows.push(['ACTIVIDADES DE FINANCIAMIENTO', 'Efectivo de Actividades de Financiamiento', cashFlow.financingCashFlow]);
+      rows.push(['RESUMEN', 'Aumento Neto en Efectivo', cashFlow.netCashFlow]);
 
       exportToExcel({
         sheetName: 'Flujo',
@@ -639,80 +748,30 @@ export default function FinancialStatementsPage() {
               <div className="max-w-2xl space-y-6">
                 <div>
                   <h3 className="text-lg font-semibold mb-4 text-blue-600">Actividades de Operación</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>Utilidad Neta</span>
-                      <span className="font-medium">{formatCurrency(3400000)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Depreciación</span>
-                      <span className="font-medium">{formatCurrency(180000)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Cambios en Cuentas por Cobrar</span>
-                      <span className="font-medium">{formatCurrency(-120000)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Cambios en Inventarios</span>
-                      <span className="font-medium">{formatCurrency(-200000)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Cambios en Cuentas por Pagar</span>
-                      <span className="font-medium">{formatCurrency(80000)}</span>
-                    </div>
-                  </div>
                   <div className="border-t pt-3 mt-3">
                     <div className="flex justify-between font-bold">
                       <span>Efectivo de Actividades de Operación</span>
-                      <span>{formatCurrency(3340000)}</span>
+                      <span>{formatCurrency(cashFlow.operatingCashFlow)}</span>
                     </div>
                   </div>
                 </div>
 
                 <div>
                   <h3 className="text-lg font-semibold mb-4 text-purple-600">Actividades de Inversión</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>Compra de Equipos</span>
-                      <span className="font-medium">{formatCurrency(-450000)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Venta de Activos</span>
-                      <span className="font-medium">{formatCurrency(120000)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Inversiones</span>
-                      <span className="font-medium">{formatCurrency(-200000)}</span>
-                    </div>
-                  </div>
                   <div className="border-t pt-3 mt-3">
                     <div className="flex justify-between font-bold">
                       <span>Efectivo de Actividades de Inversión</span>
-                      <span>{formatCurrency(-530000)}</span>
+                      <span>{formatCurrency(cashFlow.investingCashFlow)}</span>
                     </div>
                   </div>
                 </div>
 
                 <div>
                   <h3 className="text-lg font-semibold mb-4 text-orange-600">Actividades de Financiamiento</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>Préstamos Obtenidos</span>
-                      <span className="font-medium">{formatCurrency(800000)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Pago de Préstamos</span>
-                      <span className="font-medium">{formatCurrency(-600000)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Dividendos Pagados</span>
-                      <span className="font-medium">{formatCurrency(-500000)}</span>
-                    </div>
-                  </div>
                   <div className="border-t pt-3 mt-3">
                     <div className="flex justify-between font-bold">
                       <span>Efectivo de Actividades de Financiamiento</span>
-                      <span>{formatCurrency(-300000)}</span>
+                      <span>{formatCurrency(cashFlow.financingCashFlow)}</span>
                     </div>
                   </div>
                 </div>
@@ -721,15 +780,7 @@ export default function FinancialStatementsPage() {
                   <div className="space-y-2">
                     <div className="flex justify-between font-bold">
                       <span>Aumento Neto en Efectivo</span>
-                      <span>{formatCurrency(2510000)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Efectivo al Inicio del Período</span>
-                      <span>{formatCurrency(1200000)}</span>
-                    </div>
-                    <div className="flex justify-between font-bold text-lg">
-                      <span>Efectivo al Final del Período</span>
-                      <span>{formatCurrency(3710000)}</span>
+                      <span>{formatCurrency(cashFlow.netCashFlow)}</span>
                     </div>
                   </div>
                 </div>
@@ -749,7 +800,11 @@ export default function FinancialStatementsPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Tipo de Estado
                   </label>
-                  <select className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8">
+                  <select
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8"
+                    defaultValue="balance_sheet"
+                    id="new-statement-type"
+                  >
                     <option value="balance_sheet">Balance General</option>
                     <option value="income_statement">Estado de Resultados</option>
                     <option value="cash_flow">Flujo de Efectivo</option>
@@ -764,35 +819,37 @@ export default function FinancialStatementsPage() {
                   <input
                     type="month"
                     className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                    defaultValue="2024-12"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Nombre del Estado
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2"
-                    placeholder="Ej: Balance General Enero 2025"
+                    defaultValue={selectedPeriod || new Date().toISOString().slice(0, 7)}
+                    id="new-statement-period"
                   />
                 </div>
               </div>
 
-              <div className="flex justify-end space-x-3 mt-6">
+              <div className="mt-6 flex justify-end space-x-3">
                 <button
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
                   onClick={() => setShowNewStatementModal(false)}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-800 whitespace-nowrap"
                 >
                   Cancelar
                 </button>
                 <button
-                  onClick={() => generateStatement('balance_sheet')}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
                   disabled={isGenerating}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+                  onClick={() => {
+                    const typeSelect = document.getElementById('new-statement-type') as HTMLSelectElement | null;
+                    const periodInput = document.getElementById('new-statement-period') as HTMLInputElement | null;
+                    const typeValue = typeSelect?.value || 'balance_sheet';
+                    const periodValue = periodInput?.value || new Date().toISOString().slice(0, 7);
+                    void generateStatement(typeValue, periodValue);
+                  }}
                 >
-                  {isGenerating ? 'Generando...' : 'Generar Estado'}
+                  {isGenerating && (
+                    <svg className="animate-spin h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                    </svg>
+                  )}
+                  <span>{isGenerating ? 'Generando...' : 'Generar'}</span>
                 </button>
               </div>
             </div>

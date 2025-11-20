@@ -1,7 +1,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import { inventoryService } from '../../services/database';
+import { inventoryService, chartAccountsService } from '../../services/database';
 import { useAuth } from '../../hooks/useAuth';
 
 interface Product {
@@ -21,6 +21,9 @@ interface Product {
   status: 'active' | 'inactive';
   createdAt: string;
   updatedAt: string;
+  expenseAccountId?: string | null;
+  inventoryAccountId?: string | null;
+  cogsAccountId?: string | null;
 }
 
 interface Category {
@@ -46,6 +49,9 @@ export default function ProductsPage() {
   const [showBulkActions, setShowBulkActions] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [accounts, setAccounts] = useState<{ id: string; code: string; name: string }[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+
   const [formData, setFormData] = useState({
     name: '',
     sku: '',
@@ -59,7 +65,10 @@ export default function ProductsPage() {
     description: '',
     supplier: '',
     imageUrl: '',
-    status: 'active' as 'active' | 'inactive'
+    status: 'active' as 'active' | 'inactive',
+    expenseAccountId: '' as string | '',
+    inventoryAccountId: '' as string | '',
+    cogsAccountId: '' as string | ''
   });
 
   const [categoryFormData, setCategoryFormData] = useState({
@@ -67,11 +76,14 @@ export default function ProductsPage() {
   });
 
   
+  const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+
 
   // Load products from database or use sample data
   useEffect(() => {
     loadProducts();
     loadCategories();
+    loadAccounts();
   }, [user]);
 
   const loadProducts = async () => {
@@ -96,7 +108,10 @@ export default function ProductsPage() {
             imageUrl: item.image_url || '',
             status: item.is_active ? 'active' : 'inactive',
             createdAt: item.created_at,
-            updatedAt: item.updated_at
+            updatedAt: item.updated_at,
+            expenseAccountId: item.expense_account_id || null,
+            inventoryAccountId: item.inventory_account_id || null,
+            cogsAccountId: item.cogs_account_id || null,
           }));
           setProducts(transformedProducts);
         } else {
@@ -110,6 +125,23 @@ export default function ProductsPage() {
       setProducts([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadAccounts = async () => {
+    if (!user) return;
+    setLoadingAccounts(true);
+    try {
+      const data = await chartAccountsService.getAll(user.id);
+      const options = (data || [])
+        .filter((acc: any) => acc.allow_posting !== false)
+        .map((acc: any) => ({ id: acc.id, code: acc.code, name: acc.name }));
+      setAccounts(options);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading chart of accounts for products:', error);
+    } finally {
+      setLoadingAccounts(false);
     }
   };
 
@@ -186,7 +218,10 @@ export default function ProductsPage() {
         imageUrl: formData.imageUrl,
         status: formData.status,
         createdAt: editingProduct?.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        expenseAccountId: formData.expenseAccountId || null,
+        inventoryAccountId: formData.inventoryAccountId || null,
+        cogsAccountId: formData.cogsAccountId || null,
       };
 
       if (user) {
@@ -203,10 +238,13 @@ export default function ProductsPage() {
           description: formData.description,
           supplier: formData.supplier,
           image_url: formData.imageUrl,
-          is_active: formData.status === 'active'
+          is_active: formData.status === 'active',
+          expense_account_id: formData.expenseAccountId || null,
+          inventory_account_id: formData.inventoryAccountId || null,
+          cogs_account_id: formData.cogsAccountId || null,
         };
 
-        if (editingProduct) {
+        if (editingProduct && isUuid(editingProduct.id)) {
           await inventoryService.updateItem(editingProduct.id, itemData);
         } else {
           await inventoryService.createItem(user.id, itemData);
@@ -242,7 +280,10 @@ export default function ProductsPage() {
       description: product.description,
       supplier: product.supplier,
       imageUrl: product.imageUrl,
-      status: product.status
+      status: product.status,
+      expenseAccountId: product.expenseAccountId || '',
+      inventoryAccountId: product.inventoryAccountId || '',
+      cogsAccountId: product.cogsAccountId || ''
     });
     setShowModal(true);
   };
@@ -327,7 +368,10 @@ export default function ProductsPage() {
       description: '',
       supplier: '',
       imageUrl: '',
-      status: 'active'
+      status: 'active',
+      expenseAccountId: '',
+      inventoryAccountId: '',
+      cogsAccountId: ''
     });
     setEditingProduct(null);
   };
@@ -664,6 +708,106 @@ export default function ProductsPage() {
                 </div>
               </div>
             )}
+
+        {/* Product Modal */}
+        {showModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {editingProduct ? 'Editar Producto' : 'Nuevo Producto'}
+                </h3>
+                <button
+                  onClick={() => setShowModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <i className="ri-close-line text-xl" />
+                </button>
+              </div>
+              <form onSubmit={handleSubmit} className="p-6 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* datos básicos ya existentes (nombre, sku, precios, etc.) */}
+                  {/* ... se mantienen sin cambios ... */}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Cuenta Contable (Compras/Gastos)
+                    </label>
+                    <select
+                      value={formData.expenseAccountId}
+                      onChange={(e) => setFormData(prev => ({ ...prev, expenseAccountId: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin cuenta asignada</option>
+                      {accounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Cuenta de Inventario
+                    </label>
+                    <select
+                      value={formData.inventoryAccountId}
+                      onChange={(e) => setFormData(prev => ({ ...prev, inventoryAccountId: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin cuenta asignada</option>
+                      {accounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Cuenta de Costo de Ventas
+                    </label>
+                    <select
+                      value={formData.cogsAccountId}
+                      onChange={(e) => setFormData(prev => ({ ...prev, cogsAccountId: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin cuenta asignada</option>
+                      {accounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200 mt-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetForm();
+                      setShowModal(false);
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 whitespace-nowrap"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 whitespace-nowrap"
+                  >
+                    Guardar
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
             {/* Recent Products */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">

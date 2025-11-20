@@ -26,6 +26,7 @@ export default function UsersPage() {
   const [assignEmail, setAssignEmail] = useState('');
   const [assignRoleId, setAssignRoleId] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRoleId, setNewUserRoleId] = useState('');
   const [creatingUser, setCreatingUser] = useState(false);
 
@@ -39,26 +40,54 @@ export default function UsersPage() {
   };
 
   const createUser = async () => {
-    if (!newUserEmail || !newUserRoleId) return;
+    const email = newUserEmail.trim().toLowerCase();
+    if (!email || !newUserPassword || !newUserRoleId) return;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      alert('Email inválido. Verifique el formato (ej. usuario@correo.com).');
+      return;
+    }
+    if (newUserPassword.length < 6) {
+      alert('La contraseña debe tener al menos 6 caracteres');
+      return;
+    }
     try {
       setCreatingUser(true);
-      // Enviar magic link/invitación al email (no requiere service key)
-      try {
-        await supabase.auth.signInWithOtp({ email: newUserEmail, options: { emailRedirectTo: window.location.origin } });
-      } catch {}
 
-      // Pre-asignar rol usando el email como identificador temporal
-      if (user?.id) {
+      // Crear usuario en Supabase Auth con email + contraseña
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: newUserPassword,
+      });
+
+      if (error) {
+        console.error('Error al crear usuario:', error);
+        alert(error.message || 'Error al crear usuario');
+        return;
+      }
+
+      const createdUser = data.user;
+
+      // Si tenemos user.id real, registrar rol en user_roles
+      if (user?.id && createdUser?.id) {
         try {
-          await supabase.from('user_roles').insert({ user_id: newUserEmail, role_id: newUserRoleId });
-        } catch {}
+          await supabase
+            .from('user_roles')
+            .insert({ user_id: createdUser.id, role_id: newUserRoleId });
+        } catch (err) {
+          console.error('Error al asignar rol al nuevo usuario:', err);
+        }
       } else {
-        const localUr = [...userRoles, { id: `ur-${Date.now()}`, user_id: newUserEmail, role_id: newUserRoleId }];
+        // Fallback local usando email como identificador legible
+        const localUr = [...userRoles, { id: `ur-${Date.now()}`, user_id: email, role_id: newUserRoleId }];
         setUserRoles(localUr); saveLocal('user_roles', localUr);
       }
-      setNewUserEmail(''); setNewUserRoleId('');
+
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setNewUserRoleId('');
       await load();
-      alert('Usuario invitado y rol preasignado. Cuando inicie sesión, tendrá los permisos del rol.');
+      alert('Usuario creado correctamente. Verifique el correo para activar su cuenta si es necesario.');
     } finally {
       setCreatingUser(false);
     }
@@ -100,13 +129,17 @@ export default function UsersPage() {
     if (user?.id) {
       try {
         if (checked) {
-          await supabase.from('role_permissions').insert({ role_id: roleId, permission_id: permId });
+          await supabase
+            .from('role_permissions')
+            .upsert({ role_id: roleId, permission_id: permId }, { onConflict: 'role_id,permission_id' });
         } else {
           await supabase.from('role_permissions').delete().match({ role_id: roleId, permission_id: permId });
         }
         await load();
         return;
-      } catch {}
+      } catch (error) {
+        console.error('Error al actualizar permisos de rol:', error);
+      }
     }
     // local fallback
     const next = checked
@@ -148,22 +181,28 @@ export default function UsersPage() {
 
   const assignRole = async () => {
     if (!assignEmail || !assignRoleId) return;
-    // In Supabase, you should map email -> user_id from your profiles table if available
-    if (user?.id) {
-      try {
-        const { data: profile } = await supabase.from('profiles').select('id,email').eq('email', assignEmail).single();
-        const uid = (profile as any)?.id;
-        if (uid) {
-          await supabase.from('user_roles').insert({ user_id: uid, role_id: assignRoleId });
-          setAssignEmail(''); setAssignRoleId(''); await load();
-          return;
+    try {
+      // In Supabase, you should map email -> user_id from your profiles table if available
+      if (user?.id) {
+        try {
+          const { data: profile } = await supabase.from('profiles').select('id,email').eq('email', assignEmail).single();
+          const uid = (profile as any)?.id;
+          if (uid) {
+            await supabase.from('user_roles').insert({ user_id: uid, role_id: assignRoleId });
+            setAssignEmail(''); setAssignRoleId(''); await load();
+            return;
+          }
+        } catch (error) {
+          console.error('Error al asignar rol en Supabase:', error);
         }
-      } catch {}
+      }
+      // local fallback with email as pseudo user_id
+      const localUr = [...userRoles, { id: `ur-${Date.now()}`, user_id: assignEmail, role_id: assignRoleId }];
+      setUserRoles(localUr); saveLocal('user_roles', localUr);
+    } finally {
+      setAssignEmail('');
+      setAssignRoleId('');
     }
-    // local fallback with email as pseudo user_id
-    const localUr = [...userRoles, { id: `ur-${Date.now()}`, user_id: assignEmail, role_id: assignRoleId }];
-    setUserRoles(localUr); saveLocal('user_roles', localUr);
-    setAssignEmail(''); setAssignRoleId('');
   };
 
   const grid = useMemo(() => roles.map(r => ({
@@ -240,17 +279,43 @@ export default function UsersPage() {
           <div className="flex flex-col md:flex-row gap-3 md:items-end">
             <div className="flex-1">
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-              <input value={newUserEmail} onChange={e => setNewUserEmail(e.target.value)} className="w-full p-2 border rounded" placeholder="usuario@gmail.com" />
+              <input
+                type="email"
+                value={newUserEmail}
+                onChange={e => setNewUserEmail(e.target.value)}
+                className="w-full p-2 border rounded"
+                placeholder="usuario@gmail.com"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
+              <input
+                type="password"
+                value={newUserPassword}
+                onChange={e => setNewUserPassword(e.target.value)}
+                className="w-full p-2 border rounded"
+                placeholder="Mínimo 6 caracteres"
+              />
             </div>
             <div className="flex-1">
               <label className="block text-sm font-medium text-gray-700 mb-1">Rol</label>
-              <select value={newUserRoleId} onChange={e => setNewUserRoleId(e.target.value)} className="w-full p-2 border rounded">
+              <select
+                value={newUserRoleId}
+                onChange={e => setNewUserRoleId(e.target.value)}
+                className="w-full p-2 border rounded"
+              >
                 <option value="">Seleccionar...</option>
-                {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                {roles.map(r => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
               </select>
             </div>
-            <button onClick={createUser} disabled={creatingUser || !newUserEmail || !newUserRoleId} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap disabled:opacity-50">
-              {creatingUser ? 'Creando…' : 'Crear e Invitar'}
+            <button
+              onClick={createUser}
+              disabled={creatingUser || !newUserEmail || !newUserPassword || !newUserRoleId}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap disabled:opacity-50"
+            >
+              {creatingUser ? 'Creando…' : 'Crear Usuario'}
             </button>
           </div>
         </div>

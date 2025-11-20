@@ -17,7 +17,7 @@ interface PayrollSettings {
 interface PayrollConcept {
   id: string;
   name: string;
-  type: 'earning' | 'deduction' | 'benefit';
+  type: 'income' | 'deduction' | 'benefit';
   formula: string;
   active: boolean;
 }
@@ -35,7 +35,7 @@ export default function PayrollSettingsPage() {
   });
   const [concepts, setConcepts] = useState<PayrollConcept[]>([]);
   const [showModal, setShowModal] = useState(false);
-  const [newConcept, setNewConcept] = useState({ name: '', type: 'earning' as const, formula: '' });
+  const [newConcept, setNewConcept] = useState({ name: '', type: 'income' as const, formula: '' });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -48,7 +48,17 @@ export default function PayrollSettingsPage() {
     try {
       const data = await settingsService.getPayrollSettings();
       if (data) {
-        setSettings(data);
+        setSettings({
+          id: data.id,
+          pay_frequency: data.pay_frequency || 'monthly',
+          overtime_rate: typeof data.overtime_rate === 'number' ? data.overtime_rate : 1.5,
+          holiday_rate: typeof data.holiday_rate === 'number' ? data.holiday_rate : 2.0,
+          vacation_days: typeof data.vacation_days === 'number' ? data.vacation_days : 14,
+          sick_days: typeof data.sick_days === 'number' ? data.sick_days : 10,
+          social_security_rate: typeof data.social_security_rate === 'number' ? data.social_security_rate : 2.87,
+          health_insurance_rate: typeof data.health_insurance_rate === 'number' ? data.health_insurance_rate : 3.04,
+          pension_rate: typeof data.pension_rate === 'number' ? data.pension_rate : 2.87,
+        });
       }
     } catch (error) {
       console.error('Error loading payroll settings:', error);
@@ -157,7 +167,7 @@ export default function PayrollSettingsPage() {
                 <input
                   type="number"
                   min="0"
-                  value={settings.vacation_days}
+                  value={settings.vacation_days ?? 0}
                   onChange={(e) => handleInputChange('vacation_days', parseInt(e.target.value))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -169,7 +179,7 @@ export default function PayrollSettingsPage() {
                 <input
                   type="number"
                   min="0"
-                  value={settings.sick_days}
+                  value={settings.sick_days ?? 0}
                   onChange={(e) => handleInputChange('sick_days', parseInt(e.target.value))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -189,7 +199,7 @@ export default function PayrollSettingsPage() {
                   type="number"
                   step="0.1"
                   min="1"
-                  value={settings.overtime_rate}
+                  value={settings.overtime_rate ?? 0}
                   onChange={(e) => handleInputChange('overtime_rate', parseFloat(e.target.value))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -202,7 +212,7 @@ export default function PayrollSettingsPage() {
                   type="number"
                   step="0.1"
                   min="1"
-                  value={settings.holiday_rate}
+                  value={settings.holiday_rate ?? 0}
                   onChange={(e) => handleInputChange('holiday_rate', parseFloat(e.target.value))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -223,7 +233,7 @@ export default function PayrollSettingsPage() {
                   step="0.01"
                   min="0"
                   max="100"
-                  value={settings.social_security_rate}
+                  value={settings.social_security_rate ?? 0}
                   onChange={(e) => handleInputChange('social_security_rate', parseFloat(e.target.value))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -237,7 +247,7 @@ export default function PayrollSettingsPage() {
                   step="0.01"
                   min="0"
                   max="100"
-                  value={settings.health_insurance_rate}
+                  value={settings.health_insurance_rate ?? 0}
                   onChange={(e) => handleInputChange('health_insurance_rate', parseFloat(e.target.value))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -251,7 +261,7 @@ export default function PayrollSettingsPage() {
                   step="0.01"
                   min="0"
                   max="100"
-                  value={settings.pension_rate}
+                  value={settings.pension_rate ?? 0}
                   onChange={(e) => handleInputChange('pension_rate', parseFloat(e.target.value))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -318,11 +328,11 @@ export default function PayrollSettingsPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        concept.type === 'earning' ? 'bg-green-100 text-green-800' :
+                        concept.type === 'income' ? 'bg-green-100 text-green-800' :
                         concept.type === 'deduction' ? 'bg-red-100 text-red-800' :
                         'bg-blue-100 text-blue-800'
                       }`}>
-                        {concept.type === 'earning' ? 'Ingreso' : 
+                        {concept.type === 'income' ? 'Ingreso' : 
                          concept.type === 'deduction' ? 'Deducción' : 'Beneficio'}
                       </span>
                     </td>
@@ -390,7 +400,7 @@ export default function PayrollSettingsPage() {
                   onChange={(e) => setNewConcept(prev => ({ ...prev, type: e.target.value as any }))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
-                  <option value="earning">Ingreso</option>
+                  <option value="income">Ingreso</option>
                   <option value="deduction">Deducción</option>
                   <option value="benefit">Beneficio</option>
                 </select>

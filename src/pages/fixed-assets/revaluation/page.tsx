@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { fixedAssetsService, revaluationService } from '../../../services/database';
 
 interface Revaluation {
   id: string;
+  assetId: string;
   assetCode: string;
   assetName: string;
   category: string;
@@ -20,84 +23,73 @@ interface Revaluation {
   notes: string;
 }
 
+interface AssetOption {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  currentValue: number;
+}
+
 export default function RevaluationPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [editingRevaluation, setEditingRevaluation] = useState<Revaluation | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterReason, setFilterReason] = useState('');
 
-  const [revaluations] = useState<Revaluation[]>([
-    {
-      id: '1',
-      assetCode: 'ACT-001',
-      assetName: 'Edificio Principal',
-      category: 'Edificios y Construcciones',
-      originalValue: 4200000,
-      previousValue: 3780000,
-      newValue: 4500000,
-      revaluationAmount: 720000,
-      revaluationDate: '2024-01-15',
-      reason: 'Incremento del Mercado',
-      method: 'Avalúo Profesional',
-      appraiser: 'Avalúos Profesionales SA',
-      status: 'Aprobado',
-      approvedBy: 'Juan Pérez',
-      notes: 'Revalorización por incremento en el valor del mercado inmobiliario'
-    },
-    {
-      id: '2',
-      assetCode: 'ACT-045',
-      assetName: 'Maquinaria Industrial A',
-      category: 'Maquinaria y Equipo',
-      originalValue: 280000,
-      previousValue: 140000,
-      newValue: 180000,
-      revaluationAmount: 40000,
-      revaluationDate: '2023-12-10',
-      reason: 'Mejoras y Actualizaciones',
-      method: 'Costo de Reposición',
-      appraiser: 'Técnicos Especializados',
-      status: 'Aprobado',
-      approvedBy: 'María González',
-      notes: 'Revalorización por mejoras técnicas implementadas'
-    },
-    {
-      id: '3',
-      assetCode: 'ACT-089',
-      assetName: 'Servidor Dell PowerEdge',
-      category: 'Equipo de Computación',
-      originalValue: 45000,
-      previousValue: 33750,
-      newValue: 28000,
-      revaluationAmount: -5750,
-      revaluationDate: '2023-11-20',
-      reason: 'Obsolescencia Tecnológica',
-      method: 'Valor de Mercado',
-      appraiser: 'Evaluaciones IT',
-      status: 'Pendiente',
-      approvedBy: '',
-      notes: 'Ajuste por obsolescencia tecnológica acelerada'
-    },
-    {
-      id: '4',
-      assetCode: 'ACT-156',
-      assetName: 'Mobiliario de Oficina',
-      category: 'Mobiliario y Equipo de Oficina',
-      originalValue: 25000,
-      previousValue: 23750,
-      newValue: 27000,
-      revaluationAmount: 3250,
-      revaluationDate: '2024-01-05',
-      reason: 'Incremento del Mercado',
-      method: 'Avalúo Profesional',
-      appraiser: 'Muebles y Avalúos',
-      status: 'En Revisión',
-      approvedBy: '',
-      notes: 'Incremento por demanda en mobiliario de oficina'
-    }
-  ]);
+  const [revaluations, setRevaluations] = useState<Revaluation[]>([]);
+  const [assets, setAssets] = useState<AssetOption[]>([]);
+  const [selectedAssetId, setSelectedAssetId] = useState<string>('');
+  const [previousValueInput, setPreviousValueInput] = useState<string>('');
+
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user) return;
+      try {
+        const [revalData, assetsData] = await Promise.all([
+          revaluationService.getAll(user.id),
+          fixedAssetsService.getAll(user.id),
+        ]);
+
+        const mappedRevals: Revaluation[] = (revalData || []).map((r: any) => ({
+          id: r.id,
+          assetId: r.asset_id,
+          assetCode: r.asset_code,
+          assetName: r.asset_name,
+          category: r.category,
+          originalValue: Number(r.original_value) || 0,
+          previousValue: Number(r.previous_value) || 0,
+          newValue: Number(r.new_value) || 0,
+          revaluationAmount: Number(r.revaluation_amount) || 0,
+          revaluationDate: r.revaluation_date,
+          reason: r.reason,
+          method: r.method,
+          appraiser: r.appraiser || '',
+          status: r.status,
+          approvedBy: r.approved_by || '',
+          notes: r.notes || '',
+        }));
+        setRevaluations(mappedRevals);
+
+        const mappedAssets: AssetOption[] = (assetsData || []).map((a: any) => ({
+          id: a.id,
+          code: a.code,
+          name: a.name,
+          category: a.category || '',
+          // Valor anterior debe basarse SOLO en current_value (valor actual del activo)
+          currentValue: Number(a.current_value) || 0,
+        }));
+        setAssets(mappedAssets);
+      } catch (error) {
+        console.error('Error loading revaluation data:', error);
+      }
+    };
+
+    loadData();
+  }, [user]);
 
   const revaluationReasons = [
     'Incremento del Mercado',
@@ -131,36 +123,202 @@ export default function RevaluationPage() {
 
   const handleAddRevaluation = () => {
     setEditingRevaluation(null);
+    setSelectedAssetId('');
+    setPreviousValueInput('');
     setShowModal(true);
   };
 
   const handleEditRevaluation = (revaluation: Revaluation) => {
     setEditingRevaluation(revaluation);
+    setSelectedAssetId(revaluation.assetId);
+    setPreviousValueInput(revaluation.previousValue.toString());
     setShowModal(true);
   };
 
-  const handleDeleteRevaluation = (revaluationId: string) => {
-    if (confirm('¿Está seguro de que desea eliminar esta revalorización?')) {
-      alert('Revalorización eliminada correctamente');
-    }
-  };
-
-  const handleApproveRevaluation = (revaluationId: string) => {
-    if (confirm('¿Está seguro de que desea aprobar esta revalorización?')) {
-      alert('Revalorización aprobada correctamente');
-    }
-  };
-
-  const handleRejectRevaluation = (revaluationId: string) => {
-    if (confirm('¿Está seguro de que desea rechazar esta revalorización?')) {
-      alert('Revalorización rechazada');
-    }
-  };
-
-  const handleSaveRevaluation = (e: React.FormEvent) => {
+  const handleSaveRevaluation = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert(editingRevaluation ? 'Revalorización actualizada correctamente' : 'Revalorización registrada correctamente');
-    setShowModal(false);
+    if (!user) return;
+
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const assetId = selectedAssetId || String(formData.get('assetId') || '').trim();
+    const asset = assets.find(a => a.id === assetId);
+    if (!asset) {
+      alert('Debe seleccionar un activo válido');
+      return;
+    }
+
+    const previousValue = previousValueInput !== ''
+      ? Number(previousValueInput)
+      : Number(asset.currentValue || 0);
+    const newValue = Number(formData.get('newValue') || 0) || 0;
+    const revaluationAmount = newValue - previousValue;
+    const revaluationDate = String(formData.get('revaluationDate') || '').trim() || new Date().toISOString().split('T')[0];
+    const reason = String(formData.get('reason') || '').trim();
+    const method = String(formData.get('method') || '').trim();
+    const appraiser = String(formData.get('appraiser') || '').trim() || null;
+    const status = String(formData.get('status') || 'Pendiente');
+    const notes = String(formData.get('notes') || '').trim() || null;
+
+    const payload: any = {
+      asset_id: asset.id,
+      asset_code: asset.code,
+      asset_name: asset.name,
+      category: asset.category,
+      original_value: asset.currentValue,
+      previous_value: previousValue,
+      new_value: newValue,
+      revaluation_amount: revaluationAmount,
+      revaluation_date: revaluationDate,
+      reason,
+      method,
+      appraiser,
+      status,
+      approved_by: null,
+      notes,
+    };
+
+    try {
+      if (editingRevaluation) {
+        const updated = await revaluationService.update(editingRevaluation.id, payload);
+
+        // Si se guarda como Aprobado desde el formulario, actualizar valor actual del activo
+        if (status === 'Aprobado') {
+          await fixedAssetsService.update(asset.id, {
+            current_value: newValue,
+          });
+        }
+
+        const mapped: Revaluation = {
+          id: updated.id,
+          assetId: updated.asset_id,
+          assetCode: updated.asset_code,
+          assetName: updated.asset_name,
+          category: updated.category,
+          originalValue: Number(updated.original_value) || 0,
+          previousValue: Number(updated.previous_value) || 0,
+          newValue: Number(updated.new_value) || 0,
+          revaluationAmount: Number(updated.revaluation_amount) || 0,
+          revaluationDate: updated.revaluation_date,
+          reason: updated.reason,
+          method: updated.method,
+          appraiser: updated.appraiser || '',
+          status: updated.status,
+          approvedBy: updated.approved_by || '',
+          notes: updated.notes || '',
+        };
+        setRevaluations(prev => prev.map(r => r.id === editingRevaluation.id ? mapped : r));
+      } else {
+        const created = await revaluationService.create(user.id, payload);
+
+        // Si se crea directamente como Aprobado, actualizar valor actual del activo
+        if (status === 'Aprobado') {
+          await fixedAssetsService.update(asset.id, {
+            current_value: newValue,
+          });
+        }
+
+        const mapped: Revaluation = {
+          id: created.id,
+          assetId: created.asset_id,
+          assetCode: created.asset_code,
+          assetName: created.asset_name,
+          category: created.category,
+          originalValue: Number(created.original_value) || 0,
+          previousValue: Number(created.previous_value) || 0,
+          newValue: Number(created.new_value) || 0,
+          revaluationAmount: Number(created.revaluation_amount) || 0,
+          revaluationDate: created.revaluation_date,
+          reason: created.reason,
+          method: created.method,
+          appraiser: created.appraiser || '',
+          status: created.status,
+          approvedBy: created.approved_by || '',
+          notes: created.notes || '',
+        };
+        setRevaluations(prev => [mapped, ...prev]);
+      }
+
+      setShowModal(false);
+      setEditingRevaluation(null);
+      setSelectedAssetId('');
+      setPreviousValueInput('');
+      form.reset();
+    } catch (error) {
+      console.error('Error saving revaluation:', error);
+      alert('Error al guardar la revalorización');
+    }
+  };
+
+  const handleApproveRevaluation = async (revaluationId: string) => {
+    if (!user) return;
+    const rev = revaluations.find(r => r.id === revaluationId);
+    if (!rev) return;
+    if (!confirm('¿Está seguro de que desea aprobar esta revalorización?')) return;
+
+    try {
+      // Actualizar revalorización a Aprobado
+      const payload: any = {
+        asset_id: rev.assetId,
+        asset_code: rev.assetCode,
+        asset_name: rev.assetName,
+        category: rev.category,
+        original_value: rev.originalValue,
+        previous_value: rev.previousValue,
+        new_value: rev.newValue,
+        revaluation_amount: rev.revaluationAmount,
+        revaluation_date: rev.revaluationDate,
+        reason: rev.reason,
+        method: rev.method,
+        appraiser: rev.appraiser || null,
+        status: 'Aprobado',
+        approved_by: rev.approvedBy || null,
+        notes: rev.notes || null,
+      };
+      const updated = await revaluationService.update(revaluationId, payload);
+
+      // Actualizar el valor actual del activo en fixed_assets
+      await fixedAssetsService.update(rev.assetId, {
+        current_value: rev.newValue,
+      });
+
+      setRevaluations(prev => prev.map(r => r.id === revaluationId ? { ...r, status: updated.status || 'Aprobado' } : r));
+    } catch (error) {
+      console.error('Error approving revaluation:', error);
+      alert('Error al aprobar la revalorización');
+    }
+  };
+
+  const handleRejectRevaluation = async (revaluationId: string) => {
+    if (!user) return;
+    const rev = revaluations.find(r => r.id === revaluationId);
+    if (!rev) return;
+    if (!confirm('¿Está seguro de que desea rechazar esta revalorización?')) return;
+
+    try {
+      const payload: any = {
+        asset_id: rev.assetId,
+        asset_code: rev.assetCode,
+        asset_name: rev.assetName,
+        category: rev.category,
+        original_value: rev.originalValue,
+        previous_value: rev.previousValue,
+        new_value: rev.newValue,
+        revaluation_amount: rev.revaluationAmount,
+        revaluation_date: rev.revaluationDate,
+        reason: rev.reason,
+        method: rev.method,
+        appraiser: rev.appraiser || null,
+        status: 'Rechazado',
+        approved_by: rev.approvedBy || null,
+        notes: rev.notes || null,
+      };
+      const updated = await revaluationService.update(revaluationId, payload);
+      setRevaluations(prev => prev.map(r => r.id === revaluationId ? { ...r, status: updated.status || 'Rechazado' } : r));
+    } catch (error) {
+      console.error('Error rejecting revaluation:', error);
+      alert('Error al rechazar la revalorización');
+    }
   };
 
   const exportToPDF = () => {
@@ -652,13 +810,29 @@ export default function RevaluationPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Código del Activo *
                     </label>
-                    <input
-                      type="text"
+                    <select
                       required
-                      defaultValue={editingRevaluation?.assetCode || ''}
+                      name="assetId"
+                      value={selectedAssetId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setSelectedAssetId(id);
+                        const asset = assets.find(a => a.id === id);
+                        if (asset) {
+                          setPreviousValueInput(asset.currentValue.toString());
+                        } else {
+                          setPreviousValueInput('');
+                        }
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="ACT-001"
-                    />
+                    >
+                      <option value="">Seleccionar activo</option>
+                      {assets.map(asset => (
+                        <option key={asset.id} value={asset.id}>
+                          {asset.code} - {asset.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -668,7 +842,9 @@ export default function RevaluationPage() {
                       type="number"
                       required
                       step="0.01"
-                      defaultValue={editingRevaluation?.previousValue || ''}
+                      name="previousValue"
+                      value={previousValueInput}
+                      onChange={(e) => setPreviousValueInput(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
                     />
@@ -681,6 +857,7 @@ export default function RevaluationPage() {
                       type="number"
                       required
                       step="0.01"
+                      name="newValue"
                       defaultValue={editingRevaluation?.newValue || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
@@ -693,6 +870,7 @@ export default function RevaluationPage() {
                     <input
                       type="date"
                       required
+                      name="revaluationDate"
                       defaultValue={editingRevaluation?.revaluationDate || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
@@ -703,6 +881,7 @@ export default function RevaluationPage() {
                     </label>
                     <select
                       required
+                      name="reason"
                       defaultValue={editingRevaluation?.reason || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
@@ -718,6 +897,7 @@ export default function RevaluationPage() {
                     </label>
                     <select
                       required
+                      name="method"
                       defaultValue={editingRevaluation?.method || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
@@ -733,6 +913,7 @@ export default function RevaluationPage() {
                     </label>
                     <input
                       type="text"
+                      name="appraiser"
                       defaultValue={editingRevaluation?.appraiser || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Nombre del evaluador"
@@ -743,6 +924,7 @@ export default function RevaluationPage() {
                       Estado
                     </label>
                     <select
+                      name="status"
                       defaultValue={editingRevaluation?.status || 'Pendiente'}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
@@ -759,6 +941,7 @@ export default function RevaluationPage() {
                   </label>
                   <textarea
                     rows={4}
+                    name="notes"
                     defaultValue={editingRevaluation?.notes || ''}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Detalles adicionales sobre la revalorización"

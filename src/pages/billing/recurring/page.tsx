@@ -1,94 +1,51 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { toast } from 'sonner';
+import { useAuth } from '../../../hooks/useAuth';
+import { customersService, invoicesService, recurringSubscriptionsService } from '../../../services/database';
 
 export default function RecurringBillingPage() {
+  const { user } = useAuth();
   const [showNewSubscriptionModal, setShowNewSubscriptionModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [subscriptions, setSubscriptions] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<Array<{ id: string; name: string; email: string }>>([]);
 
-  const subscriptions = [
-    {
-      id: 'SUB-2024-001',
-      customer: 'Empresa ABC SRL',
-      customerEmail: 'contacto@empresaabc.com',
-      service: 'Licencias de Software Mensual',
-      amount: 15000,
-      frequency: 'monthly',
-      status: 'active',
-      startDate: '2024-01-01',
-      nextBilling: '2024-02-01',
-      lastInvoice: 'FAC-2024-189',
-      totalInvoices: 12
-    },
-    {
-      id: 'SUB-2024-002',
-      customer: 'Comercial XYZ EIRL',
-      customerEmail: 'ventas@comercialxyz.com',
-      service: 'Mantenimiento Trimestral',
-      amount: 45000,
-      frequency: 'quarterly',
-      status: 'active',
-      startDate: '2024-01-15',
-      nextBilling: '2024-04-15',
-      lastInvoice: 'FAC-2024-185',
-      totalInvoices: 4
-    },
-    {
-      id: 'SUB-2024-003',
-      customer: 'Distribuidora DEF SA',
-      customerEmail: 'compras@distribuidoradef.com',
-      service: 'Hosting y Dominio Anual',
-      amount: 120000,
-      frequency: 'yearly',
-      status: 'active',
-      startDate: '2024-01-01',
-      nextBilling: '2025-01-01',
-      lastInvoice: 'FAC-2024-001',
-      totalInvoices: 1
-    },
-    {
-      id: 'SUB-2024-004',
-      customer: 'Servicios GHI SRL',
-      customerEmail: 'admin@serviciosghi.com',
-      service: 'Soporte Técnico Mensual',
-      amount: 8000,
-      frequency: 'monthly',
-      status: 'paused',
-      startDate: '2023-12-01',
-      nextBilling: '2024-02-01',
-      lastInvoice: 'FAC-2023-456',
-      totalInvoices: 2
-    },
-    {
-      id: 'SUB-2024-005',
-      customer: 'Tecnología JKL SA',
-      customerEmail: 'info@tecnologiajkl.com',
-      service: 'Backup en la Nube Semanal',
-      amount: 3500,
-      frequency: 'weekly',
-      status: 'cancelled',
-      startDate: '2023-11-01',
-      nextBilling: null,
-      lastInvoice: 'FAC-2024-012',
-      totalInvoices: 8
+  const [editingSubscriptionId, setEditingSubscriptionId] = useState<string | null>(null);
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+  const [serviceName, setServiceName] = useState('');
+  const [amount, setAmount] = useState<number | ''>('');
+  const [frequency, setFrequency] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [description, setDescription] = useState('');
+
+  const [formErrors, setFormErrors] = useState<{ customer?: string; service?: string; amount?: string; frequency?: string; startDate?: string }>({});
+
+  const loadData = async () => {
+    if (!user?.id) return;
+    try {
+      const [subs, custs] = await Promise.all([
+        recurringSubscriptionsService.getAll(user.id),
+        customersService.getAll(user.id),
+      ]);
+
+      setSubscriptions(subs);
+      setCustomers(custs.map((c: any) => ({ id: c.id, name: c.name, email: c.email })));
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading recurring billing data:', error);
+      toast.error('Error al cargar las suscripciones recurrentes');
     }
-  ];
+  };
 
-  const customers = [
-    { id: '1', name: 'Empresa ABC SRL', email: 'contacto@empresaabc.com' },
-    { id: '2', name: 'Comercial XYZ EIRL', email: 'ventas@comercialxyz.com' },
-    { id: '3', name: 'Distribuidora DEF SA', email: 'compras@distribuidoradef.com' },
-    { id: '4', name: 'Servicios GHI SRL', email: 'admin@serviciosghi.com' },
-    { id: '5', name: 'Tecnología JKL SA', email: 'info@tecnologiajkl.com' }
-  ];
-
-  const services = [
-    { id: '1', name: 'Licencias de Software', price: 15000 },
-    { id: '2', name: 'Mantenimiento de Equipos', price: 45000 },
-    { id: '3', name: 'Hosting y Dominio', price: 120000 },
-    { id: '4', name: 'Soporte Técnico', price: 8000 },
-    { id: '5', name: 'Backup en la Nube', price: 3500 }
-  ];
+  useEffect(() => {
+    if (user?.id) {
+      loadData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -121,56 +78,206 @@ export default function RecurringBillingPage() {
   };
 
   const filteredSubscriptions = subscriptions.filter(subscription => {
-    const matchesSearch = subscription.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         subscription.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         subscription.service.toLowerCase().includes(searchTerm.toLowerCase());
+    const customerName = customers.find(c => c.id === subscription.customer_id)?.name || '';
+    const matchesSearch = customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         String(subscription.id).toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         (subscription.service_name || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || subscription.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
   const handleCreateSubscription = () => {
+    setEditingSubscriptionId(null);
+    setSelectedCustomerId('');
+    setServiceName('');
+    setAmount('');
+    setFrequency('');
+    setStartDate('');
+    setEndDate('');
+    setDescription('');
+    setFormErrors({});
     setShowNewSubscriptionModal(true);
   };
 
   const handleViewSubscription = (subscriptionId: string) => {
-    alert(`Visualizando suscripción: ${subscriptionId}`);
+    const sub = subscriptions.find(s => s.id === subscriptionId);
+    if (!sub) return;
+
+    setEditingSubscriptionId(subscriptionId);
+    setSelectedCustomerId(sub.customer_id || '');
+    setServiceName(sub.service_name || '');
+    setAmount(Number(sub.amount) || '');
+    setFrequency(sub.frequency || '');
+    setStartDate(sub.start_date || '');
+    setEndDate(sub.end_date || '');
+    setDescription(sub.description || '');
+    setFormErrors({});
+    setShowNewSubscriptionModal(true);
   };
 
   const handleEditSubscription = (subscriptionId: string) => {
-    alert(`Editando suscripción: ${subscriptionId}`);
+    handleViewSubscription(subscriptionId);
   };
 
-  const handlePauseSubscription = (subscriptionId: string) => {
-    if (confirm(`¿Pausar suscripción ${subscriptionId}?`)) {
-      alert(`Suscripción ${subscriptionId} pausada`);
+  const handlePauseSubscription = async (subscriptionId: string) => {
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para pausar suscripciones');
+      return;
+    }
+    if (!confirm(`¿Pausar suscripción ${subscriptionId}?`)) return;
+    try {
+      await recurringSubscriptionsService.update(subscriptionId, { status: 'paused' });
+      await loadData();
+      toast.success(`Suscripción ${subscriptionId} pausada`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error pausing subscription:', error);
+      toast.error('Error al pausar la suscripción');
     }
   };
 
-  const handleResumeSubscription = (subscriptionId: string) => {
-    if (confirm(`¿Reanudar suscripción ${subscriptionId}?`)) {
-      alert(`Suscripción ${subscriptionId} reanudada`);
+  const handleResumeSubscription = async (subscriptionId: string) => {
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para reanudar suscripciones');
+      return;
+    }
+    if (!confirm(`¿Reanudar suscripción ${subscriptionId}?`)) return;
+    try {
+      await recurringSubscriptionsService.update(subscriptionId, { status: 'active' });
+      await loadData();
+      toast.success(`Suscripción ${subscriptionId} reanudada`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error resuming subscription:', error);
+      toast.error('Error al reanudar la suscripción');
     }
   };
 
-  const handleCancelSubscription = (subscriptionId: string) => {
-    if (confirm(`¿Cancelar suscripción ${subscriptionId}? Esta acción no se puede deshacer.`)) {
-      alert(`Suscripción ${subscriptionId} cancelada`);
+  const handleCancelSubscription = async (subscriptionId: string) => {
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para cancelar suscripciones');
+      return;
+    }
+    if (!confirm(`¿Cancelar suscripción ${subscriptionId}? Esta acción no se puede deshacer.`)) return;
+    try {
+      await recurringSubscriptionsService.update(subscriptionId, { status: 'cancelled' });
+      await loadData();
+      toast.success(`Suscripción ${subscriptionId} cancelada`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error cancelling subscription:', error);
+      toast.error('Error al cancelar la suscripción');
     }
   };
 
-  const handleGenerateInvoice = (subscriptionId: string) => {
-    if (confirm(`¿Generar factura para suscripción ${subscriptionId}?`)) {
-      alert(`Factura generada para suscripción ${subscriptionId}`);
+  const handleGenerateInvoice = async (subscriptionId: string) => {
+    const sub = subscriptions.find(s => s.id === subscriptionId);
+    if (!sub) return;
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para generar facturas');
+      return;
+    }
+    if (!sub.customer_id) {
+      toast.error('La suscripción no tiene un cliente válido');
+      return;
+    }
+
+    if (!confirm(`¿Generar factura para suscripción ${subscriptionId}?`)) return;
+
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const amt = Number(sub.amount) || 0;
+      const invoicePayload = {
+        customer_id: sub.customer_id,
+        invoice_number: `SUB-${Date.now()}`,
+        invoice_date: today,
+        due_date: today,
+        currency: 'DOP',
+        subtotal: amt,
+        tax_amount: 0,
+        total_amount: amt,
+        paid_amount: 0,
+        status: 'pending',
+        notes: `Factura recurrente para: ${sub.service_name || 'Suscripción'}`,
+      };
+
+      const linesPayload = [
+        {
+          description: sub.service_name || 'Servicio recurrente',
+          quantity: 1,
+          unit_price: amt,
+          line_total: amt,
+          line_number: 1,
+        },
+      ];
+
+      const { invoice } = await invoicesService.create(user.id, invoicePayload, linesPayload);
+
+      // Avanzar próxima fecha usando el helper de processPending (aquí lo calculamos manualmente)
+      let nextDate: string | null = null;
+      if (sub.next_billing_date) {
+        const d = new Date(sub.next_billing_date as string);
+        if (sub.frequency === 'weekly') d.setDate(d.getDate() + 7);
+        else if (sub.frequency === 'monthly') d.setMonth(d.getMonth() + 1);
+        else if (sub.frequency === 'quarterly') d.setMonth(d.getMonth() + 3);
+        else if (sub.frequency === 'yearly') d.setFullYear(d.getFullYear() + 1);
+        nextDate = d.toISOString().slice(0, 10);
+      }
+
+      await recurringSubscriptionsService.update(subscriptionId, {
+        last_invoice_id: invoice.id,
+        next_billing_date: nextDate,
+      });
+
+      await loadData();
+      toast.success(`Factura generada para suscripción ${subscriptionId}`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error generating invoice for subscription:', error);
+      toast.error('Error al generar la factura de la suscripción');
     }
   };
 
-  const handleViewInvoices = (subscriptionId: string) => {
-    alert(`Visualizando facturas de suscripción: ${subscriptionId}`);
+  const handleViewInvoices = async (subscriptionId: string) => {
+    const sub = subscriptions.find(s => s.id === subscriptionId);
+    if (!sub) return;
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para ver facturas');
+      return;
+    }
+
+    try {
+      const allInvoices = await invoicesService.getAll(user.id);
+      const customerInvoices = allInvoices.filter((inv: any) => inv.customer_id === sub.customer_id);
+
+      if (customerInvoices.length === 0) {
+        toast.info('No hay facturas registradas para esta suscripción (cliente)');
+        return;
+      }
+
+      const total = customerInvoices.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+      toast.info(`Facturas para este cliente/suscripción: ${customerInvoices.length} | Total: RD$ ${total.toLocaleString()}`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading invoices for subscription:', error);
+      toast.error('Error al cargar las facturas de la suscripción');
+    }
   };
 
-  const handleProcessPendingBilling = () => {
-    if (confirm('¿Procesar todas las facturaciones pendientes?')) {
-      alert('Procesando facturaciones pendientes...');
+  const handleProcessPendingBilling = async () => {
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para procesar facturaciones');
+      return;
+    }
+    if (!confirm('¿Procesar todas las facturaciones pendientes?')) return;
+    try {
+      const result = await recurringSubscriptionsService.processPending(user.id);
+      await loadData();
+      toast.success(`Facturaciones procesadas: ${result?.processed ?? 0}`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error processing pending recurring billing:', error);
+      toast.error('Error al procesar las facturaciones pendientes');
     }
   };
 
@@ -224,7 +331,7 @@ export default function RecurringBillingPage() {
                 <p className="text-2xl font-bold text-gray-900 mt-1">
                   RD$ {subscriptions
                     .filter(s => s.status === 'active' && s.frequency === 'monthly')
-                    .reduce((sum, s) => sum + s.amount, 0)
+                    .reduce((sum, s) => sum + (Number(s.amount) || 0), 0)
                     .toLocaleString()}
                 </p>
               </div>
@@ -239,7 +346,7 @@ export default function RecurringBillingPage() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Próximas Facturas</p>
                 <p className="text-2xl font-bold text-gray-900 mt-1">
-                  {subscriptions.filter(s => s.status === 'active' && s.nextBilling).length}
+                  {subscriptions.filter(s => s.status === 'active' && s.next_billing_date).length}
                 </p>
               </div>
               <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-yellow-100">
@@ -344,26 +451,31 @@ export default function RecurringBillingPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredSubscriptions.map((subscription) => (
+                {filteredSubscriptions.map((subscription) => {
+                  const customer = customers.find(c => c.id === subscription.customer_id);
+                  const customerName = customer?.name || '';
+                  const customerEmail = customer?.email || '';
+
+                  return (
                   <tr key={subscription.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{subscription.id}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{subscription.customer}</div>
-                      <div className="text-sm text-gray-500">{subscription.customerEmail}</div>
+                      <div className="text-sm text-gray-900">{customerName}</div>
+                      <div className="text-sm text-gray-500">{customerEmail}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{subscription.service}</div>
+                      <div className="text-sm text-gray-900">{subscription.service_name}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD$ {subscription.amount.toLocaleString()}
+                      RD$ {Number(subscription.amount || 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {getFrequencyText(subscription.frequency)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {subscription.nextBilling ? new Date(subscription.nextBilling).toLocaleDateString('es-DO') : 'N/A'}
+                      {subscription.next_billing_date ? new Date(subscription.next_billing_date).toLocaleDateString('es-DO') : 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(subscription.status)}`}>
@@ -432,7 +544,8 @@ export default function RecurringBillingPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                );
+                })}
               </tbody>
             </table>
           </div>
@@ -457,51 +570,81 @@ export default function RecurringBillingPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
-                    <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8">
+                    <select
+                      value={selectedCustomerId}
+                      onChange={(e) => setSelectedCustomerId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
                       <option value="">Seleccionar cliente...</option>
                       {customers.map((customer) => (
                         <option key={customer.id} value={customer.id}>{customer.name}</option>
                       ))}
                     </select>
+                    {formErrors.customer && (
+                      <p className="mt-1 text-xs text-red-600">{formErrors.customer}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Servicio</label>
-                    <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8">
-                      <option value="">Seleccionar servicio...</option>
-                      {services.map((service) => (
-                        <option key={service.id} value={service.id}>{service.name}</option>
-                      ))}
-                    </select>
+                    <input
+                      type="text"
+                      value={serviceName}
+                      onChange={(e) => setServiceName(e.target.value)}
+                      placeholder="Nombre del servicio"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    {formErrors.service && (
+                      <p className="mt-1 text-xs text-red-600">{formErrors.service}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Monto</label>
                     <input
                       type="number"
+                      value={amount === '' ? '' : amount}
+                      onChange={(e) => setAmount(e.target.value ? Number(e.target.value) : '')}
                       placeholder="0.00"
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
+                    {formErrors.amount && (
+                      <p className="mt-1 text-xs text-red-600">{formErrors.amount}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Frecuencia</label>
-                    <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8">
+                    <select
+                      value={frequency}
+                      onChange={(e) => setFrequency(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
                       <option value="">Seleccionar frecuencia...</option>
                       <option value="weekly">Semanal</option>
                       <option value="monthly">Mensual</option>
                       <option value="quarterly">Trimestral</option>
                       <option value="yearly">Anual</option>
                     </select>
+                    {formErrors.frequency && (
+                      <p className="mt-1 text-xs text-red-600">{formErrors.frequency}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Fecha de Inicio</label>
                     <input
                       type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
+                    {formErrors.startDate && (
+                      <p className="mt-1 text-xs text-red-600">{formErrors.startDate}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Fecha de Fin (Opcional)</label>
                     <input
                       type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -511,6 +654,8 @@ export default function RecurringBillingPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">Descripción del Servicio</label>
                   <textarea
                     rows={4}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Descripción detallada del servicio..."
                   ></textarea>
@@ -524,13 +669,59 @@ export default function RecurringBillingPage() {
                   Cancelar
                 </button>
                 <button
-                  onClick={() => {
-                    alert('Creando nueva suscripción...');
-                    setShowNewSubscriptionModal(false);
+                  onClick={async () => {
+                    if (!user?.id) {
+                      toast.error('Debes iniciar sesión para crear suscripciones');
+                      return;
+                    }
+
+                    const errors: typeof formErrors = {};
+                    if (!selectedCustomerId) errors.customer = 'Selecciona un cliente';
+                    if (!serviceName.trim()) errors.service = 'Ingresa el nombre del servicio';
+                    if (amount === '' || Number(amount) <= 0) errors.amount = 'Ingresa un monto mayor que 0';
+                    if (!frequency) errors.frequency = 'Selecciona la frecuencia';
+                    if (!startDate) errors.startDate = 'Selecciona la fecha de inicio';
+
+                    setFormErrors(errors);
+                    if (Object.keys(errors).length > 0) return;
+
+                    try {
+                      if (editingSubscriptionId) {
+                        await recurringSubscriptionsService.update(editingSubscriptionId, {
+                          customer_id: selectedCustomerId,
+                          service_name: serviceName,
+                          amount: Number(amount) || 0,
+                          frequency,
+                          start_date: startDate,
+                          end_date: endDate || null,
+                          description: description || null,
+                        });
+                      } else {
+                        await recurringSubscriptionsService.create(user.id, {
+                          customer_id: selectedCustomerId,
+                          service_name: serviceName,
+                          amount: Number(amount) || 0,
+                          frequency,
+                          start_date: startDate,
+                          end_date: endDate || null,
+                          next_billing_date: startDate,
+                          status: 'active',
+                          description: description || null,
+                        });
+                      }
+
+                      await loadData();
+                      setShowNewSubscriptionModal(false);
+                      toast.success(editingSubscriptionId ? 'Suscripción actualizada correctamente' : 'Suscripción creada correctamente');
+                    } catch (error) {
+                      // eslint-disable-next-line no-console
+                      console.error('Error saving subscription:', error);
+                      toast.error('Error al guardar la suscripción');
+                    }
                   }}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                 >
-                  Crear Suscripción
+                  {editingSubscriptionId ? 'Guardar Cambios' : 'Crear Suscripción'}
                 </button>
               </div>
             </div>

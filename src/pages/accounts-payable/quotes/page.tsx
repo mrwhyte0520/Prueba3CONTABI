@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { useAuth } from '../../../hooks/useAuth';
+import { suppliersService, apQuotesService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -10,131 +12,12 @@ declare module 'jspdf' {
 }
 
 export default function QuotesPage() {
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [editingQuote, setEditingQuote] = useState<any>(null);
   const [filterStatus, setFilterStatus] = useState('all');
 
-  const [quotes, setQuotes] = useState([
-    {
-      id: 1,
-      number: 'RFQ-2024-001',
-      date: '2024-01-15',
-      title: 'Materiales para Proyecto Industrial',
-      description: 'Solicitud de cotización para materiales industriales específicos del proyecto Q1',
-      requestedBy: 'Juan Pérez',
-      estimatedAmount: 125000,
-      suppliers: [
-        {
-          name: 'Proveedor Industrial SA',
-          amount: 125000,
-          deliveryTime: '15 días',
-          notes: 'Incluye instalación básica',
-          status: 'Recibida'
-        },
-        {
-          name: 'Distribuidora Nacional SRL',
-          amount: 135000,
-          deliveryTime: '20 días',
-          notes: 'Garantía extendida incluida',
-          status: 'Pendiente'
-        }
-      ],
-      dueDate: '2024-01-25',
-      status: 'En Evaluación',
-      selectedSupplier: null,
-      category: 'Materiales',
-      specifications: 'Materiales de alta calidad para proyecto industrial',
-      responses: [
-        {
-          supplier: 'Proveedor Industrial SA',
-          amount: 125000,
-          deliveryTime: '15 días',
-          status: 'Recibida'
-        },
-        {
-          supplier: 'Distribuidora Nacional SRL',
-          amount: 135000,
-          deliveryTime: '20 días',
-          status: 'Pendiente'
-        }
-      ]
-    },
-    {
-      id: 2,
-      number: 'RFQ-2024-002',
-      date: '2024-01-14',
-      title: 'Servicios de Mantenimiento Anual',
-      description: 'Cotización para servicios de mantenimiento preventivo y correctivo',
-      requestedBy: 'María García',
-      estimatedAmount: 85000,
-      suppliers: [
-        {
-          name: 'Servicios Técnicos EIRL',
-          amount: 85000,
-          deliveryTime: '7 días',
-          notes: 'Servicio 24/7 incluido',
-          status: 'Recibida'
-        }
-      ],
-      dueDate: '2024-01-20',
-      status: 'Aprobada',
-      selectedSupplier: 'Servicios Técnicos EIRL',
-      category: 'Servicios',
-      specifications: 'Mantenimiento preventivo y correctivo completo',
-      responses: [
-        {
-          supplier: 'Servicios Técnicos EIRL',
-          amount: 85000,
-          deliveryTime: '7 días',
-          status: 'Seleccionada'
-        }
-      ]
-    },
-    {
-      id: 3,
-      number: 'RFQ-2024-003',
-      date: '2024-01-13',
-      title: 'Equipos de Construcción',
-      description: 'Solicitud de cotización para equipos de construcción especializados',
-      requestedBy: 'Carlos Rodríguez',
-      estimatedAmount: 245000,
-      suppliers: [
-        {
-          name: 'Materiales Construcción SA',
-          amount: 245000,
-          deliveryTime: '30 días',
-          notes: 'Equipos nuevos con garantía',
-          status: 'Recibida'
-        },
-        {
-          name: 'Proveedor Industrial SA',
-          amount: 220000,
-          deliveryTime: '25 días',
-          notes: 'Equipos seminuevos certificados',
-          status: 'Recibida'
-        }
-      ],
-      dueDate: '2024-01-28',
-      status: 'Rechazada',
-      selectedSupplier: null,
-      category: 'Equipos',
-      specifications: 'Equipos de construcción especializados con certificación',
-      responses: [
-        {
-          supplier: 'Materiales Construcción SA',
-          amount: 245000,
-          deliveryTime: '30 días',
-          status: 'Rechazada'
-        },
-        {
-          supplier: 'Proveedor Industrial SA',
-          amount: 220000,
-          deliveryTime: '25 días',
-          status: 'Rechazada'
-        }
-      ]
-    }
-  ]);
+  const [quotes, setQuotes] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
     title: '',
@@ -147,13 +30,65 @@ export default function QuotesPage() {
   });
 
   const [selectedQuote, setSelectedQuote] = useState<any>(null);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
 
-  const suppliers = [
-    'Proveedor Industrial SA',
-    'Distribuidora Nacional SRL',
-    'Servicios Técnicos EIRL',
-    'Materiales Construcción SA'
-  ];
+  const loadSuppliers = async () => {
+    if (!user?.id) {
+      setSuppliers([]);
+      return;
+    }
+    try {
+      const data = await suppliersService.getAll(user.id);
+      setSuppliers(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading suppliers for AP quotes', error);
+      setSuppliers([]);
+    }
+  };
+
+  const loadQuotes = async () => {
+    if (!user?.id) {
+      setQuotes([]);
+      return;
+    }
+    try {
+      const data = await apQuotesService.getAll(user.id);
+      const mapped = (data || []).map((q: any) => ({
+        id: q.id,
+        number: q.number,
+        date: q.created_at ? q.created_at.split('T')[0] : '',
+        title: q.title || q.description?.slice(0, 60) || '',
+        description: q.description || '',
+        requestedBy: q.requested_by || '',
+        estimatedAmount: Number(q.estimated_amount) || 0,
+        suppliers: (q.ap_quote_suppliers || []).map((s: any) => ({
+          name: s.supplier_name,
+          amount: 0,
+          deliveryTime: '',
+          notes: '',
+          status: 'Pendiente',
+        })),
+        dueDate: q.due_date || '',
+        status: q.status || 'Pendiente',
+        selectedSupplier: null,
+        category: q.category || 'Materiales',
+        specifications: q.specifications || '',
+        responses: [],
+      }));
+      setQuotes(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading AP quotes', error);
+      setQuotes([]);
+    }
+  };
+
+  useEffect(() => {
+    loadSuppliers();
+    loadQuotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const categories = ['Materiales', 'Servicios', 'Equipos', 'Tecnología', 'Construcción'];
 
@@ -161,9 +96,14 @@ export default function QuotesPage() {
     return filterStatus === 'all' || quote.status === filterStatus;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    if (!user?.id) {
+      alert('Debes iniciar sesión para registrar solicitudes de cotización');
+      return;
+    }
+
     const suppliersArray = formData.suppliers.filter(s => s.trim() !== '').map(supplier => ({
       name: supplier,
       amount: 0,
@@ -172,37 +112,30 @@ export default function QuotesPage() {
       status: 'Pendiente'
     }));
 
-    if (editingQuote) {
-      setQuotes(quotes.map(quote => 
-        quote.id === editingQuote.id 
-          ? { 
-              ...quote, 
-              title: formData.title,
-              description: formData.description,
-              category: formData.category,
-              dueDate: formData.dueDate,
-              suppliers: suppliersArray
-            }
-          : quote
-      ));
-    } else {
-      const newQuote = {
-        id: quotes.length + 1,
-        number: `RFQ-2024-${String(quotes.length + 1).padStart(3, '0')}`,
-        date: new Date().toISOString().split('T')[0],
-        title: formData.title,
-        description: formData.description,
-        suppliers: suppliersArray,
-        dueDate: formData.dueDate,
-        status: 'Pendiente',
-        selectedSupplier: null,
-        category: formData.category
-      };
-      setQuotes([...quotes, newQuote]);
+    const quotePayload = {
+      number: editingQuote?.number || `RFQ-${new Date().getFullYear()}-${String(quotes.length + 1).padStart(3, '0')}`,
+      description: formData.description,
+      due_date: formData.dueDate,
+      estimated_amount: Number(formData.estimatedAmount || 0) || null,
+      status: editingQuote?.status || 'Pendiente',
+      requested_by: editingQuote?.requestedBy || null,
+      specifications: formData.specifications || null,
+    };
+
+    try {
+      if (editingQuote) {
+        await apQuotesService.update(String(editingQuote.id), quotePayload, formData.suppliers);
+      } else {
+        await apQuotesService.create(user.id, quotePayload, formData.suppliers);
+      }
+      await loadQuotes();
+      resetForm();
+      alert(editingQuote ? 'Solicitud de cotización actualizada exitosamente' : 'Solicitud de cotización creada exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error saving AP quote', error);
+      alert('Error al guardar la solicitud de cotización');
     }
-    
-    resetForm();
-    alert(editingQuote ? 'Solicitud de cotización actualizada exitosamente' : 'Solicitud de cotización creada exitosamente');
   };
 
   const resetForm = () => {
@@ -211,6 +144,8 @@ export default function QuotesPage() {
       description: '',
       category: 'Materiales',
       dueDate: '',
+      estimatedAmount: '',
+      specifications: '',
       suppliers: ['']
     });
     setEditingQuote(null);
@@ -224,26 +159,36 @@ export default function QuotesPage() {
       description: quote.description,
       category: quote.category,
       dueDate: quote.dueDate,
+      estimatedAmount: String(quote.estimatedAmount || ''),
+      specifications: quote.specifications || '',
       suppliers: quote.suppliers.map((s: any) => s.name)
     });
     setShowModal(true);
   };
 
-  const handleApprove = (id: number) => {
-    if (confirm('¿Aprobar esta solicitud de cotización?')) {
-      setQuotes(quotes.map(quote => 
-        quote.id === id ? { ...quote, status: 'Aprobada' } : quote
-      ));
+  const handleApprove = async (id: string | number) => {
+    if (!confirm('¿Aprobar esta solicitud de cotización?')) return;
+    try {
+      await apQuotesService.updateStatus(String(id), 'Aprobada');
+      await loadQuotes();
       alert('Solicitud de cotización aprobada exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error approving AP quote', error);
+      alert('No se pudo aprobar la solicitud de cotización');
     }
   };
 
-  const handleReject = (id: number) => {
-    if (confirm('¿Rechazar esta solicitud de cotización?')) {
-      setQuotes(quotes.map(quote => 
-        quote.id === id ? { ...quote, status: 'Rechazada' } : quote
-      ));
+  const handleReject = async (id: string | number) => {
+    if (!confirm('¿Rechazar esta solicitud de cotización?')) return;
+    try {
+      await apQuotesService.updateStatus(String(id), 'Rechazada');
+      await loadQuotes();
       alert('Solicitud de cotización rechazada');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error rejecting AP quote', error);
+      alert('No se pudo rechazar la solicitud de cotización');
     }
   };
 
@@ -428,16 +373,29 @@ export default function QuotesPage() {
     setSelectedQuote(quote);
   };
 
-  const sendQuoteRequest = (quote: any) => {
-    alert(`Enviando solicitud de cotización ${quote.number} a proveedores`);
+  const sendQuoteRequest = async (quote: any) => {
+    if (!confirm(`¿Enviar la solicitud ${quote.number} a proveedores?`)) return;
+    try {
+      await apQuotesService.updateStatus(String(quote.id), 'En Evaluación');
+      await loadQuotes();
+      alert('Solicitud de cotización enviada a proveedores y marcada como En Evaluación');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error sending AP quote request', error);
+      alert('No se pudo enviar la solicitud de cotización');
+    }
   };
 
-  const handleEvaluate = (id: number) => {
-    if (confirm('¿Cambiar estado a En Evaluación?')) {
-      setQuotes(quotes.map(quote => 
-        quote.id === id ? { ...quote, status: 'En Evaluación' } : quote
-      ));
+  const handleEvaluate = async (id: string | number) => {
+    if (!confirm('¿Cambiar estado a En Evaluación?')) return;
+    try {
+      await apQuotesService.updateStatus(String(id), 'En Evaluación');
+      await loadQuotes();
       alert('Estado cambiado a En Evaluación');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error setting AP quote to evaluation', error);
+      alert('No se pudo cambiar el estado a En Evaluación');
     }
   };
 
@@ -704,8 +662,8 @@ export default function QuotesPage() {
                           className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         >
                           <option value="">Seleccionar proveedor</option>
-                          {suppliers.map(sup => (
-                            <option key={sup} value={sup}>{sup}</option>
+                          {suppliers.map((sup: any) => (
+                            <option key={sup.id} value={sup.name}>{sup.name}</option>
                           ))}
                         </select>
                         {formData.suppliers.length > 1 && (
@@ -806,7 +764,7 @@ export default function QuotesPage() {
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
-                        {selectedQuote.responses.map((response: any, index: number) => (
+                        {(selectedQuote.responses || []).map((response: any, index: number) => (
                           <tr key={index}>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{response.supplier}</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-semibold text-gray-900">

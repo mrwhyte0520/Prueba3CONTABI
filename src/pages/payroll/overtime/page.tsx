@@ -1,6 +1,8 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { employeesService, overtimeService } from '../../../services/database';
 
 interface OvertimeRecord {
   id: string;
@@ -24,7 +26,10 @@ interface OvertimeRecord {
 }
 
 export default function OvertimePage() {
+  const { user } = useAuth();
   const [overtimeRecords, setOvertimeRecords] = useState<OvertimeRecord[]>([]);
+  const [employees, setEmployees] = useState<Array<{ id: string; code: string; name: string; department: string; position: string }>>([]);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
@@ -44,6 +49,58 @@ export default function OvertimePage() {
     hourlyRate: 0,
     reason: ''
   });
+
+  useEffect(() => {
+    const loadEmployees = async () => {
+      if (!user) return;
+      try {
+        const data = await employeesService.getAll(user.id);
+        const mapped = (data || []).map((e: any) => ({
+          id: e.id,
+          code: e.employee_code || e.identification || '',
+          name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
+          department: e.departments?.name || '',
+          position: e.positions?.title || '',
+        }));
+        setEmployees(mapped);
+      } catch (error) {
+        console.error('Error loading employees for overtime:', error);
+      }
+    };
+
+    const loadOvertime = async () => {
+      if (!user) return;
+      try {
+        const data = await overtimeService.getAll(user.id);
+        const mapped: OvertimeRecord[] = (data || []).map((r: any) => ({
+          id: r.id,
+          employeeId: r.employee_id,
+          employeeName: r.employee_name,
+          department: r.department,
+          position: r.position,
+          date: r.date,
+          startTime: r.start_time,
+          endTime: r.end_time,
+          totalHours: Number(r.total_hours) || 0,
+          overtimeType: r.overtime_type,
+          hourlyRate: Number(r.hourly_rate) || 0,
+          overtimeRate: Number(r.overtime_rate) || 0,
+          totalAmount: Number(r.total_amount) || 0,
+          status: r.status,
+          approvedBy: r.approved_by || undefined,
+          approvedDate: r.approved_date || undefined,
+          reason: r.reason,
+          createdAt: r.created_at || new Date().toISOString(),
+        }));
+        setOvertimeRecords(mapped);
+      } catch (error) {
+        console.error('Error loading overtime records:', error);
+      }
+    };
+
+    loadEmployees();
+    loadOvertime();
+  }, [user]);
 
   const filteredRecords = overtimeRecords.filter(record => {
     const matchesSearch = record.employeeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -84,32 +141,90 @@ export default function OvertimePage() {
     return hours * hourlyRate * overtimeRate;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!user) return;
     
     const totalHours = calculateHours(formData.startTime, formData.endTime);
     const overtimeRate = getOvertimeRate(formData.overtimeType);
     const totalAmount = calculateAmount(totalHours, formData.hourlyRate, overtimeRate);
     
-    const newRecord: OvertimeRecord = {
-      id: editingRecord?.id || Date.now().toString(),
-      ...formData,
-      totalHours,
-      overtimeRate,
-      totalAmount,
-      status: 'pending',
-      createdAt: new Date().toISOString().split('T')[0]
+    const payload: any = {
+      employee_id: formData.employeeId,
+      employee_name: formData.employeeName,
+      department: formData.department,
+      position: formData.position,
+      date: formData.date,
+      start_time: formData.startTime,
+      end_time: formData.endTime,
+      total_hours: totalHours,
+      overtime_type: formData.overtimeType,
+      hourly_rate: formData.hourlyRate,
+      overtime_rate: overtimeRate,
+      total_amount: totalAmount,
+      status: editingRecord?.status ?? 'pending',
+      approved_by: editingRecord?.approvedBy ?? null,
+      approved_date: editingRecord?.approvedDate ?? null,
+      reason: formData.reason,
     };
 
-    if (editingRecord) {
-      setOvertimeRecords(prev => prev.map(record => 
-        record.id === editingRecord.id ? newRecord : record
-      ));
-    } else {
-      setOvertimeRecords(prev => [...prev, newRecord]);
-    }
+    try {
+      if (editingRecord) {
+        const updated = await overtimeService.update(editingRecord.id, payload);
+        const mapped: OvertimeRecord = {
+          id: updated.id,
+          employeeId: updated.employee_id,
+          employeeName: updated.employee_name,
+          department: updated.department,
+          position: updated.position,
+          date: updated.date,
+          startTime: updated.start_time,
+          endTime: updated.end_time,
+          totalHours: Number(updated.total_hours) || 0,
+          overtimeType: updated.overtime_type,
+          hourlyRate: Number(updated.hourly_rate) || 0,
+          overtimeRate: Number(updated.overtime_rate) || 0,
+          totalAmount: Number(updated.total_amount) || 0,
+          status: updated.status,
+          approvedBy: updated.approved_by || undefined,
+          approvedDate: updated.approved_date || undefined,
+          reason: updated.reason,
+          createdAt: updated.created_at || new Date().toISOString(),
+        };
+        setOvertimeRecords(prev => prev.map(record => 
+          record.id === editingRecord.id ? mapped : record
+        ));
+      } else {
+        const created = await overtimeService.create(user.id, payload);
+        const mapped: OvertimeRecord = {
+          id: created.id,
+          employeeId: created.employee_id,
+          employeeName: created.employee_name,
+          department: created.department,
+          position: created.position,
+          date: created.date,
+          startTime: created.start_time,
+          endTime: created.end_time,
+          totalHours: Number(created.total_hours) || 0,
+          overtimeType: created.overtime_type,
+          hourlyRate: Number(created.hourly_rate) || 0,
+          overtimeRate: Number(created.overtime_rate) || 0,
+          totalAmount: Number(created.total_amount) || 0,
+          status: created.status,
+          approvedBy: created.approved_by || undefined,
+          approvedDate: created.approved_date || undefined,
+          reason: created.reason,
+          createdAt: created.created_at || new Date().toISOString(),
+        };
+        setOvertimeRecords(prev => [...prev, mapped]);
+      }
 
-    resetForm();
+      resetForm();
+    } catch (error) {
+      console.error('Error saving overtime record:', error);
+      alert('Error al guardar el registro de horas extras');
+    }
   };
 
   const resetForm = () => {
@@ -127,10 +242,13 @@ export default function OvertimePage() {
     });
     setShowForm(false);
     setEditingRecord(null);
+    setSelectedEmployeeId('');
   };
 
   const handleEdit = (record: OvertimeRecord) => {
     setEditingRecord(record);
+    const emp = employees.find(e => e.code === record.employeeId && e.name === record.employeeName);
+    setSelectedEmployeeId(emp?.id || '');
     setFormData({
       employeeId: record.employeeId,
       employeeName: record.employeeName,
@@ -146,15 +264,32 @@ export default function OvertimePage() {
     setShowForm(true);
   };
 
-  const updateStatus = (id: string, status: 'approved' | 'rejected') => {
-    setOvertimeRecords(prev => prev.map(record =>
-      record.id === id ? { 
-        ...record, 
+  const updateStatus = async (id: string, status: 'approved' | 'rejected') => {
+    const current = overtimeRecords.find(r => r.id === id);
+    if (!current) return;
+
+    const approvedBy = status === 'approved' ? 'Sistema' : null;
+    const approvedDate = status === 'approved' ? new Date().toISOString().split('T')[0] : null;
+
+    try {
+      await overtimeService.update(id, {
         status,
-        approvedBy: status === 'approved' ? 'Sistema' : undefined,
-        approvedDate: status === 'approved' ? new Date().toISOString().split('T')[0] : undefined
-      } : record
-    ));
+        approved_by: approvedBy,
+        approved_date: approvedDate,
+      });
+
+      setOvertimeRecords(prev => prev.map(record =>
+        record.id === id ? {
+          ...record,
+          status,
+          approvedBy: approvedBy || undefined,
+          approvedDate: approvedDate || undefined,
+        } : record
+      ));
+    } catch (error) {
+      console.error('Error updating overtime status:', error);
+      alert('Error al actualizar el estado del registro');
+    }
   };
 
   const exportToCSV = () => {
@@ -457,29 +592,48 @@ export default function OvertimePage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        ID Empleado *
+                        Empleado *
                       </label>
-                      <input
-                        type="text"
+                      <select
                         required
-                        value={formData.employeeId}
-                        onChange={(e) => setFormData(prev => ({ ...prev, employeeId: e.target.value }))}
+                        value={selectedEmployeeId}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setSelectedEmployeeId(value);
+                          const emp = employees.find(emp => emp.id === value);
+                          if (emp) {
+                            setFormData(prev => ({
+                              ...prev,
+                              employeeId: emp.code,
+                              employeeName: emp.name,
+                              department: emp.department,
+                              position: emp.position,
+                            }));
+                          }
+                        }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="EMP001"
-                      />
+                      >
+                        <option value="">Seleccionar empleado...</option>
+                        {employees.map(emp => (
+                          <option key={emp.id} value={emp.id}>
+                            {emp.code ? `${emp.code} - ${emp.name}` : emp.name}
+                            {emp.department ? ` - ${emp.department}` : ''}
+                            {emp.position ? ` / ${emp.position}` : ''}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Nombre Empleado *
+                        ID Empleado
                       </label>
                       <input
                         type="text"
-                        required
-                        value={formData.employeeName}
-                        onChange={(e) => setFormData(prev => ({ ...prev, employeeName: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="Nombre completo"
+                        value={formData.employeeId}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50"
+                        placeholder="EMP001"
                       />
                     </div>
                   </div>
@@ -487,28 +641,26 @@ export default function OvertimePage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Departamento *
+                        Departamento
                       </label>
                       <input
                         type="text"
-                        required
                         value={formData.department}
-                        onChange={(e) => setFormData(prev => ({ ...prev, department: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50"
                         placeholder="Departamento"
                       />
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Posición *
+                        Posición
                       </label>
                       <input
                         type="text"
-                        required
                         value={formData.position}
-                        onChange={(e) => setFormData(prev => ({ ...prev, position: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50"
                         placeholder="Cargo"
                       />
                     </div>

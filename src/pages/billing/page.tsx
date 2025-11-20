@@ -1,8 +1,16 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import { useAuth } from '../../hooks/useAuth';
+import { invoicesService, quotesService } from '../../services/database';
+import { toast } from 'sonner';
 
 export default function BillingPage() {
+  const { user } = useAuth();
   const navigate = useNavigate();
+
+  // Estado para los datos dinámicos
+  const [loading, setLoading] = useState(true);
 
   const modules = [
     {
@@ -49,7 +57,154 @@ export default function BillingPage() {
     }
   ];
 
-  const salesStats = [
+  // Cargar datos reales de facturas y cotizaciones
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const [invoices, quotes] = await Promise.all([
+          invoicesService.getAll(user.id),
+          quotesService.getAll(user.id),
+        ]);
+
+        const invoicesArr = Array.isArray(invoices) ? invoices : [];
+        const quotesArr = Array.isArray(quotes) ? quotes : [];
+
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const monthStr = todayStr.slice(0, 7); // YYYY-MM
+
+        const ventasHoy = invoicesArr
+          .filter((inv: any) => (inv.invoice_date || '').slice(0, 10) === todayStr)
+          .reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+
+        const ingresosMensuales = invoicesArr
+          .filter((inv: any) => (inv.invoice_date || '').slice(0, 7) === monthStr)
+          .reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+
+        const totalFacturas = invoicesArr.length;
+
+        const pendingQuotesArr = quotesArr.filter((q: any) => {
+          const st = (q.status || 'pending') as string;
+          return st === 'pending' || st === 'under_review';
+        });
+
+        const totalPendingQuotes = pendingQuotesArr.length;
+
+        setSalesStats([
+          {
+            title: 'Ventas de Hoy',
+            value: `RD$ ${ventasHoy.toLocaleString('es-DO')}`,
+            change: '',
+            icon: 'ri-money-dollar-circle-line',
+            color: 'green',
+          },
+          {
+            title: 'Facturas Emitidas',
+            value: String(totalFacturas),
+            change: '',
+            icon: 'ri-file-text-line',
+            color: 'blue',
+          },
+          {
+            title: 'Cotizaciones Pendientes',
+            value: String(totalPendingQuotes),
+            change: '',
+            icon: 'ri-file-list-line',
+            color: 'orange',
+          },
+          {
+            title: 'Ingresos Mensuales',
+            value: `RD$ ${ingresosMensuales.toLocaleString('es-DO')}`,
+            change: '',
+            icon: 'ri-line-chart-line',
+            color: 'purple',
+          },
+        ]);
+
+        // Facturas recientes (máx 4)
+        const recent = [...invoicesArr]
+          .sort((a: any, b: any) => new Date(b.invoice_date || b.created_at || 0).getTime() - new Date(a.invoice_date || a.created_at || 0).getTime())
+          .slice(0, 4)
+          .map((inv: any) => {
+            const status = (inv.status || 'pending') as string;
+            let statusLabel = 'Pendiente';
+            if (status === 'paid') statusLabel = 'Pagada';
+            else if (status === 'overdue') statusLabel = 'Vencida';
+
+            const customerName = inv.customers?.name || inv.customer_name || 'Cliente';
+            const dateStr = (inv.invoice_date || '').slice(0, 10) || (inv.created_at || '').slice(0, 10);
+
+            return {
+              number: inv.invoice_number || inv.id,
+              customer: customerName,
+              amount: `RD$ ${(Number(inv.total_amount) || 0).toLocaleString('es-DO')}`,
+              status: statusLabel,
+              date: dateStr ? new Date(dateStr).toLocaleDateString('es-DO') : '',
+            };
+          });
+        setRecentInvoices(recent);
+
+        // Productos más vendidos (por nombre de producto en invoice_lines)
+        const productMap: Record<string, { name: string; quantity: number; revenue: number }> = {};
+        invoicesArr.forEach((inv: any) => {
+          (inv.invoice_lines || []).forEach((line: any) => {
+            const name = line.inventory_items?.name || line.description || 'Producto';
+            const qty = Number(line.quantity) || 0;
+            const lineTotal = Number(line.line_total) || (Number(line.unit_price) || 0) * qty;
+            if (!productMap[name]) {
+              productMap[name] = { name, quantity: 0, revenue: 0 };
+            }
+            productMap[name].quantity += qty;
+            productMap[name].revenue += lineTotal;
+          });
+        });
+
+        const topProd = Object.values(productMap)
+          .sort((a, b) => b.revenue - a.revenue)
+          .slice(0, 4)
+          .map((p) => ({
+            name: p.name,
+            quantity: p.quantity,
+            revenue: `RD$ ${p.revenue.toLocaleString('es-DO')}`,
+            margin: '',
+          }));
+        if (topProd.length > 0) setTopProducts(topProd);
+
+        // Cotizaciones pendientes (máx 4)
+        const pendingQ = pendingQuotesArr
+          .sort((a: any, b: any) => new Date(b.quote_date || b.created_at || 0).getTime() - new Date(a.quote_date || a.created_at || 0).getTime())
+          .slice(0, 4)
+          .map((q: any) => {
+            const customerName = q.customers?.name || q.customer_name || 'Cliente';
+            const amount = Number(q.total_amount) || Number(q.subtotal) || 0;
+            const valid = (q.valid_until || q.quote_date || '').slice(0, 10);
+            return {
+              number: q.quote_number || q.id,
+              customer: customerName,
+              amount: `RD$ ${amount.toLocaleString('es-DO')}`,
+              validUntil: valid ? new Date(valid).toLocaleDateString('es-DO') : '',
+              status: 'Pendiente',
+            };
+          });
+        if (pendingQ.length > 0) setPendingQuotes(pendingQ);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading billing dashboard data:', error);
+        toast.error('Error al cargar el resumen de facturación');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const [salesStats, setSalesStats] = useState([
     {
       title: 'Ventas de Hoy',
       value: 'RD$ 185,000',
@@ -78,9 +233,9 @@ export default function BillingPage() {
       icon: 'ri-line-chart-line',
       color: 'purple'
     }
-  ];
+  ]);
 
-  const recentInvoices = [
+  const [recentInvoices, setRecentInvoices] = useState([
     {
       number: 'FAC-2024-189',
       customer: 'Empresa ABC SRL',
@@ -109,9 +264,9 @@ export default function BillingPage() {
       status: 'Vencida',
       date: '13/01/2024'
     }
-  ];
+  ]);
 
-  const topProducts = [
+  const [topProducts, setTopProducts] = useState([
     {
       name: 'Laptop Dell Inspiron 15',
       quantity: 25,
@@ -136,9 +291,9 @@ export default function BillingPage() {
       revenue: 'RD$ 201,000',
       margin: '35%'
     }
-  ];
+  ]);
 
-  const pendingQuotes = [
+  const [pendingQuotes, setPendingQuotes] = useState([
     {
       number: 'COT-2024-045',
       customer: 'Nuevo Cliente SA',
@@ -153,7 +308,7 @@ export default function BillingPage() {
       validUntil: '22/01/2024',
       status: 'En Revisión'
     }
-  ];
+  ]);
 
   // Module Access Functions
   const handleAccessModule = (moduleHref: string) => {

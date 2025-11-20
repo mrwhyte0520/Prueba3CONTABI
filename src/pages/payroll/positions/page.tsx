@@ -1,12 +1,15 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { exportToExcelStyled } from '../../../utils/exportImportUtils';
+import { useAuth } from '../../../hooks/useAuth';
+import { positionsService, departmentsService, employeesService } from '../../../services/database';
 
 interface Position {
   id: string;
   title: string;
-  department: string;
+  department_id: string;
+  department_name: string;
   description: string;
   requirements: string[];
   responsibilities: string[];
@@ -21,86 +24,9 @@ interface Position {
 }
 
 export default function PositionsPage() {
-  const [positions, setPositions] = useState<Position[]>([
-    {
-      id: '1',
-      title: 'Gerente de Recursos Humanos',
-      department: 'Recursos Humanos',
-      description: 'Responsable de liderar el departamento de RRHH y desarrollar estrategias de talento humano',
-      requirements: ['Licenciatura en RRHH o afines', '5+ años de experiencia', 'Liderazgo de equipos'],
-      responsibilities: ['Gestión del talento', 'Desarrollo organizacional', 'Políticas de RRHH'],
-      salaryRange: { min: 80000, max: 120000 },
-      level: 'executive',
-      employeeCount: 1,
-      status: 'active',
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '2',
-      title: 'Contador Senior',
-      department: 'Contabilidad',
-      description: 'Encargado de la gestión contable y financiera de la empresa',
-      requirements: ['CPA o Licenciatura en Contabilidad', '3+ años de experiencia', 'Conocimiento en NIIF'],
-      responsibilities: ['Estados financieros', 'Análisis contable', 'Cumplimiento fiscal'],
-      salaryRange: { min: 60000, max: 85000 },
-      level: 'senior',
-      employeeCount: 3,
-      status: 'active',
-      createdAt: '2024-01-20'
-    },
-    {
-      id: '3',
-      title: 'Desarrollador Full Stack',
-      department: 'Tecnología',
-      description: 'Desarrollo de aplicaciones web y sistemas internos',
-      requirements: ['Ingeniería en Sistemas', 'React, Node.js', '2+ años de experiencia'],
-      responsibilities: ['Desarrollo frontend', 'APIs backend', 'Mantenimiento sistemas'],
-      salaryRange: { min: 50000, max: 75000 },
-      level: 'mid',
-      employeeCount: 8,
-      status: 'active',
-      createdAt: '2024-02-01'
-    },
-    {
-      id: '4',
-      title: 'Ejecutivo de Ventas',
-      department: 'Ventas',
-      description: 'Responsable de la gestión comercial y atención a clientes',
-      requirements: ['Bachillerato', 'Experiencia en ventas', 'Habilidades comunicativas'],
-      responsibilities: ['Prospección clientes', 'Cierre de ventas', 'Seguimiento post-venta'],
-      salaryRange: { min: 25000, max: 40000 },
-      level: 'junior',
-      employeeCount: 12,
-      status: 'active',
-      createdAt: '2024-02-10'
-    },
-    {
-      id: '5',
-      title: 'Especialista en Marketing Digital',
-      department: 'Marketing',
-      description: 'Gestión de campañas digitales y redes sociales',
-      requirements: ['Marketing o Comunicación', 'Google Ads, Facebook Ads', 'Creatividad'],
-      responsibilities: ['Campañas digitales', 'Análisis métricas', 'Contenido creativo'],
-      salaryRange: { min: 35000, max: 55000 },
-      level: 'mid',
-      employeeCount: 4,
-      status: 'active',
-      createdAt: '2024-02-15'
-    },
-    {
-      id: '6',
-      title: 'Supervisor de Operaciones',
-      department: 'Operaciones',
-      description: 'Supervisión de procesos operativos y control de calidad',
-      requirements: ['Ingeniería Industrial', 'Liderazgo', 'Gestión de procesos'],
-      responsibilities: ['Supervisión equipos', 'Control calidad', 'Optimización procesos'],
-      salaryRange: { min: 45000, max: 65000 },
-      level: 'senior',
-      employeeCount: 6,
-      status: 'active',
-      createdAt: '2024-03-01'
-    }
-  ]);
+  const { user } = useAuth();
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
 
   const [showForm, setShowForm] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
@@ -120,52 +46,152 @@ export default function PositionsPage() {
     status: 'active' as 'active' | 'inactive'
   });
 
-  const departments = [...new Set(positions.map(p => p.department))];
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user) return;
+      try {
+        const [posData, deptData, empData] = await Promise.all([
+          positionsService.getAll(user.id),
+          departmentsService.getAll(user.id),
+          employeesService.getAll(user.id),
+        ]);
+
+        const mappedDepartments = (deptData || []).map((d: any) => ({
+          id: d.id,
+          name: d.name || '',
+        }));
+
+        const employees = (empData || []) as any[];
+
+        const mappedPositions: Position[] = (posData || []).map((p: any) => {
+          const dept = mappedDepartments.find(d => d.id === p.department_id);
+          const employeeCount = employees.filter(e => e.position_id === p.id).length;
+          return {
+            id: p.id,
+            title: p.title || '',
+            department_id: p.department_id || '',
+            department_name: dept?.name || '',
+            description: p.description || '',
+            requirements: Array.isArray(p.requirements)
+              ? p.requirements
+              : (p.requirements || '').toString().split(',').map((r: string) => r.trim()).filter(Boolean),
+            responsibilities: Array.isArray(p.responsibilities)
+              ? p.responsibilities
+              : (p.responsibilities || '').toString().split(',').map((r: string) => r.trim()).filter(Boolean),
+            salaryRange: {
+              min: Number(p.min_salary) || 0,
+              max: Number(p.max_salary) || 0,
+            },
+            level: (p.level as Position['level']) || 'junior',
+            employeeCount,
+            status: (p.status as Position['status']) || 'active',
+            createdAt: (p.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+          };
+        });
+
+        setDepartments(mappedDepartments);
+        setPositions(mappedPositions);
+      } catch (error) {
+        console.error('Error loading positions:', error);
+      }
+    };
+
+    loadData();
+  }, [user]);
 
   const filteredPositions = positions.filter(position => {
     const matchesSearch = position.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         position.department.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesDepartment = departmentFilter === 'all' || position.department === departmentFilter;
+                         position.department_name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesDepartment = departmentFilter === 'all' || position.department_id === departmentFilter;
     const matchesLevel = levelFilter === 'all' || position.level === levelFilter;
     return matchesSearch && matchesDepartment && matchesLevel;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const requirementsArray = formData.requirements.split(',').map(r => r.trim()).filter(r => r);
-    const responsibilitiesArray = formData.responsibilities.split(',').map(r => r.trim()).filter(r => r);
-    
-    if (editingPosition) {
-      setPositions(prev => prev.map(position => 
-        position.id === editingPosition.id 
-          ? { 
-              ...position, 
-              ...formData,
-              requirements: requirementsArray,
-              responsibilities: responsibilitiesArray,
-              salaryRange: { min: formData.salaryMin, max: formData.salaryMax }
-            }
-          : position
-      ));
-    } else {
-      const newPosition: Position = {
-        id: Date.now().toString(),
-        title: formData.title,
-        department: formData.department,
-        description: formData.description,
-        requirements: requirementsArray,
-        responsibilities: responsibilitiesArray,
-        salaryRange: { min: formData.salaryMin, max: formData.salaryMax },
-        level: formData.level,
-        employeeCount: 0,
-        status: formData.status,
-        createdAt: new Date().toISOString().split('T')[0]
-      };
-      setPositions(prev => [...prev, newPosition]);
+
+    if (!user) {
+      alert('Debe iniciar sesión para gestionar posiciones.');
+      return;
     }
-    
-    resetForm();
+
+    const requirementsArray = formData.requirements.split(',').map((r: string) => r.trim()).filter((r: string) => r);
+    const responsibilitiesArray = formData.responsibilities.split(',').map((r: string) => r.trim()).filter((r: string) => r);
+
+    const payload: any = {
+      title: formData.title,
+      description: formData.description,
+      department_id: formData.department || null,
+      requirements: requirementsArray,
+      responsibilities: responsibilitiesArray,
+      min_salary: formData.salaryMin || 0,
+      max_salary: formData.salaryMax || 0,
+      level: formData.level,
+      employee_count: editingPosition?.employeeCount ?? 0,
+      status: formData.status,
+    };
+
+    try {
+      if (editingPosition) {
+        const updated = await positionsService.update(editingPosition.id, payload);
+        const dept = departments.find(d => d.id === (updated.department_id || formData.department));
+        setPositions(prev => prev.map(position =>
+          position.id === editingPosition.id
+            ? {
+                id: updated.id,
+                title: updated.title || '',
+                department_id: updated.department_id || '',
+                department_name: dept?.name || position.department_name,
+                description: updated.description || '',
+                requirements: Array.isArray(updated.requirements)
+                  ? updated.requirements
+                  : (updated.requirements || '').toString().split(',').map((r: string) => r.trim()).filter(Boolean),
+                responsibilities: Array.isArray(updated.responsibilities)
+                  ? updated.responsibilities
+                  : (updated.responsibilities || '').toString().split(',').map((r: string) => r.trim()).filter(Boolean),
+                salaryRange: {
+                  min: Number(updated.min_salary) || 0,
+                  max: Number(updated.max_salary) || 0,
+                },
+                level: (updated.level as Position['level']) || position.level,
+                employeeCount: Number(updated.employee_count) || position.employeeCount,
+                status: (updated.status as Position['status']) || position.status,
+                createdAt: (updated.created_at || '').split('T')[0] || position.createdAt,
+              }
+            : position
+        ));
+      } else {
+        const created = await positionsService.create(user.id, payload);
+        const dept = departments.find(d => d.id === created.department_id);
+        const newPosition: Position = {
+          id: created.id,
+          title: created.title || '',
+          department_id: created.department_id || '',
+          department_name: dept?.name || '',
+          description: created.description || '',
+          requirements: Array.isArray(created.requirements)
+            ? created.requirements
+            : (created.requirements || '').toString().split(',').map((r: string) => r.trim()).filter(Boolean),
+          responsibilities: Array.isArray(created.responsibilities)
+            ? created.responsibilities
+            : (created.responsibilities || '').toString().split(',').map((r: string) => r.trim()).filter(Boolean),
+          salaryRange: {
+            min: Number(created.min_salary) || 0,
+            max: Number(created.max_salary) || 0,
+          },
+          level: (created.level as Position['level']) || 'junior',
+          employeeCount: Number(created.employee_count) || 0,
+          status: (created.status as Position['status']) || 'active',
+          createdAt: (created.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+        };
+        setPositions(prev => [...prev, newPosition]);
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error('Error saving position:', error);
+      alert('Error al guardar la posición');
+    }
   };
 
   const resetForm = () => {
@@ -188,7 +214,7 @@ export default function PositionsPage() {
     setEditingPosition(position);
     setFormData({
       title: position.title,
-      department: position.department,
+      department: position.department_id,
       description: position.description,
       requirements: position.requirements.join(', '),
       responsibilities: position.responsibilities.join(', '),
@@ -201,17 +227,33 @@ export default function PositionsPage() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('¿Está seguro de eliminar esta posición?')) {
-      setPositions(prev => prev.filter(position => position.id !== id));
-    }
+    if (!confirm('¿Está seguro de eliminar esta posición?')) return;
+
+    (async () => {
+      try {
+        await positionsService.delete(id);
+        setPositions(prev => prev.filter(position => position.id !== id));
+      } catch (error) {
+        console.error('Error deleting position:', error);
+        alert('Error al eliminar la posición');
+      }
+    })();
   };
 
-  const toggleStatus = (id: string) => {
-    setPositions(prev => prev.map(position => 
-      position.id === id 
-        ? { ...position, status: position.status === 'active' ? 'inactive' : 'active' }
-        : position
-    ));
+  const toggleStatus = async (id: string) => {
+    const current = positions.find(p => p.id === id);
+    if (!current) return;
+    const newStatus: Position['status'] = current.status === 'active' ? 'inactive' : 'active';
+
+    try {
+      await positionsService.update(id, { status: newStatus });
+      setPositions(prev => prev.map(position =>
+        position.id === id ? { ...position, status: newStatus } : position
+      ));
+    } catch (error) {
+      console.error('Error toggling position status:', error);
+      alert('Error al cambiar el estado de la posición');
+    }
   };
 
   const downloadExcel = async () => {
@@ -219,7 +261,7 @@ export default function PositionsPage() {
       const today = new Date().toISOString().split('T')[0];
       const rows = filteredPositions.map(position => ({
         title: position.title,
-        department: position.department,
+        department: position.department_name,
         level: position.level === 'junior' ? 'Junior' : position.level === 'mid' ? 'Intermedio' : position.level === 'senior' ? 'Senior' : 'Ejecutivo',
         salaryMin: position.salaryRange.min || 0,
         salaryMax: position.salaryRange.max || 0,
@@ -325,7 +367,7 @@ export default function PositionsPage() {
               >
                 <option value="all">Todos los departamentos</option>
                 {departments.map(dept => (
-                  <option key={dept} value={dept}>{dept}</option>
+                  <option key={dept.id} value={dept.id}>{dept.name}</option>
                 ))}
               </select>
             </div>
@@ -449,7 +491,7 @@ export default function PositionsPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-900">{position.department}</span>
+                      <span className="text-sm text-gray-900">{position.department_name}</span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getLevelBadge(position.level)}`}>
@@ -543,13 +585,17 @@ export default function PositionsPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Departamento *
                     </label>
-                    <input
-                      type="text"
+                    <select
                       value={formData.department}
                       onChange={(e) => setFormData({...formData, department: e.target.value})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       required
-                    />
+                    >
+                      <option value="">Seleccionar departamento</option>
+                      {departments.map(dept => (
+                        <option key={dept.id} value={dept.id}>{dept.name}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 

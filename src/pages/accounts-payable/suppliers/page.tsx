@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { suppliersService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -8,6 +10,7 @@ declare module 'jspdf' {
 }
 
 export default function SuppliersPage() {
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<any>(null);
   const [filterCategory, setFilterCategory] = useState('all');
@@ -34,6 +37,41 @@ export default function SuppliersPage() {
   const categories = ['Materiales', 'Distribución', 'Servicios', 'Construcción', 'Tecnología'];
   const paymentTermsOptions = ['15 días', '21 días', '30 días', '45 días', '60 días'];
 
+  const loadSuppliers = async () => {
+    if (!user?.id) {
+      setSuppliers([]);
+      return;
+    }
+    try {
+      const rows = await suppliersService.getAll(user.id);
+      const mapped = (rows || []).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        rnc: s.tax_id || '',
+        phone: s.phone || '',
+        email: s.email || '',
+        address: s.address || '',
+        // Campos solo de UI (no existen como columnas):
+        category: 'Materiales',
+        creditLimit: typeof s.current_balance === 'number' ? s.current_balance : 0,
+        paymentTerms: '30 días',
+        contact: '',
+        status: s.is_active === false ? 'Inactivo' : 'Activo',
+        balance: typeof s.current_balance === 'number' ? s.current_balance : 0,
+      }));
+      setSuppliers(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading suppliers from DB, keeping local list empty', error);
+      setSuppliers([]);
+    }
+  };
+
+  useEffect(() => {
+    loadSuppliers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const filteredSuppliers = suppliers.filter(supplier => {
     const matchesCategory = filterCategory === 'all' || supplier.category === filterCategory;
     const matchesStatus = filterStatus === 'all' || supplier.status === filterStatus;
@@ -44,32 +82,43 @@ export default function SuppliersPage() {
     return matchesCategory && matchesStatus && matchesSearch;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (editingSupplier) {
-      setSuppliers(suppliers.map(supplier => 
-        supplier.id === editingSupplier.id 
-          ? { 
-              ...supplier, 
-              ...formData,
-              creditLimit: parseFloat(formData.creditLimit),
-            }
-          : supplier
-      ));
-    } else {
-      const newSupplier = {
-        id: suppliers.length + 1,
-        ...formData,
-        creditLimit: parseFloat(formData.creditLimit),
-        balance: 0,
-        status: 'Activo'
-      };
-      setSuppliers([...suppliers, newSupplier]);
+    if (!user?.id) {
+      alert('Debes iniciar sesión para gestionar proveedores');
+      return;
     }
-    
-    resetForm();
-    alert(editingSupplier ? 'Proveedor actualizado exitosamente' : 'Proveedor creado exitosamente');
+
+    const payload = {
+      // Columnas reales de la tabla suppliers
+      name: formData.name,
+      tax_id: formData.rnc,
+      email: formData.email,
+      phone: formData.phone,
+      address: formData.address,
+      // city y country opcionales, por ahora vacíos
+      city: '',
+      country: '',
+      current_balance: typeof formData.creditLimit === 'string' && formData.creditLimit !== ''
+        ? parseFloat(formData.creditLimit)
+        : 0,
+      is_active: formData.status === 'Activo',
+    };
+
+    try {
+      if (editingSupplier?.id) {
+        await suppliersService.update(editingSupplier.id, payload);
+      } else {
+        await suppliersService.create(user.id, payload);
+      }
+      await loadSuppliers();
+      resetForm();
+      alert(editingSupplier ? 'Proveedor actualizado exitosamente' : 'Proveedor creado exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error saving supplier', error);
+      alert('Error al guardar el proveedor');
+    }
   };
 
   const resetForm = () => {
@@ -106,10 +155,21 @@ export default function SuppliersPage() {
     setShowModal(true);
   };
 
-  const handleDelete = (id: number) => {
-    if (confirm('¿Estás seguro de eliminar este proveedor?')) {
-      setSuppliers(suppliers.filter(supplier => supplier.id !== id));
+  const handleDelete = async (id: string | number) => {
+    if (!user?.id) {
+      alert('Debes iniciar sesión para eliminar proveedores');
+      return;
+    }
+    if (!confirm('¿Estás seguro de eliminar este proveedor?')) return;
+
+    try {
+      await suppliersService.delete(String(id));
+      await loadSuppliers();
       alert('Proveedor eliminado exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error deleting supplier', error);
+      alert('No se pudo eliminar el proveedor');
     }
   };
 

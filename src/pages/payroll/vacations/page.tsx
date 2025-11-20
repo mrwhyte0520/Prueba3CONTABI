@@ -1,6 +1,8 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { employeesService, vacationsService } from '../../../services/database';
 
 interface VacationRequest {
   id: string;
@@ -21,8 +23,19 @@ interface VacationRequest {
   paidDays: number;
 }
 
+interface EmployeeOption {
+  id: string;
+  code: string;
+  name: string;
+  department: string;
+  position: string;
+}
+
 export default function VacationsPage() {
+  const { user } = useAuth();
   const [vacationRequests, setVacationRequests] = useState<VacationRequest[]>([]);
+  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
@@ -40,6 +53,88 @@ export default function VacationsPage() {
     vacationType: 'annual' as VacationRequest['vacationType'],
     reason: ''
   });
+
+  useEffect(() => {
+    const loadEmployees = async () => {
+      if (!user) return;
+      try {
+        const data = await employeesService.getAll(user.id);
+        const mapped: EmployeeOption[] = (data || []).map((e: any) => ({
+          id: e.id,
+          code: e.employee_code || e.identification || '',
+          name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
+          department: e.departments?.name || '',
+          position: e.positions?.title || '',
+        }));
+        setEmployees(mapped);
+      } catch (error) {
+        console.error('Error loading employees for vacations:', error);
+      }
+    };
+
+    const loadRequests = async () => {
+      if (!user) return;
+      try {
+        const data = await vacationsService.getAll(user.id);
+        const mapped: VacationRequest[] = (data || []).map((r: any) => ({
+          id: r.id,
+          employeeId: r.employee_id,
+          employeeName: r.employee_name,
+          department: r.department,
+          position: r.position,
+          startDate: r.start_date,
+          endDate: r.end_date,
+          totalDays: r.total_days,
+          vacationType: r.vacation_type,
+          status: r.status,
+          reason: r.reason,
+          approvedBy: r.approved_by || undefined,
+          approvedDate: r.approved_date || undefined,
+          requestDate: r.request_date,
+          remainingDays: r.remaining_days ?? 0,
+          paidDays: r.paid_days ?? 0,
+        }));
+        setVacationRequests(mapped);
+      } catch (error) {
+        console.error('Error loading vacation requests:', error);
+      }
+    };
+
+    loadEmployees();
+    loadRequests();
+  }, [user]);
+
+  // Reactivar automáticamente empleados cuando termina el período de vacaciones
+  useEffect(() => {
+    if (!user) return;
+    if (!vacationRequests.length) return;
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const finished = vacationRequests.filter(r => r.status === 'approved' && r.endDate < todayStr);
+    if (!finished.length) return;
+
+    const processFinished = async () => {
+      for (const req of finished) {
+        try {
+          await vacationsService.update(req.id, { status: 'taken' });
+          const employee = employees.find(e => e.code === req.employeeId);
+          if (employee) {
+            await employeesService.setStatus(employee.id, 'active');
+          }
+        } catch (error) {
+          console.error('Error auto-updating finished vacation:', error);
+        }
+      }
+
+      setVacationRequests(prev => prev.map(r =>
+        finished.some(f => f.id === r.id)
+          ? { ...r, status: 'taken' }
+          : r
+      ));
+    };
+
+    processFinished();
+  }, [user, vacationRequests, employees]);
 
   const filteredRequests = vacationRequests.filter(request => {
     const matchesSearch = request.employeeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -59,30 +154,87 @@ export default function VacationsPage() {
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const totalDays = calculateDays(formData.startDate, formData.endDate);
-    
-    const newRequest: VacationRequest = {
-      id: editingRequest?.id || Date.now().toString(),
-      ...formData,
-      totalDays,
-      status: 'pending',
-      requestDate: new Date().toISOString().split('T')[0],
-      remainingDays: 20, // Default value
-      paidDays: 0
-    };
 
-    if (editingRequest) {
-      setVacationRequests(prev => prev.map(request => 
-        request.id === editingRequest.id ? { ...editingRequest, ...newRequest } : request
-      ));
-    } else {
-      setVacationRequests(prev => [...prev, newRequest]);
+    if (!user) {
+      alert('Debe iniciar sesión para gestionar vacaciones.');
+      return;
     }
 
-    resetForm();
+    const totalDays = calculateDays(formData.startDate, formData.endDate);
+
+    const payload: any = {
+      employee_id: formData.employeeId,
+      employee_name: formData.employeeName,
+      department: formData.department,
+      position: formData.position,
+      start_date: formData.startDate,
+      end_date: formData.endDate,
+      total_days: totalDays,
+      vacation_type: formData.vacationType,
+      status: editingRequest?.status ?? 'pending',
+      reason: formData.reason,
+      request_date: editingRequest?.requestDate ?? new Date().toISOString().split('T')[0],
+      remaining_days: editingRequest?.remainingDays ?? 20,
+      paid_days: editingRequest?.paidDays ?? 0,
+      approved_by: editingRequest?.approvedBy ?? null,
+      approved_date: editingRequest?.approvedDate ?? null,
+    };
+
+    try {
+      if (editingRequest) {
+        const updated = await vacationsService.update(editingRequest.id, payload);
+        setVacationRequests(prev => prev.map(request =>
+          request.id === editingRequest.id
+            ? {
+                id: updated.id,
+                employeeId: updated.employee_id,
+                employeeName: updated.employee_name,
+                department: updated.department,
+                position: updated.position,
+                startDate: updated.start_date,
+                endDate: updated.end_date,
+                totalDays: updated.total_days,
+                vacationType: updated.vacation_type,
+                status: updated.status,
+                reason: updated.reason,
+                approvedBy: updated.approved_by || undefined,
+                approvedDate: updated.approved_date || undefined,
+                requestDate: updated.request_date,
+                remainingDays: updated.remaining_days ?? 0,
+                paidDays: updated.paid_days ?? 0,
+              }
+            : request
+        ));
+      } else {
+        const created = await vacationsService.create(user.id, payload);
+        const newRequest: VacationRequest = {
+          id: created.id,
+          employeeId: created.employee_id,
+          employeeName: created.employee_name,
+          department: created.department,
+          position: created.position,
+          startDate: created.start_date,
+          endDate: created.end_date,
+          totalDays: created.total_days,
+          vacationType: created.vacation_type,
+          status: created.status,
+          reason: created.reason,
+          approvedBy: created.approved_by || undefined,
+          approvedDate: created.approved_date || undefined,
+          requestDate: created.request_date,
+          remainingDays: created.remaining_days ?? 0,
+          paidDays: created.paid_days ?? 0,
+        };
+        setVacationRequests(prev => [...prev, newRequest]);
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error('Error saving vacation request:', error);
+      alert('Error al guardar la solicitud de vacaciones');
+    }
   };
 
   const resetForm = () => {
@@ -96,12 +248,15 @@ export default function VacationsPage() {
       vacationType: 'annual',
       reason: ''
     });
+    setSelectedEmployeeId('');
     setShowForm(false);
     setEditingRequest(null);
   };
 
   const handleEdit = (request: VacationRequest) => {
     setEditingRequest(request);
+    const emp = employees.find(e => e.code === request.employeeId && e.name === request.employeeName);
+    setSelectedEmployeeId(emp?.id || '');
     setFormData({
       employeeId: request.employeeId,
       employeeName: request.employeeName,
@@ -115,16 +270,45 @@ export default function VacationsPage() {
     setShowForm(true);
   };
 
-  const updateStatus = (id: string, status: 'approved' | 'rejected') => {
-    setVacationRequests(prev => prev.map(request =>
-      request.id === id ? { 
-        ...request, 
+  const updateStatus = async (id: string, status: 'approved' | 'rejected') => {
+    const current = vacationRequests.find(r => r.id === id);
+    if (!current) return;
+
+    const approvedBy = status === 'approved' ? 'Sistema' : null;
+    const approvedDate = status === 'approved' ? new Date().toISOString().split('T')[0] : null;
+    const paidDays = status === 'approved' ? current.totalDays : 0;
+
+    try {
+      await vacationsService.update(id, {
         status,
-        approvedBy: status === 'approved' ? 'Sistema' : undefined,
-        approvedDate: status === 'approved' ? new Date().toISOString().split('T')[0] : undefined,
-        paidDays: status === 'approved' ? request.totalDays : 0
-      } : request
-    ));
+        approved_by: approvedBy,
+        approved_date: approvedDate,
+        paid_days: paidDays,
+      });
+
+      // Si se aprueba la solicitud, marcar al empleado como inactivo
+      if (status === 'approved') {
+        const employee = employees.find(e => e.code === current.employeeId);
+        if (employee) {
+          await employeesService.setStatus(employee.id, 'inactive');
+        }
+      }
+
+      setVacationRequests(prev => prev.map(request =>
+        request.id === id
+          ? {
+              ...request,
+              status,
+              approvedBy: approvedBy || undefined,
+              approvedDate: approvedDate || undefined,
+              paidDays,
+            }
+          : request
+      ));
+    } catch (error) {
+      console.error('Error updating vacation status:', error);
+      alert('Error al actualizar el estado de la solicitud');
+    }
   };
 
   const exportToCSV = () => {
@@ -431,29 +615,48 @@ export default function VacationsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        ID Empleado *
+                        Empleado *
                       </label>
-                      <input
-                        type="text"
+                      <select
                         required
-                        value={formData.employeeId}
-                        onChange={(e) => setFormData(prev => ({ ...prev, employeeId: e.target.value }))}
+                        value={selectedEmployeeId}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setSelectedEmployeeId(value);
+                          const emp = employees.find(emp => emp.id === value);
+                          if (emp) {
+                            setFormData(prev => ({
+                              ...prev,
+                              employeeId: emp.code,
+                              employeeName: emp.name,
+                              department: emp.department,
+                              position: emp.position,
+                            }));
+                          }
+                        }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="EMP001"
-                      />
+                      >
+                        <option value="">Seleccionar empleado...</option>
+                        {employees.map(emp => (
+                          <option key={emp.id} value={emp.id}>
+                            {emp.code ? `${emp.code} - ${emp.name}` : emp.name}
+                            {emp.department ? ` - ${emp.department}` : ''}
+                            {emp.position ? ` / ${emp.position}` : ''}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Nombre Empleado *
+                        ID Empleado
                       </label>
                       <input
                         type="text"
-                        required
-                        value={formData.employeeName}
-                        onChange={(e) => setFormData(prev => ({ ...prev, employeeName: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="Nombre completo"
+                        value={formData.employeeId}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50"
+                        placeholder="EMP001"
                       />
                     </div>
                   </div>
@@ -461,28 +664,26 @@ export default function VacationsPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Departamento *
+                        Departamento
                       </label>
                       <input
                         type="text"
-                        required
                         value={formData.department}
-                        onChange={(e) => setFormData(prev => ({ ...prev, department: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50"
                         placeholder="Departamento"
                       />
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Posición *
+                        Posición
                       </label>
                       <input
                         type="text"
-                        required
                         value={formData.position}
-                        onChange={(e) => setFormData(prev => ({ ...prev, position: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50"
                         placeholder="Cargo"
                       />
                     </div>

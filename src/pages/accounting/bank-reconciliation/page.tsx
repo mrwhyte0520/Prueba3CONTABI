@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
+import { chartAccountsService, bankReconciliationService } from '../../../services/database';
 
 interface BankStatement {
   id: string;
@@ -41,13 +42,14 @@ export default function BankReconciliationPage() {
   const [loading, setLoading] = useState(true);
   const [selectedBank, setSelectedBank] = useState('');
   const [reconciliationDate, setReconciliationDate] = useState(new Date().toISOString().split('T')[0]);
+  const [reconciliationId, setReconciliationId] = useState<string | null>(null);
   const [bankStatement, setBankStatement] = useState<BankStatement | null>(null);
   const [bookItems, setBookItems] = useState<ReconciliationItem[]>([]);
   const [bankItems, setBankItems] = useState<ReconciliationItem[]>([]);
   const [adjustments, setAdjustments] = useState<any[]>([]);
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
-
-  const banks: Array<{ id: string; name: string; account_number: string }> = [];
+  const [showBankItemModal, setShowBankItemModal] = useState(false);
+  const [banks, setBanks] = useState<Array<{ id: string; name: string; account_number: string }>>([]);
 
   const [adjustmentForm, setAdjustmentForm] = useState({
     type: 'bank_charge',
@@ -57,19 +59,83 @@ export default function BankReconciliationPage() {
   });
 
   useEffect(() => {
+    const loadBanks = async () => {
+      if (!user) return;
+      try {
+        const accounts = await chartAccountsService.getAll(user.id);
+        const bankAccounts = (accounts || []).filter((acc: any) => acc.allowPosting && acc.type === 'asset');
+        const mapped = bankAccounts.map((acc: any) => ({
+          id: acc.id as string,
+          name: acc.name as string,
+          account_number: acc.code as string,
+        }));
+        setBanks(mapped);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading bank accounts for reconciliation:', error);
+      }
+    };
+
+    loadBanks();
+  }, [user]);
+
+  useEffect(() => {
     loadData();
   }, [selectedBank, reconciliationDate]);
 
   const loadData = async () => {
-    if (!selectedBank) {
+    if (!user || !selectedBank) {
       setLoading(false);
       return;
     }
 
     setLoading(true);
     try {
-      setBookItems([]);
-      setBankItems([]);
+      // Obtener o crear conciliación
+      const reconciliation = await bankReconciliationService.getOrCreateReconciliation(
+        user.id,
+        selectedBank,
+        reconciliationDate,
+      );
+      setReconciliationId(reconciliation.id);
+
+      // Sincronizar items del libro desde el diario hacia bank_reconciliation_items
+      await bankReconciliationService.upsertBookItemsFromJournal(
+        reconciliation.id,
+        user.id,
+        selectedBank,
+        reconciliationDate,
+      );
+
+      // Cargar todos los items guardados
+      const items = await bankReconciliationService.getItems(reconciliation.id);
+
+      const mappedBook: ReconciliationItem[] = (items || [])
+        .filter((i: any) => i.transaction_type === 'book')
+        .map((i: any) => ({
+          id: i.id,
+          type: 'book',
+          date: i.transaction_date,
+          description: i.description,
+          amount: Number(i.amount) || 0,
+          is_matched: Boolean(i.is_reconciled),
+          match_id: undefined,
+        }));
+
+      const mappedBank: ReconciliationItem[] = (items || [])
+        .filter((i: any) => i.transaction_type === 'bank')
+        .map((i: any) => ({
+          id: i.id,
+          type: 'bank',
+          date: i.transaction_date,
+          description: i.description,
+          amount: Number(i.amount) || 0,
+          is_matched: Boolean(i.is_reconciled),
+          match_id: undefined,
+        }));
+
+      setBookItems(mappedBook);
+      setBankItems(mappedBank);
     } catch (error) {
       console.error('Error loading reconciliation data:', error);
     } finally {
@@ -78,29 +144,40 @@ export default function BankReconciliationPage() {
   };
 
   const handleMatchItems = (bookId: string, bankId: string) => {
+    // Actualizar estado local
     setBookItems(prev => prev.map(item => 
       item.id === bookId 
         ? { ...item, is_matched: true, match_id: bankId }
         : item
     ));
-    
     setBankItems(prev => prev.map(item => 
       item.id === bankId 
         ? { ...item, is_matched: true, match_id: bookId }
         : item
     ));
+
+    // Persistir estado conciliado
+    bankReconciliationService
+      .setItemsReconciled([bookId, bankId], true)
+      .catch((error: any) => {
+        // eslint-disable-next-line no-console
+        console.error('Error updating reconciled state:', error);
+      });
   };
 
   const handleUnmatchItem = (itemId: string, type: 'book' | 'bank') => {
+    const affectedIds: string[] = [];
     if (type === 'book') {
       const item = bookItems.find(i => i.id === itemId);
       if (item?.match_id) {
+        affectedIds.push(item.match_id);
         setBankItems(prev => prev.map(i => 
           i.id === item.match_id 
             ? { ...i, is_matched: false, match_id: undefined }
             : i
         ));
       }
+      affectedIds.push(itemId);
       setBookItems(prev => prev.map(i => 
         i.id === itemId 
           ? { ...i, is_matched: false, match_id: undefined }
@@ -109,17 +186,28 @@ export default function BankReconciliationPage() {
     } else {
       const item = bankItems.find(i => i.id === itemId);
       if (item?.match_id) {
+        affectedIds.push(item.match_id);
         setBookItems(prev => prev.map(i => 
           i.id === item.match_id 
             ? { ...i, is_matched: false, match_id: undefined }
             : i
         ));
       }
+      affectedIds.push(itemId);
       setBankItems(prev => prev.map(i => 
         i.id === itemId 
           ? { ...i, is_matched: false, match_id: undefined }
           : i
       ));
+    }
+
+    if (affectedIds.length > 0) {
+      bankReconciliationService
+        .setItemsReconciled(affectedIds, false)
+        .catch((error: any) => {
+          // eslint-disable-next-line no-console
+          console.error('Error updating reconciled state:', error);
+        });
     }
   };
 
@@ -453,6 +541,149 @@ export default function BankReconciliationPage() {
                                 ))}
                               </select>
                             )}
+
+        {/* Bank Item Modal (manual bank movements) */}
+        {showBankItemModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-xl font-semibold text-gray-900">Agregar Movimiento Bancario</h2>
+                  <button
+                    onClick={() => setShowBankItemModal(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <i className="ri-close-line text-xl"></i>
+                  </button>
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!reconciliationId) {
+                      alert('Primero debe cargar datos de conciliación para un banco y fecha.');
+                      return;
+                    }
+
+                    const formData = new FormData(e.currentTarget as HTMLFormElement);
+                    const date = String(formData.get('date') || '').trim() || new Date().toISOString().split('T')[0];
+                    const description = String(formData.get('description') || '').trim();
+                    const amountValue = parseFloat(String(formData.get('amount') || '0')) || 0;
+                    const direction = String(formData.get('direction') || 'deposit');
+
+                    if (!description || !amountValue) {
+                      alert('Debe indicar descripción y monto.');
+                      return;
+                    }
+
+                    const signedAmount = direction === 'withdrawal' ? -Math.abs(amountValue) : Math.abs(amountValue);
+
+                    bankReconciliationService
+                      .addBankItem(reconciliationId, {
+                        date,
+                        description,
+                        amount: signedAmount,
+                        direction: direction === 'withdrawal' ? 'withdrawal' : 'deposit',
+                      })
+                      .then((created: any) => {
+                        const newItem: ReconciliationItem = {
+                          id: created.id,
+                          type: 'bank',
+                          date: created.transaction_date,
+                          description: created.description,
+                          amount: Number(created.amount) || 0,
+                          is_matched: Boolean(created.is_reconciled),
+                          match_id: undefined,
+                        };
+
+                        setBankItems(prev => [...prev, newItem]);
+                        setShowBankItemModal(false);
+                      })
+                      .catch((error) => {
+                        // eslint-disable-next-line no-console
+                        console.error('Error creating bank reconciliation item:', error);
+                        alert('Error al registrar el movimiento bancario');
+                      });
+                  }}
+                  className="space-y-4"
+                >
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Fecha
+                    </label>
+                    <input
+                      type="date"
+                      name="date"
+                      defaultValue={new Date().toISOString().split('T')[0]}
+                      required
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Descripción
+                    </label>
+                    <input
+                      type="text"
+                      name="description"
+                      required
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Descripción del movimiento bancario"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Tipo de Movimiento
+                      </label>
+                      <select
+                        name="direction"
+                        defaultValue="deposit"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                      >
+                        <option value="deposit">Depósito (+)</option>
+                        <option value="withdrawal">Retiro / Cargo (-)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Monto (RD$)
+                      </label>
+                      <input
+                        type="number"
+                        name="amount"
+                        required
+                        min="0"
+                        step="0.01"
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex space-x-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowBankItemModal(false)}
+                      className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                    >
+                      Agregar
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
                           </td>
                         </tr>
                       ))}
@@ -463,8 +694,16 @@ export default function BankReconciliationPage() {
 
               {/* Bank Items */}
               <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                <div className="px-6 py-4 border-b border-gray-200">
+                <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
                   <h3 className="text-lg font-medium text-gray-900">Estado Bancario</h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowBankItemModal(true)}
+                    className="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                  >
+                    <i className="ri-add-line mr-1"></i>
+                    Agregar Movimiento
+                  </button>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">

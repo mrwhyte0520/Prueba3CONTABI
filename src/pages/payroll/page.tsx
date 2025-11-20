@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { departmentsService, positionsService } from '../../services/database';
+import { departmentsService, positionsService, employeesService, payrollService } from '../../services/database';
 
 interface Employee {
   id: string;
@@ -93,12 +93,49 @@ export default function PayrollPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [depts, poss] = await Promise.all([
+      const [emps, depts, poss, periods] = await Promise.all([
+        employeesService.getAll(user.id),
         departmentsService.getAll(user.id),
-        positionsService.getAll(user.id)
+        positionsService.getAll(user.id),
+        payrollService.getPeriods(user.id)
       ]);
-      setDepartments(depts);
-      setPositions(poss);
+
+      const mappedEmployees: Employee[] = (emps || []).map((e: any) => ({
+        id: e.id,
+        employee_code: e.employee_code || '',
+        first_name: e.first_name || '',
+        last_name: e.last_name || '',
+        email: e.email || '',
+        phone: e.phone || '',
+        department_id: e.department_id || '',
+        position_id: e.position_id || '',
+        salary: Number(e.salary) || 0,
+        hire_date: e.hire_date || new Date().toISOString().slice(0, 10),
+        status: (e.status as 'active' | 'inactive') || 'active',
+        bank_account: e.bank_account || undefined,
+        identification: e.identification || undefined,
+        address: e.address || undefined,
+        emergency_contact: e.emergency_contact || undefined,
+        emergency_phone: e.emergency_phone || undefined,
+      }));
+
+      const mappedPeriods: PayrollPeriod[] = (periods || []).map((p: any) => ({
+        id: p.id,
+        period_name: p.period_name || p.name || '',
+        start_date: p.start_date || new Date().toISOString().slice(0, 10),
+        end_date: p.end_date || new Date().toISOString().slice(0, 10),
+        pay_date: p.pay_date || new Date().toISOString().slice(0, 10),
+        status: (p.status as 'open' | 'processing' | 'closed' | 'paid') || 'open',
+        total_gross: Number(p.total_gross) || 0,
+        total_deductions: Number(p.total_deductions) || 0,
+        total_net: Number(p.total_net) || 0,
+        employee_count: Number(p.employee_count) || 0,
+      }));
+
+      setEmployees(mappedEmployees);
+      setDepartments(depts || []);
+      setPositions(poss || []);
+      setPayrollPeriods(mappedPeriods);
     } catch (error) {
       console.error('Error loading payroll catalogs:', error);
     } finally {
@@ -125,54 +162,167 @@ export default function PayrollPage() {
     setLoading(true);
 
     try {
+      if (!user) return;
+
       if (modalType === 'employee') {
+        const payload: any = {
+          first_name: formData.first_name || '',
+          last_name: formData.last_name || '',
+          email: formData.email || '',
+          phone: formData.phone || '',
+          department_id: formData.department_id || null,
+          position_id: formData.position_id || null,
+          salary: Number(formData.salary) || 0,
+          hire_date: formData.hire_date || new Date().toISOString().slice(0, 10),
+          bank_account: formData.bank_account || null,
+          identification: formData.identification || null,
+          address: formData.address || null,
+          emergency_contact: formData.emergency_contact || null,
+          emergency_phone: formData.emergency_phone || null,
+          status: formData.status || 'active',
+        };
+
         if (selectedItem) {
+          const updated = await employeesService.update(selectedItem.id, payload);
           setEmployees(prev => prev.map(emp => 
-            emp.id === selectedItem.id ? { ...emp, ...formData } : emp
+            emp.id === selectedItem.id
+              ? {
+                  id: updated.id,
+                  employee_code: updated.employee_code || '',
+                  first_name: updated.first_name || '',
+                  last_name: updated.last_name || '',
+                  email: updated.email || '',
+                  phone: updated.phone || '',
+                  department_id: updated.department_id || '',
+                  position_id: updated.position_id || '',
+                  salary: Number(updated.salary) || 0,
+                  hire_date: updated.hire_date || new Date().toISOString().slice(0, 10),
+                  status: (updated.status as 'active' | 'inactive') || 'active',
+                  bank_account: updated.bank_account || undefined,
+                  identification: updated.identification || undefined,
+                  address: updated.address || undefined,
+                  emergency_contact: updated.emergency_contact || undefined,
+                  emergency_phone: updated.emergency_phone || undefined,
+                }
+              : emp
           ));
         } else {
+          const created = await employeesService.create(user.id, payload);
           const newEmployee: Employee = {
-            ...formData,
-            id: Date.now().toString(),
-            employee_code: `EMP${String(employees.length + 1).padStart(3, '0')}`,
-            status: 'active'
+            id: created.id,
+            employee_code: created.employee_code || '',
+            first_name: created.first_name || '',
+            last_name: created.last_name || '',
+            email: created.email || '',
+            phone: created.phone || '',
+            department_id: created.department_id || '',
+            position_id: created.position_id || '',
+            salary: Number(created.salary) || 0,
+            hire_date: created.hire_date || new Date().toISOString().slice(0, 10),
+            status: (created.status as 'active' | 'inactive') || 'active',
+            bank_account: created.bank_account || undefined,
+            identification: created.identification || undefined,
+            address: created.address || undefined,
+            emergency_contact: created.emergency_contact || undefined,
+            emergency_phone: created.emergency_phone || undefined,
           };
           setEmployees(prev => [...prev, newEmployee]);
         }
       } else if (modalType === 'department') {
+        const payload: any = {
+          name: formData.name || '',
+          description: formData.description || '',
+          budget: formData.budget != null ? Number(formData.budget) : null,
+        };
+
         if (selectedItem) {
+          const updated = await departmentsService.update(selectedItem.id, payload);
           setDepartments(prev => prev.map(dept => 
-            dept.id === selectedItem.id ? { ...dept, ...formData } : dept
+            dept.id === selectedItem.id
+              ? {
+                  id: updated.id,
+                  name: updated.name || '',
+                  description: updated.description || '',
+                  budget: updated.budget != null ? Number(updated.budget) : undefined,
+                  manager_id: updated.manager_id || undefined,
+                }
+              : dept
           ));
         } else {
+          const created = await departmentsService.create(user.id, payload);
           const newDepartment: Department = {
-            ...formData,
-            id: Date.now().toString()
+            id: created.id,
+            name: created.name || '',
+            description: created.description || '',
+            budget: created.budget != null ? Number(created.budget) : undefined,
+            manager_id: created.manager_id || undefined,
           };
           setDepartments(prev => [...prev, newDepartment]);
         }
       } else if (modalType === 'position') {
+        const payload: any = {
+          title: formData.title || '',
+          description: formData.description || '',
+          department_id: formData.department_id || null,
+          min_salary: formData.min_salary != null ? Number(formData.min_salary) : null,
+          max_salary: formData.max_salary != null ? Number(formData.max_salary) : null,
+          is_active: formData.is_active != null ? !!formData.is_active : true,
+        };
+
         if (selectedItem) {
+          const updated = await positionsService.update(selectedItem.id, payload);
           setPositions(prev => prev.map(pos => 
-            pos.id === selectedItem.id ? { ...pos, ...formData } : pos
+            pos.id === selectedItem.id
+              ? {
+                  id: updated.id,
+                  title: updated.title || '',
+                  description: updated.description || '',
+                  department_id: updated.department_id || '',
+                  min_salary: updated.min_salary != null ? Number(updated.min_salary) : undefined,
+                  max_salary: updated.max_salary != null ? Number(updated.max_salary) : undefined,
+                  is_active: updated.is_active !== false,
+                }
+              : pos
           ));
         } else {
+          const created = await positionsService.create(user.id, payload);
           const newPosition: Position = {
-            ...formData,
-            id: Date.now().toString(),
-            is_active: true
+            id: created.id,
+            title: created.title || '',
+            description: created.description || '',
+            department_id: created.department_id || '',
+            min_salary: created.min_salary != null ? Number(created.min_salary) : undefined,
+            max_salary: created.max_salary != null ? Number(created.max_salary) : undefined,
+            is_active: created.is_active !== false,
           };
           setPositions(prev => [...prev, newPosition]);
         }
       } else if (modalType === 'payroll-period') {
-        const newPeriod: PayrollPeriod = {
-          ...formData,
-          id: Date.now().toString(),
+        const payload: any = {
+          period_name: formData.period_name || '',
+          name: formData.period_name || '',
+          start_date: formData.start_date || new Date().toISOString().slice(0, 10),
+          end_date: formData.end_date || new Date().toISOString().slice(0, 10),
+          pay_date: formData.pay_date || new Date().toISOString().slice(0, 10),
           status: 'open',
           total_gross: 0,
           total_deductions: 0,
           total_net: 0,
-          employee_count: 0
+          employee_count: 0,
+        };
+
+        const created = await payrollService.createPeriod(user.id, payload);
+        const newPeriod: PayrollPeriod = {
+          id: created.id,
+          period_name: created.period_name || payload.period_name,
+          start_date: created.start_date || payload.start_date,
+          end_date: created.end_date || payload.end_date,
+          pay_date: created.pay_date || payload.pay_date,
+          status: (created.status as 'open' | 'processing' | 'closed' | 'paid') || 'open',
+          total_gross: Number(created.total_gross) || 0,
+          total_deductions: Number(created.total_deductions) || 0,
+          total_net: Number(created.total_net) || 0,
+          employee_count: Number(created.employee_count) || 0,
         };
         setPayrollPeriods(prev => [...prev, newPeriod]);
       }
@@ -185,15 +335,23 @@ export default function PayrollPage() {
     }
   };
 
-  const handleDelete = (id: string, type: string) => {
+  const handleDelete = async (id: string, type: string) => {
     if (!confirm('¿Está seguro de que desea eliminar este elemento?')) return;
 
-    if (type === 'employee') {
-      setEmployees(prev => prev.filter(emp => emp.id !== id));
-    } else if (type === 'department') {
-      setDepartments(prev => prev.filter(dept => dept.id !== id));
-    } else if (type === 'position') {
-      setPositions(prev => prev.filter(pos => pos.id !== id));
+    try {
+      if (type === 'employee') {
+        await employeesService.delete(id);
+        setEmployees(prev => prev.filter(emp => emp.id !== id));
+      } else if (type === 'department') {
+        await departmentsService.delete(id);
+        setDepartments(prev => prev.filter(dept => dept.id !== id));
+      } else if (type === 'position') {
+        await positionsService.delete(id);
+        setPositions(prev => prev.filter(pos => pos.id !== id));
+      }
+    } catch (error) {
+      console.error('Error deleting record:', error);
+      alert('Ocurrió un error al eliminar el registro.');
     }
   };
 
@@ -236,6 +394,22 @@ export default function PayrollPage() {
     };
   };
 
+  const handleViewPeriodDetails = async (period: PayrollPeriod) => {
+    try {
+      setLoading(true);
+      const entries = await payrollService.getEntries(period.id);
+      setSelectedItem(period);
+      setPayrollEntries(entries || []);
+      setModalType('payroll-period-details');
+      setShowModal(true);
+    } catch (error) {
+      console.error('Error loading payroll entries:', error);
+      alert('Ocurrió un error al cargar los detalles de la nómina.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const exportToExcel = (data: any[], filename: string) => {
     const headers = Object.keys(data[0] || {});
     const csvContent = [
@@ -271,21 +445,64 @@ export default function PayrollPage() {
     setSelectedEmployees([]);
   };
 
-  const processPayroll = (periodId: string) => {
+  const processPayroll = async (periodId: string) => {
+    if (!user) {
+      alert('Debe iniciar sesión para procesar la nómina.');
+      return;
+    }
+
     if (!confirm('¿Está seguro de que desea procesar esta nómina?')) return;
 
-    setPayrollPeriods(prev => prev.map(period => 
-      period.id === periodId 
-        ? { 
-            ...period, 
-            status: 'processing',
-            total_gross: employees.reduce((sum, emp) => sum + emp.salary, 0),
-            total_deductions: employees.reduce((sum, emp) => sum + (emp.salary * 0.1667), 0),
-            total_net: employees.reduce((sum, emp) => sum + (emp.salary * 0.8333), 0),
-            employee_count: employees.filter(emp => emp.status === 'active').length
-          }
-        : period
-    ));
+    try {
+      const activeEmployees = employees.filter(emp => emp.status === 'active');
+      const entries = activeEmployees.map(emp => {
+        const gross = Number(emp.salary) || 0;
+        const deductions = gross * 0.1667;
+        const net = gross - deductions;
+        return {
+          user_id: user.id,
+          payroll_period_id: periodId,
+          employee_id: emp.id,
+          gross_salary: gross,
+          overtime_hours: 0,
+          overtime_amount: 0,
+          bonuses: 0,
+          deductions,
+          net_salary: net,
+          status: 'approved',
+        };
+      });
+
+      if (entries.length === 0) {
+        alert('No hay empleados activos para procesar.');
+        return;
+      }
+
+      await payrollService.processPayroll(periodId, entries);
+
+      const total_gross = entries.reduce((sum, e) => sum + (e.gross_salary || 0), 0);
+      const total_deductions = entries.reduce((sum, e) => sum + (e.deductions || 0), 0);
+      const total_net = entries.reduce((sum, e) => sum + (e.net_salary || 0), 0);
+      const employee_count = activeEmployees.length;
+
+      setPayrollPeriods(prev => prev.map(period => 
+        period.id === periodId
+          ? {
+              ...period,
+              status: 'processing',
+              total_gross,
+              total_deductions,
+              total_net,
+              employee_count,
+            }
+          : period
+      ));
+
+      alert('Nómina procesada correctamente.');
+    } catch (error) {
+      console.error('Error processing payroll:', error);
+      alert('Ocurrió un error al procesar la nómina.');
+    }
   };
 
   const renderDashboard = () => {
@@ -842,7 +1059,16 @@ export default function PayrollPage() {
               )}
             </div>
             <div className="mt-4 flex space-x-2">
-              <button className="flex-1 bg-gray-600 text-white px-3 py-2 rounded text-sm hover:bg-gray-700 transition-colors whitespace-nowrap">
+              <button
+                onClick={() => processPayroll(period.id)}
+                className="flex-1 bg-blue-600 text-white px-3 py-2 rounded text-sm hover:bg-blue-700 transition-colors whitespace-nowrap"
+              >
+                Procesar Nómina
+              </button>
+              <button
+                onClick={() => handleViewPeriodDetails(period)}
+                className="flex-1 bg-gray-600 text-white px-3 py-2 rounded text-sm hover:bg-gray-700 transition-colors whitespace-nowrap"
+              >
                 Ver Detalles
               </button>
               <button 
@@ -1020,12 +1246,21 @@ export default function PayrollPage() {
         <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-semibold">
-              {selectedItem ? 'Editar' : 'Agregar'} {
-                modalType === 'employee' ? 'Empleado' :
-                modalType === 'department' ? 'Departamento' :
-                modalType === 'position' ? 'Posición' :
-                modalType === 'employee-details' ? 'Detalles del Empleado' :
-                'Período de Nómina'
+              {modalType === 'employee' || modalType === 'department' || modalType === 'position' || modalType === 'payroll-period'
+                ? `${selectedItem ? 'Editar' : 'Agregar'} ${
+                    modalType === 'employee'
+                      ? 'Empleado'
+                      : modalType === 'department'
+                      ? 'Departamento'
+                      : modalType === 'position'
+                      ? 'Posición'
+                      : 'Período de Nómina'
+                  }`
+                : modalType === 'employee-details'
+                ? 'Detalles del Empleado'
+                : modalType === 'payroll-period-details'
+                ? 'Detalles del Período de Nómina'
+                : 'Detalle'
               }
             </h3>
             <button
@@ -1095,6 +1330,111 @@ export default function PayrollPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Dirección</label>
                 <p className="text-sm text-gray-900">{selectedItem.address || 'No especificado'}</p>
+              </div>
+            </div>
+          ) : modalType === 'payroll-period-details' && selectedItem ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Período</label>
+                  <p className="text-sm text-gray-900">{selectedItem.period_name}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Estado</label>
+                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                    selectedItem.status === 'paid'
+                      ? 'bg-green-100 text-green-800'
+                      : selectedItem.status === 'closed'
+                      ? 'bg-blue-100 text-blue-800'
+                      : selectedItem.status === 'processing'
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : 'bg-gray-100 text-gray-800'
+                  }`}>
+                    {selectedItem.status === 'paid'
+                      ? 'Pagado'
+                      : selectedItem.status === 'closed'
+                      ? 'Cerrado'
+                      : selectedItem.status === 'processing'
+                      ? 'Procesando'
+                      : 'Abierto'}
+                  </span>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Fecha Inicio</label>
+                  <p className="text-sm text-gray-900">{new Date(selectedItem.start_date).toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Fecha Fin</label>
+                  <p className="text-sm text-gray-900">{new Date(selectedItem.end_date).toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Fecha de Pago</label>
+                  <p className="text-sm text-gray-900">{new Date(selectedItem.pay_date).toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Empleados Procesados</label>
+                  <p className="text-sm text-gray-900">{selectedItem.employee_count}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Total Bruto</label>
+                  <p className="text-sm text-gray-900">RD${Number(selectedItem.total_gross || 0).toLocaleString()}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Total Neto</label>
+                  <p className="text-sm text-gray-900">RD${Number(selectedItem.total_net || 0).toLocaleString()}</p>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <h4 className="text-md font-semibold text-gray-900 mb-2">Detalle por Empleado</h4>
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">Empleado</th>
+                          <th className="px-4 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Bruto</th>
+                          <th className="px-4 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Deducciones</th>
+                          <th className="px-4 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Neto</th>
+                          <th className="px-4 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {payrollEntries.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="px-4 py-3 text-center text-gray-500">
+                              No hay entradas de nómina registradas para este período.
+                            </td>
+                          </tr>
+                        )}
+                        {payrollEntries.map((entry: any) => {
+                          const employeeName = entry.employees
+                            ? `${entry.employees.employee_code || ''} - ${entry.employees.first_name || ''} ${entry.employees.last_name || ''}`.trim()
+                            : entry.employee_id;
+                          return (
+                            <tr key={entry.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-2 whitespace-nowrap text-gray-900">{employeeName}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-right">RD${Number(entry.gross_salary || 0).toLocaleString()}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-right text-red-600">RD${Number(entry.deductions || 0).toLocaleString()}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-right text-green-600">RD${Number(entry.net_salary || 0).toLocaleString()}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-right">
+                                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                  entry.status === 'paid'
+                                    ? 'bg-green-100 text-green-800'
+                                    : entry.status === 'approved'
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : 'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {entry.status === 'paid' ? 'Pagado' : entry.status === 'approved' ? 'Aprobado' : 'Borrador'}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
           ) : (
@@ -1378,7 +1718,9 @@ export default function PayrollPage() {
             { id: 'dashboard', name: 'Dashboard', icon: 'ri-dashboard-line' },
             { id: 'employees', name: 'Empleados', icon: 'ri-user-line' },
             { id: 'departments', name: 'Departamentos', icon: 'ri-building-line' },
-            { id: 'positions', name: 'Posiciones', icon: 'ri-briefcase-line' }
+            { id: 'positions', name: 'Posiciones', icon: 'ri-briefcase-line' },
+            { id: 'payroll', name: 'Períodos de Nómina', icon: 'ri-calendar-line' },
+            { id: 'reports', name: 'Reportes', icon: 'ri-bar-chart-line' }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -1402,6 +1744,8 @@ export default function PayrollPage() {
         {activeTab === 'employees' && renderEmployees()}
         {activeTab === 'departments' && renderDepartments()}
         {activeTab === 'positions' && renderPositions()}
+        {activeTab === 'payroll' && renderPayroll()}
+        {activeTab === 'reports' && renderReports()}
       </div>
 
       {/* Navigation Buttons for Other Modules */}

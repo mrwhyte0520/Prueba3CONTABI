@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { customersService } from '../../../services/database';
 
 interface Customer {
   id: string;
@@ -14,59 +16,30 @@ interface Customer {
 }
 
 export default function CustomersPage() {
+  const { user } = useAuth();
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showCustomerDetails, setShowCustomerDetails] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  // Mock data
-  const customers: Customer[] = [
-    {
-      id: '1',
-      name: 'Empresa ABC S.R.L.',
-      document: '131-12345-6',
-      phone: '809-123-4567',
-      email: 'contacto@empresaabc.com',
-      address: 'Av. 27 de Febrero, Santo Domingo',
-      creditLimit: 500000,
-      currentBalance: 125000,
-      status: 'active'
-    },
-    {
-      id: '2',
-      name: 'Comercial XYZ',
-      document: '131-23456-7',
-      phone: '809-234-5678',
-      email: 'ventas@comercialxyz.com',
-      address: 'Calle Mercedes, Santiago',
-      creditLimit: 300000,
-      currentBalance: 85000,
-      status: 'active'
-    },
-    {
-      id: '3',
-      name: 'Distribuidora DEF',
-      document: '131-34567-8',
-      phone: '809-345-6789',
-      email: 'info@distribuidoradef.com',
-      address: 'Av. Independencia, La Vega',
-      creditLimit: 200000,
-      currentBalance: 45000,
-      status: 'active'
-    },
-    {
-      id: '4',
-      name: 'Servicios GHI',
-      document: '131-45678-9',
-      phone: '809-456-7890',
-      email: 'servicios@ghi.com',
-      address: 'Calle Duarte, San Cristóbal',
-      creditLimit: 150000,
-      currentBalance: 0,
-      status: 'inactive'
+  const loadCustomers = async () => {
+    if (!user?.id) return;
+    setLoading(true);
+    try {
+      const list = await customersService.getAll(user.id);
+      setCustomers(list);
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
+
+  useEffect(() => {
+    loadCustomers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const getCustomerStatusColor = (status: string) => {
     switch (status) {
@@ -207,11 +180,35 @@ export default function CustomersPage() {
     alert(`Estado de cuenta para ${customer.name}:\n\nSaldo actual: RD$ ${customer.currentBalance.toLocaleString()}\nLímite de crédito: RD$ ${customer.creditLimit.toLocaleString()}`);
   };
 
-  const handleSaveCustomer = (e: React.FormEvent) => {
+  const handleSaveCustomer = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert(selectedCustomer ? 'Cliente actualizado exitosamente' : 'Cliente creado exitosamente');
-    setShowCustomerModal(false);
-    setSelectedCustomer(null);
+    if (!user?.id) {
+      alert('Debes iniciar sesión para guardar clientes');
+      return;
+    }
+    const formData = new FormData(e.currentTarget);
+    const payload = {
+      name: String(formData.get('name') || ''),
+      document: String(formData.get('document') || ''),
+      phone: String(formData.get('phone') || ''),
+      email: String(formData.get('email') || ''),
+      address: String(formData.get('address') || ''),
+      creditLimit: Number(formData.get('creditLimit') || 0),
+      status: String(formData.get('status') || 'active') as Customer['status'],
+    };
+    try {
+      if (selectedCustomer) {
+        await customersService.update(selectedCustomer.id, payload);
+      } else {
+        await customersService.create(user.id, payload);
+      }
+      await loadCustomers();
+      alert(selectedCustomer ? 'Cliente actualizado exitosamente' : 'Cliente creado exitosamente');
+      setShowCustomerModal(false);
+      setSelectedCustomer(null);
+    } catch {
+      alert('Error al guardar el cliente');
+    }
   };
 
   return (
@@ -273,6 +270,9 @@ export default function CustomersPage() {
         </div>
 
         {/* Customers Table */}
+        {loading && (
+          <div className="mb-2 text-sm text-gray-500">Cargando clientes...</div>
+        )}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -390,6 +390,7 @@ export default function CustomersPage() {
                     <input
                       type="text"
                       required
+                      name="name"
                       defaultValue={selectedCustomer?.name || ''}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Nombre del cliente"
@@ -403,6 +404,7 @@ export default function CustomersPage() {
                     <input
                       type="text"
                       required
+                      name="document"
                       defaultValue={selectedCustomer?.document || ''}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="000-0000000-0"
@@ -418,6 +420,7 @@ export default function CustomersPage() {
                     <input
                       type="tel"
                       required
+                      name="phone"
                       defaultValue={selectedCustomer?.phone || ''}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="809-000-0000"
@@ -431,6 +434,7 @@ export default function CustomersPage() {
                     <input
                       type="email"
                       required
+                      name="email"
                       defaultValue={selectedCustomer?.email || ''}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="cliente@email.com"
@@ -444,6 +448,7 @@ export default function CustomersPage() {
                   </label>
                   <textarea
                     rows={2}
+                    name="address"
                     defaultValue={selectedCustomer?.address || ''}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Dirección completa del cliente"
@@ -458,6 +463,7 @@ export default function CustomersPage() {
                     <input
                       type="number"
                       step="0.01"
+                      name="creditLimit"
                       defaultValue={selectedCustomer?.creditLimit || ''}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
@@ -469,6 +475,7 @@ export default function CustomersPage() {
                       Estado
                     </label>
                     <select 
+                      name="status"
                       defaultValue={selectedCustomer?.status || 'active'}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >

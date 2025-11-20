@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { useAuth } from '../../../hooks/useAuth';
+import { customersService, invoicesService, customerAdvancesService } from '../../../services/database';
 
 interface Advance {
   id: string;
@@ -21,91 +23,18 @@ interface Advance {
 }
 
 export default function AdvancesPage() {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [showAdvanceDetails, setShowAdvanceDetails] = useState(false);
   const [showApplyModal, setShowApplyModal] = useState(false);
   const [selectedAdvance, setSelectedAdvance] = useState<Advance | null>(null);
-
-  // Mock data
-  const advances: Advance[] = [
-    {
-      id: '1',
-      advanceNumber: 'ANT-001',
-      customerId: '1',
-      customerName: 'Empresa ABC S.R.L.',
-      date: '2024-01-10',
-      amount: 100000,
-      appliedAmount: 75000,
-      balance: 25000,
-      paymentMethod: 'transfer',
-      reference: 'TRF-ANT-001',
-      concept: 'Anticipo para futuras compras',
-      status: 'partial',
-      appliedInvoices: ['FAC-001', 'FAC-002']
-    },
-    {
-      id: '2',
-      advanceNumber: 'ANT-002',
-      customerId: '2',
-      customerName: 'Comercial XYZ',
-      date: '2024-01-15',
-      amount: 150000,
-      appliedAmount: 0,
-      balance: 150000,
-      paymentMethod: 'check',
-      reference: 'CHK-ANT-001',
-      concept: 'Anticipo por servicios futuros',
-      status: 'pending',
-      appliedInvoices: []
-    },
-    {
-      id: '3',
-      advanceNumber: 'ANT-003',
-      customerId: '3',
-      customerName: 'Distribuidora DEF',
-      date: '2024-01-20',
-      amount: 80000,
-      appliedAmount: 80000,
-      balance: 0,
-      paymentMethod: 'cash',
-      reference: 'EFE-ANT-001',
-      concept: 'Anticipo aplicado completamente',
-      status: 'applied',
-      appliedInvoices: ['FAC-003']
-    },
-    {
-      id: '4',
-      advanceNumber: 'ANT-004',
-      customerId: '1',
-      customerName: 'Empresa ABC S.R.L.',
-      date: '2024-01-25',
-      amount: 200000,
-      appliedAmount: 0,
-      balance: 200000,
-      paymentMethod: 'card',
-      reference: 'TDC-ANT-001',
-      concept: 'Anticipo para proyecto especial',
-      status: 'pending',
-      appliedInvoices: []
-    },
-    {
-      id: '5',
-      advanceNumber: 'ANT-005',
-      customerId: '2',
-      customerName: 'Comercial XYZ',
-      date: '2024-01-28',
-      amount: 50000,
-      appliedAmount: 0,
-      balance: 0,
-      paymentMethod: 'transfer',
-      reference: 'TRF-ANT-002',
-      concept: 'Anticipo cancelado',
-      status: 'cancelled',
-      appliedInvoices: []
-    }
-  ];
+  const [advances, setAdvances] = useState<Advance[]>([]);
+  const [loadingAdvances, setLoadingAdvances] = useState(false);
+  const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
+  const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number }>>([]);
+  const [loadingSupport, setLoadingSupport] = useState(false);
 
   const getPaymentMethodName = (method: string) => {
     switch (method) {
@@ -145,6 +74,81 @@ export default function AdvancesPage() {
     return matchesSearch && matchesStatus;
   });
 
+  const loadSupportData = async () => {
+    if (!user?.id) return;
+    setLoadingSupport(true);
+    try {
+      const [custList, invList] = await Promise.all([
+        customersService.getAll(user.id),
+        invoicesService.getAll(user.id),
+      ]);
+      setCustomers(custList.map((c: any) => ({ id: c.id, name: c.name })));
+      setInvoices(
+        (invList as any[]).map((inv) => ({
+          id: String(inv.id),
+          invoiceNumber: inv.invoice_number as string,
+          totalAmount: Number(inv.total_amount) || 0,
+          paidAmount: Number(inv.paid_amount) || 0,
+        }))
+      );
+    } finally {
+      setLoadingSupport(false);
+    }
+  };
+
+  const loadAdvances = async () => {
+    if (!user?.id) return;
+    setLoadingAdvances(true);
+    try {
+      const data = await customerAdvancesService.getAll(user.id);
+      const mapped: Advance[] = (data as any[]).map((a) => {
+        const amount = Number(a.amount) || 0;
+        const appliedAmount = Number(a.applied_amount) || 0;
+        const balance = Number.isFinite(Number(a.balance_amount))
+          ? Number(a.balance_amount)
+          : amount - appliedAmount;
+        const rawStatus = (a.status as string) || 'pending';
+        const status: Advance['status'] = (['pending', 'applied', 'partial', 'cancelled'] as const).includes(
+          rawStatus as any
+        )
+          ? (rawStatus as Advance['status'])
+          : 'pending';
+
+        let finalApplied = appliedAmount;
+        let finalBalance = balance;
+        if (status === 'cancelled') {
+          finalApplied = 0;
+          finalBalance = 0;
+        }
+
+        return {
+          id: String(a.id),
+          advanceNumber: a.advance_number as string,
+          customerId: String(a.customer_id),
+          customerName: (a.customers as any)?.name || 'Cliente',
+          date: a.advance_date as string,
+          amount,
+          appliedAmount: finalApplied,
+          balance: finalBalance,
+          paymentMethod: (a.payment_method as any) || 'cash',
+          reference: (a.reference as string) || '',
+          concept: (a.concept as string) || '',
+          status,
+          appliedInvoices: [],
+        };
+      });
+      setAdvances(mapped);
+    } finally {
+      setLoadingAdvances(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSupportData();
+    loadAdvances();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const exportToPDF = () => {
     const doc = new jsPDF();
     
@@ -156,10 +160,11 @@ export default function AdvancesPage() {
     doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter)}`, 20, 50);
     
     // Estadísticas
-    const totalAmount = filteredAdvances.reduce((sum, advance) => sum + advance.amount, 0);
-    const totalApplied = filteredAdvances.reduce((sum, advance) => sum + advance.appliedAmount, 0);
-    const totalBalance = filteredAdvances.reduce((sum, advance) => sum + advance.balance, 0);
-    const pendingAdvances = filteredAdvances.filter(a => a.status === 'pending').length;
+    const activeAdvances = filteredAdvances.filter(a => a.status !== 'cancelled');
+    const totalAmount = activeAdvances.reduce((sum, advance) => sum + advance.amount, 0);
+    const totalApplied = activeAdvances.reduce((sum, advance) => sum + advance.appliedAmount, 0);
+    const totalBalance = activeAdvances.reduce((sum, advance) => sum + advance.balance, 0);
+    const pendingAdvances = activeAdvances.filter(a => a.status === 'pending').length;
     
     doc.setFontSize(14);
     doc.text('Resumen de Anticipos', 20, 70);
@@ -170,7 +175,7 @@ export default function AdvancesPage() {
       ['Total Aplicado', `RD$ ${totalApplied.toLocaleString()}`],
       ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
       ['Anticipos Pendientes', pendingAdvances.toString()],
-      ['Total de Anticipos', filteredAdvances.length.toString()]
+      ['Total de Anticipos', activeAdvances.length.toString()]
     ];
     
     (doc as any).autoTable({
@@ -185,7 +190,7 @@ export default function AdvancesPage() {
     doc.setFontSize(14);
     doc.text('Detalle de Anticipos', 20, (doc as any).lastAutoTable.finalY + 20);
     
-    const advanceData = filteredAdvances.map(advance => [
+    const advanceData = activeAdvances.map(advance => [
       advance.advanceNumber,
       advance.customerName,
       advance.date,
@@ -208,10 +213,11 @@ export default function AdvancesPage() {
   };
 
   const exportToExcel = () => {
-    const totalAmount = filteredAdvances.reduce((sum, advance) => sum + advance.amount, 0);
-    const totalApplied = filteredAdvances.reduce((sum, advance) => sum + advance.appliedAmount, 0);
-    const totalBalance = filteredAdvances.reduce((sum, advance) => sum + advance.balance, 0);
-    const pendingAdvances = filteredAdvances.filter(a => a.status === 'pending').length;
+    const activeAdvances: Advance[] = filteredAdvances.filter(a => a.status !== 'cancelled');
+    const totalAmount = activeAdvances.reduce((sum, advance) => sum + advance.amount, 0);
+    const totalApplied = activeAdvances.reduce((sum, advance) => sum + advance.appliedAmount, 0);
+    const totalBalance = activeAdvances.reduce((sum, advance) => sum + advance.balance, 0);
+    const pendingAdvances = activeAdvances.filter(a => a.status === 'pending').length;
     
     const csvContent = [
       ['Reporte de Anticipos de Clientes'],
@@ -223,11 +229,11 @@ export default function AdvancesPage() {
       ['Total Aplicado', `RD$ ${totalApplied.toLocaleString()}`],
       ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
       ['Anticipos Pendientes', pendingAdvances.toString()],
-      ['Total de Anticipos', filteredAdvances.length.toString()],
+      ['Total de Anticipos', activeAdvances.length.toString()],
       [''],
       ['DETALLE DE ANTICIPOS'],
       ['Anticipo', 'Cliente', 'Fecha', 'Monto', 'Aplicado', 'Saldo', 'Método Pago', 'Referencia', 'Estado'],
-      ...filteredAdvances.map(advance => [
+      ...activeAdvances.map((advance: Advance) => [
         advance.advanceNumber,
         advance.customerName,
         advance.date,
@@ -262,23 +268,132 @@ export default function AdvancesPage() {
     setShowApplyModal(true);
   };
 
-  const handleCancelAdvance = (advanceId: string) => {
-    if (confirm('¿Está seguro de que desea cancelar este anticipo?')) {
+  const handleCancelAdvance = async (advanceId: string) => {
+    if (!user?.id) {
+      alert('Debes iniciar sesión para cancelar anticipos');
+      return;
+    }
+    if (!confirm('¿Está seguro de que desea cancelar este anticipo?')) return;
+    try {
+      await customerAdvancesService.updateStatus(advanceId, 'cancelled', {
+        appliedAmount: 0,
+        balanceAmount: 0,
+      });
+      await loadAdvances();
       alert('Anticipo cancelado exitosamente');
+    } catch (error: any) {
+      console.error('[Advances] Error al cancelar anticipo', error);
+      alert(`Error al cancelar el anticipo: ${error?.message || 'revisa la consola para más detalles'}`);
     }
   };
 
-  const handleSaveAdvance = (e: React.FormEvent) => {
+  const handleSaveAdvance = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert('Anticipo creado exitosamente');
-    setShowAdvanceModal(false);
+    if (!user?.id) {
+      alert('Debes iniciar sesión para crear anticipos');
+      return;
+    }
+    const formData = new FormData(e.currentTarget);
+    const customerId = String(formData.get('customer_id') || '');
+    const date = String(formData.get('date') || '');
+    const amount = Number(formData.get('amount') || 0);
+    const paymentMethod = String(formData.get('payment_method') || '');
+    const reference = String(formData.get('reference') || '');
+    const concept = String(formData.get('concept') || '');
+
+    if (!customerId || !amount || !paymentMethod) {
+      alert('Cliente, monto y método de pago son obligatorios');
+      return;
+    }
+
+    const advanceNumber = `ANT-${Date.now()}`;
+    const advanceDate = date || new Date().toISOString().slice(0, 10);
+
+    const payload = {
+      customer_id: customerId,
+      advance_number: advanceNumber,
+      advance_date: advanceDate,
+      amount,
+      payment_method: paymentMethod,
+      reference,
+      concept,
+      applied_amount: 0,
+      balance_amount: amount,
+      status: 'pending',
+    };
+
+    try {
+      await customerAdvancesService.create(user.id, payload);
+      await loadAdvances();
+      alert('Anticipo creado exitosamente');
+      setShowAdvanceModal(false);
+    } catch (error: any) {
+      console.error('[Advances] Error al crear anticipo', error);
+      alert(`Error al crear el anticipo: ${error?.message || 'revisa la consola para más detalles'}`);
+    }
   };
 
-  const handleSaveApplication = (e: React.FormEvent) => {
+  const handleSaveApplication = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert('Anticipo aplicado exitosamente');
-    setShowApplyModal(false);
-    setSelectedAdvance(null);
+    if (!user?.id || !selectedAdvance) {
+      alert('Debes iniciar sesión y seleccionar un anticipo válido');
+      return;
+    }
+
+    const formData = new FormData(e.currentTarget);
+    const invoiceId = String(formData.get('invoice_id') || '');
+    const amountToApply = Number(formData.get('amount_to_apply') || 0);
+
+    if (!invoiceId) {
+      alert('Debes seleccionar una factura para aplicar el anticipo');
+      return;
+    }
+
+    if (!amountToApply || amountToApply <= 0) {
+      alert('El monto a aplicar debe ser mayor que 0');
+      return;
+    }
+
+    if (amountToApply > selectedAdvance.balance) {
+      alert('El monto a aplicar no puede ser mayor que el saldo disponible del anticipo');
+      return;
+    }
+
+    const newApplied = selectedAdvance.appliedAmount + amountToApply;
+    const newBalance = selectedAdvance.balance - amountToApply;
+    const newStatus: Advance['status'] = newBalance > 0 ? 'partial' : 'applied';
+
+    const targetInvoice = invoices.find((inv) => inv.id === invoiceId);
+    if (!targetInvoice) {
+      alert('La factura seleccionada no es válida');
+      return;
+    }
+
+    const invoiceBalanceBefore = targetInvoice.totalAmount - targetInvoice.paidAmount;
+    if (amountToApply > invoiceBalanceBefore) {
+      alert('El monto a aplicar no puede ser mayor que el saldo pendiente de la factura');
+      return;
+    }
+
+    const newInvoicePaid = targetInvoice.paidAmount + amountToApply;
+    const invoiceBalanceAfter = targetInvoice.totalAmount - newInvoicePaid;
+    const newInvoiceStatus: 'pending' | 'partial' | 'paid' = invoiceBalanceAfter > 0 ? (newInvoicePaid > 0 ? 'partial' : 'pending') : 'paid';
+
+    try {
+      await invoicesService.updatePayment(invoiceId, newInvoicePaid, newInvoiceStatus);
+
+      await customerAdvancesService.updateStatus(selectedAdvance.id, newStatus, {
+        appliedAmount: newApplied,
+        balanceAmount: newBalance,
+      });
+      await loadAdvances();
+      alert('Anticipo aplicado exitosamente');
+      setShowApplyModal(false);
+      setSelectedAdvance(null);
+    } catch (error: any) {
+      console.error('[Advances] Error al aplicar anticipo', error);
+      alert(`Error al aplicar el anticipo: ${error?.message || 'revisa la consola para más detalles'}`);
+    }
   };
 
   return (
@@ -410,6 +525,9 @@ export default function AdvancesPage() {
 
         {/* Advances Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          {(loadingAdvances || loadingSupport) && (
+            <div className="px-6 pt-3 text-sm text-gray-500">Cargando datos...</div>
+          )}
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -524,12 +642,13 @@ export default function AdvancesPage() {
                     </label>
                     <select 
                       required
+                      name="customer_id"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar cliente</option>
-                      <option value="1">Empresa ABC S.R.L.</option>
-                      <option value="2">Comercial XYZ</option>
-                      <option value="3">Distribuidora DEF</option>
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
                     </select>
                   </div>
                   
@@ -538,8 +657,9 @@ export default function AdvancesPage() {
                       Fecha
                     </label>
                     <input
-                      type="date"
+                      type="text"
                       required
+                      name="date"
                       defaultValue={new Date().toISOString().split('T')[0]}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
@@ -555,6 +675,7 @@ export default function AdvancesPage() {
                       type="number"
                       step="0.01"
                       required
+                      name="amount"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
                     />
@@ -566,6 +687,7 @@ export default function AdvancesPage() {
                     </label>
                     <select 
                       required
+                      name="payment_method"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="cash">Efectivo</option>
@@ -583,6 +705,7 @@ export default function AdvancesPage() {
                   <input
                     type="text"
                     required
+                    name="reference"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Número de referencia del pago"
                   />
@@ -595,6 +718,7 @@ export default function AdvancesPage() {
                   <textarea
                     rows={3}
                     required
+                    name="concept"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Descripción del anticipo recibido..."
                   />
@@ -650,12 +774,15 @@ export default function AdvancesPage() {
                   </label>
                   <select 
                     required
+                    name="invoice_id"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar factura</option>
-                    <option value="FAC-001">FAC-001 - RD$ 50,000</option>
-                    <option value="FAC-002">FAC-002 - RD$ 75,000</option>
-                    <option value="FAC-003">FAC-003 - RD$ 100,000</option>
+                    {invoices.map((inv) => (
+                      <option key={inv.id} value={inv.id}>
+                        {inv.invoiceNumber} - RD$ {inv.totalAmount.toLocaleString()}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 
@@ -666,6 +793,7 @@ export default function AdvancesPage() {
                   <input
                     type="number"
                     step="0.01"
+                    name="amount_to_apply"
                     required
                     max={selectedAdvance.balance}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"

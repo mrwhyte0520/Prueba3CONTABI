@@ -57,6 +57,8 @@ export default function ChartAccountsPage() {
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
   const [newAccount, setNewAccount] = useState({
     code: '',
     name: '',
@@ -89,44 +91,12 @@ export default function ChartAccountsPage() {
 
   const importFormats: ImportFormat[] = [
     {
-      id: 'csv',
-      name: 'CSV Estándar',
-      description: 'Formato CSV compatible con Excel y sistemas contables básicos',
-      fileTypes: ['.csv'],
-      icon: 'ri-file-text-line',
-      color: 'bg-green-100 text-green-800'
-    },
-    {
       id: 'excel',
       name: 'Microsoft Excel',
       description: 'Archivos Excel con formato estructurado (.xlsx, .xls)',
       fileTypes: ['.xlsx', '.xls'],
       icon: 'ri-file-excel-line',
       color: 'bg-green-100 text-green-800'
-    },
-    {
-      id: 'quickbooks',
-      name: 'QuickBooks',
-      description: 'Formato IIF de QuickBooks Desktop y Online',
-      fileTypes: ['.iif', '.csv'],
-      icon: 'ri-file-chart-line',
-      color: 'bg-blue-100 text-blue-800'
-    },
-    {
-      id: 'xml',
-      name: 'XML Estándar',
-      description: 'Formato XML compatible con múltiples sistemas ERP',
-      fileTypes: ['.xml'],
-      icon: 'ri-file-code-line',
-      color: 'bg-yellow-100 text-yellow-800'
-    },
-    {
-      id: 'json',
-      name: 'JSON Universal',
-      description: 'Formato JSON para sistemas modernos y APIs',
-      fileTypes: ['.json'],
-      icon: 'ri-code-s-slash-line',
-      color: 'bg-gray-100 text-gray-800'
     }
   ];
 
@@ -145,6 +115,66 @@ export default function ChartAccountsPage() {
     const matchesType = selectedAccountType === 'all' || account.type === selectedAccountType;
     return matchesSearch && matchesType;
   });
+
+  const allDisplayedIds = filteredAccounts.map(acc => acc.id);
+  const isAllSelected = allDisplayedIds.length > 0 && allDisplayedIds.every(id => selectedIds.includes(id));
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedIds(prev => prev.filter(id => !allDisplayedIds.includes(id)));
+    } else {
+      const merged = Array.from(new Set([...selectedIds, ...allDisplayedIds]));
+      setSelectedIds(merged);
+    }
+  };
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const clearSelection = () => setSelectedIds([]);
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0) return;
+    const confirmMsg = `¿Eliminar ${selectedIds.length} cuenta(s)?\nLas cuentas con saldo o con subcuentas no podrán eliminarse.`;
+    if (!confirm(confirmMsg)) return;
+    let deleted = 0;
+    const failed: Array<{ code: string; reason: string }> = [];
+    try {
+      for (const id of selectedIds) {
+        const acc = accounts.find(a => a.id === id);
+        if (!acc) continue;
+        const hasChildren = accounts.some(a => a.parentId === id);
+        if (hasChildren) {
+          failed.push({ code: acc.code, reason: 'Tiene subcuentas' });
+          continue;
+        }
+        if (acc.balance !== 0) {
+          failed.push({ code: acc.code, reason: 'Tiene saldo distinto de 0' });
+          continue;
+        }
+        try {
+          await chartAccountsService.delete(id);
+          deleted++;
+        } catch (e) {
+          failed.push({ code: acc.code, reason: 'Error al eliminar' });
+        }
+      }
+      await loadAccounts();
+      clearSelection();
+      const lines = [
+        `Eliminadas: ${deleted}`,
+        `Fallidas: ${failed.length}`
+      ];
+      if (failed.length > 0) {
+        const sample = failed.slice(0, 5).map(f => `- ${f.code}: ${f.reason}`).join('\n');
+        lines.push('Detalles (muestra):');
+        lines.push(sample);
+        if (failed.length > 5) lines.push(`... y ${failed.length - 5} más`);
+      }
+      alert(lines.join('\n'));
+    } catch (err) {
+      console.error('Bulk delete error:', err);
+      alert('Error al eliminar las cuentas seleccionadas.');
+    }
+  };
 
   const getAccountTypeColor = (type: string) => {
     switch (type) {
@@ -173,17 +203,30 @@ export default function ChartAccountsPage() {
   };
 
   const getParentAccounts = (type: string) => {
-    return accounts.filter(account => 
-      account.type === type && 
-      account.level < 4 && 
-      !account.allowPosting
-    );
+    // Permitir cualquier cuenta del mismo tipo como posible padre, sin restringir nivel ni allowPosting
+    return accounts.filter(account => account.type === type);
   };
 
   const calculateLevel = (parentId: string): number => {
     if (!parentId) return 1;
     const parent = accounts.find(acc => acc.id === parentId);
     return parent ? parent.level + 1 : 1;
+  };
+
+  const generateNextCode = () => {
+    if (accounts.length === 0) return '1000';
+
+    // Tomar todos los códigos numéricos, ordenar y sumar 1 al mayor
+    const numericCodes = accounts
+      .map(acc => acc.code.trim())
+      .filter(code => /^\d+$/.test(code))
+      .map(code => parseInt(code, 10))
+      .sort((a, b) => a - b);
+
+    if (numericCodes.length === 0) return '1000';
+
+    const last = numericCodes[numericCodes.length - 1];
+    return String(last + 1);
   };
 
   const toggleExpanded = (accountId: string) => {
@@ -223,71 +266,84 @@ export default function ChartAccountsPage() {
     }
   };
 
-  const parseCSVContent = (content: string): ImportData[] => {
-    const lines = content.split('\n');
-    const importedData: ImportData[] = [];
+  // const parseCSVContent = (content: string): ImportData[] => {
+  //   const lines = content.split('\n');
+  //   const importedData: ImportData[] = [];
 
-    const cleanText = (value: string) =>
-      value.replace(/[\u0000-\u001F\u007F]/g, '').trim();
+  //   const cleanText = (value: string) =>
+  //     value.replace(/[\u0000-\u001F\u007F]/g, '').trim();
 
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
+  //   for (let i = 1; i < lines.length; i++) {
+  //     const line = lines[i].trim();
+  //     if (!line) continue;
 
-      const columns = line.split(',').map(col => cleanText(col.replace(/"/g, '')));
-      if (columns.length >= 3) {
-        const rawType = columns[2];
-        const mappedType = mapSpanishTypeToInternal(rawType);
+  //     // Detect separator: comma or semicolon
+  //     const sep = (line.match(/;/g)?.length || 0) > (line.match(/,/g)?.length || 0) ? ';' : ',';
+  //     const columns = line.split(sep).map(col => cleanText(col.replace(/"/g, '')));
+  //     if (columns.length >= 3) {
+  //       const rawType = columns[2];
+  //       const mappedType = mapSpanishTypeToInternal(rawType);
 
-        // Reconstruir balance en caso de tener separadores de miles con coma (ej: 35,000)
-        let balance = 0;
-        if (columns.length > 5) {
-          const balanceParts = columns.slice(5, 7); // intenta tomar 2 partes para montos tipo 35,000
-          const balanceString = balanceParts.join('').replace(/[^0-9.-]/g, '');
-          balance = balanceString ? parseFloat(balanceString) : 0;
-        } else if (columns[5]) {
-          const balanceString = columns[5].replace(/[^0-9.-]/g, '');
-          balance = balanceString ? parseFloat(balanceString) : 0;
-        }
+  //       // Reconstruir balance en caso de tener separadores de miles con coma (ej: 35,000)
+  //       let balance = 0;
+  //       if (columns.length >= 6) {
+  //         const rawBalanceJoined = columns.slice(5).join('');
+  //         // Normalizar separadores: quitar miles y usar punto como decimal
+  //         // 1) quitar espacios
+  //         let s = rawBalanceJoined.replace(/\s/g, '');
+  //         // 2) si contiene ambos '.' y ',', asumir '.' miles y ',' decimal => quitar '.' y convertir ',' a '.'
+  //         if (s.includes('.') && s.includes(',')) {
+  //           s = s.replace(/\./g, '').replace(/,/g, '.');
+  //         } else if (s.includes(',')) {
+  //           // Solo comas: considerar coma decimal
+  //           s = s.replace(/,/g, '.');
+  //         } else {
+  //           // Solo puntos o dígitos: eliminar separadores no numéricos salvo '.' y '-'
+  //           s = s.replace(/[^0-9.\-]/g, '');
+  //         }
+  //         // Finalmente, mantener solo dígitos, punto y signo
+  //         s = s.replace(/[^0-9.\-]/g, '');
+  //         balance = s ? parseFloat(s) : 0;
+  //       }
 
-        importedData.push({
-          code: columns[0],
-          name: columns[1],
-          type: mappedType.toLowerCase(),
-          parentCode: columns[3] || undefined,
-          description: columns[4] || undefined,
-          balance
-        });
-      }
-    }
+  //       importedData.push({
+  //         code: columns[0],
+  //         name: columns[1],
+  //         type: mappedType.toLowerCase(),
+  //         parentCode: columns[3] || undefined,
+  //         description: columns[4] || undefined,
+  //         balance
+  //       });
+  //     }
+  //   }
 
-    return importedData;
-  };
+  //   return importedData;
+  // };
 
-  const parseQuickBooksIIF = (content: string): ImportData[] => {
-    const lines = content.split('\n');
-    const importedData: ImportData[] = [];
+  // const parseQuickBooksIIF = (content: string): ImportData[] => {
+  //   const lines = content.split('\n');
+  //   const importedData: ImportData[] = [];
 
-    for (const line of lines) {
-      if (line.startsWith('ACCNT')) {
-        const parts = line.split('\t');
-        if (parts.length >= 4) {
-          const accountType = parts[2]?.toLowerCase();
-          const mappedType = mapQuickBooksType(accountType);
+  //   for (const line of lines) {
+  //     if (line.startsWith('ACCNT')) {
+  //       const parts = line.split('\t');
+  //       if (parts.length >= 4) {
+  //         const accountType = parts[2]?.toLowerCase();
+  //         const mappedType = mapQuickBooksType(accountType);
           
-          importedData.push({
-            code: parts[1] || '',
-            name: parts[1] || '',
-            type: mappedType,
-            description: parts[3] || '',
-            balance: parts[4] ? parseFloat(parts[4]) : 0
-          });
-        }
-      }
-    }
+  //         importedData.push({
+  //           code: parts[1] || '',
+  //           name: parts[1] || '',
+  //           type: mappedType,
+  //           description: parts[3] || '',
+  //           balance: parts[4] ? parseFloat(parts[4]) : 0
+  //         });
+  //       }
+  //     }
+  //   }
 
-    return importedData;
-  };
+  //   return importedData;
+  // };
 
   const parseExcelData = async (file: File): Promise<ImportData[]> => {
     try {
@@ -298,27 +354,35 @@ export default function ChartAccountsPage() {
       const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
       const importedData: ImportData[] = [];
-      // Asumimos primera fila como encabezados
-      for (let i = 1; i < rows.length; i++) {
+
+      if (!rows || rows.length === 0) return importedData;
+
+      // Buscar la fila de encabezados donde la primera columna sea "Codigo" o "Código"
+      let headerRowIndex = rows.findIndex((row) => {
+        const first = String((row && row[0]) ?? '').trim().toLowerCase();
+        return first === 'codigo' || first === 'código';
+      });
+
+      if (headerRowIndex === -1) {
+        headerRowIndex = 0; // fallback
+      }
+
+      // Datos a partir de la fila siguiente al encabezado
+      for (let i = headerRowIndex + 1; i < rows.length; i++) {
         const row = rows[i] || [];
-        // Esperado: [code, name, type, parentCode, description, balance]
+        // Formato esperado:
+        // [Codigo, Nombre, Grupo, Tipo, Nivel, Cuenta Madre, Descripcion]
         const code = String(row[0] ?? '').trim();
         const name = String(row[1] ?? '').trim();
-        const rawType = String(row[2] ?? '').trim();
-        const parentCode = String(row[3] ?? '').trim();
-        const description = String(row[4] ?? '').trim();
-        const balanceVal = row[5];
+        const group = String(row[2] ?? '').trim(); // Activo, Pasivo, etc.
+        // const detailType = String(row[3] ?? '').trim(); // General / Detalle (por ahora no se usa)
+        // const levelRaw = row[4]; // Nivel (podemos recalcular por la jerarquía)
+        const parentCode = String(row[5] ?? '').trim();
+        const description = String(row[6] ?? '').trim();
 
         if (!code || !name) continue;
 
-        const mappedType = mapSpanishTypeToInternal(rawType).toLowerCase();
-        let balance = 0;
-        if (typeof balanceVal === 'number') {
-          balance = balanceVal;
-        } else if (typeof balanceVal === 'string') {
-          const cleaned = balanceVal.replace(/[^0-9.-]/g, '');
-          balance = cleaned ? parseFloat(cleaned) : 0;
-        }
+        const mappedType = mapSpanishTypeToInternal(group).toLowerCase();
 
         importedData.push({
           code,
@@ -326,7 +390,6 @@ export default function ChartAccountsPage() {
           type: mappedType,
           parentCode: parentCode || undefined,
           description: description || undefined,
-          balance,
         });
       }
 
@@ -337,50 +400,50 @@ export default function ChartAccountsPage() {
     }
   };
 
-  const parseXMLContent = (content: string): ImportData[] => {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(content, 'text/xml');
-    const accounts = xmlDoc.getElementsByTagName('account');
-    const importedData: ImportData[] = [];
+  // const parseXMLContent = (content: string): ImportData[] => {
+  //   const parser = new DOMParser();
+  //   const xmlDoc = parser.parseFromString(content, 'text/xml');
+  //   const accounts = xmlDoc.getElementsByTagName('account');
+  //   const importedData: ImportData[] = [];
 
-    for (let i = 0; i < accounts.length; i++) {
-      const account = accounts[i];
-      const code = account.getAttribute('code') || '';
-      const name = account.getAttribute('name') || account.textContent || '';
-      const type = account.getAttribute('type')?.toLowerCase() || 'asset';
-      const parentCode = account.getAttribute('parent') || undefined;
-      const description = account.getAttribute('description') || undefined;
+  //   for (let i = 0; i < accounts.length; i++) {
+  //     const account = accounts[i];
+  //     const code = account.getAttribute('code') || '';
+  //     const name = account.getAttribute('name') || account.textContent || '';
+  //     const type = account.getAttribute('type')?.toLowerCase() || 'asset';
+  //     const parentCode = account.getAttribute('parent') || undefined;
+  //     const description = account.getAttribute('description') || undefined;
 
-      importedData.push({
-        code,
-        name,
-        type,
-        parentCode,
-        description
-      });
-    }
+  //     importedData.push({
+  //       code,
+  //       name,
+  //       type,
+  //       parentCode,
+  //       description
+  //     });
+  //   }
 
-    return importedData;
-  };
+  //   return importedData;
+  // };
 
-  const parseJSONContent = (content: string): ImportData[] => {
-    try {
-      const data = JSON.parse(content);
-      if (Array.isArray(data)) {
-        return data.map(item => ({
-          code: item.code || item.accountCode || '',
-          name: item.name || item.accountName || '',
-          type: (item.type || item.accountType || 'asset').toLowerCase(),
-          parentCode: item.parentCode || item.parent || undefined,
-          description: item.description || undefined,
-          balance: item.balance || 0
-        }));
-      }
-    } catch (error) {
-      console.error('Error parsing JSON:', error);
-    }
-    return [];
-  };
+  // const parseJSONContent = (content: string): ImportData[] => {
+  //   try {
+  //     const data = JSON.parse(content);
+  //     if (Array.isArray(data)) {
+  //       return data.map(item => ({
+  //         code: item.code || item.accountCode || '',
+  //         name: item.name || item.accountName || '',
+  //         type: (item.type || item.accountType || 'asset').toLowerCase(),
+  //         parentCode: item.parentCode || item.parent || undefined,
+  //         description: item.description || undefined,
+  //         balance: item.balance || 0
+  //       }));
+  //     }
+  //   } catch (error) {
+  //     console.error('Error parsing JSON:', error);
+  //   }
+  //   return [];
+  // };
 
   const mapQuickBooksType = (qbType: string): string => {
     const typeMap: { [key: string]: string } = {
@@ -410,57 +473,35 @@ export default function ChartAccountsPage() {
 
     try {
       let importedData: ImportData[] = [];
-      const extension = file.name.toLowerCase().split('.').pop();
-
       setImportProgress(25);
-
-      switch (selectedFormat.id) {
-        case 'csv': {
-          const content = await file.text();
-          importedData = parseCSVContent(content);
-          break;
-        }
-        case 'excel': {
-          importedData = await parseExcelData(file);
-          break;
-        }
-        case 'quickbooks': {
-          if (extension === 'iif') {
-            const content = await file.text();
-            importedData = parseQuickBooksIIF(content);
-          } else {
-            const content = await file.text();
-            importedData = parseCSVContent(content);
-          }
-          break;
-        }
-        case 'xml': {
-          const content = await file.text();
-          importedData = parseXMLContent(content);
-          break;
-        }
-        case 'json': {
-          const content = await file.text();
-          importedData = parseJSONContent(content);
-          break;
-        }
-        default: {
-          const content = await file.text();
-          importedData = parseCSVContent(content);
-          break;
-        }
-      }
+      importedData = await parseExcelData(file);
 
       setImportProgress(75);
 
-      await processImportedData(importedData);
+      const result = await processImportedData(importedData);
 
       setImportProgress(100);
       setTimeout(() => {
         setIsImporting(false);
         setImportProgress(0);
         setShowImportModal(false);
-        alert(`Se importaron ${importedData.length} cuentas exitosamente desde ${selectedFormat.name}.`);
+        const { created, updated, skippedDuplicates, failed } = result as any;
+        const messageLines = [
+          `Creado: ${created}`,
+          `Actualizado: ${updated}`,
+          `Duplicados omitidos: ${skippedDuplicates}`,
+          `Errores: ${failed.length}`
+        ];
+        if (failed.length > 0) {
+          const sample = failed
+            .slice(0, 5)
+            .map((f: { code: string; errorMessage: string }) => `- Código ${f.code}: ${f.errorMessage || 'Error'}`)
+            .join('\n');
+          messageLines.push('Detalles (muestra):');
+          messageLines.push(sample);
+          if (failed.length > 5) messageLines.push(`... y ${failed.length - 5} más`);
+        }
+        alert(`Importación finalizada (${selectedFormat.name})\n\n${messageLines.join('\n')}`);
       }, 400);
     } catch (error) {
       setIsImporting(false);
@@ -470,18 +511,42 @@ export default function ChartAccountsPage() {
     }
   };
 
-  const processImportedData = async (importedData: ImportData[]) => {
-    if (!user) return;
+  const processImportedData = async (
+    importedData: ImportData[]
+  ): Promise<{ created: number; updated: number; skippedDuplicates: number; failed: { code: string; errorMessage: string }[] }> => {
+    if (!user) return { created: 0, updated: 0, skippedDuplicates: 0, failed: [] };
 
     const codeToIdMap: { [key: string]: string } = {};
     // Traer cuentas existentes para evitar duplicados por (user_id, code)
     const existing = await chartAccountsService.getAll(user.id);
     const existingCodes = new Set(existing.map(acc => acc.code));
+    const existingByCode: Record<string, typeof existing[number]> = {};
+    existing.forEach(acc => { existingByCode[acc.code] = acc; });
+
+    let created = 0;
+    let updated = 0;
+    let skippedDuplicates = 0;
+    const failed: Array<{ code: string; errorMessage: string }> = [];
 
     for (const data of importedData) {
       if (!data.code || !data.name) continue;
       if (existingCodes.has(data.code)) {
-        // Saltar cuentas que ya existen para este usuario
+        // Actualizar saldo y descripción de la cuenta existente
+        try {
+          const existingAcc = existingByCode[data.code];
+          if (existingAcc) {
+            await chartAccountsService.update(existingAcc.id, {
+              balance: data.balance || 0,
+              description: data.description ?? existingAcc.description
+            });
+            updated++;
+          } else {
+            skippedDuplicates++;
+          }
+        } catch (err) {
+          console.error('Error updating existing account:', data.code, err);
+          failed.push({ code: data.code, errorMessage: (err as any)?.message || 'Error al actualizar' });
+        }
         continue;
       }
 
@@ -503,14 +568,48 @@ export default function ChartAccountsPage() {
           parent_id: null
         };
 
-        const created = await chartAccountsService.create(user.id, account);
-        codeToIdMap[data.code] = created.id;
+        const createdAcc = await chartAccountsService.create(user.id, account);
+        codeToIdMap[data.code] = createdAcc.id;
+        existingCodes.add(data.code);
+        created++;
       } catch (error) {
         console.error('Error importing account:', data.code, error);
+        failed.push({ code: data.code, errorMessage: (error as any)?.message || 'Error al crear' });
       }
+    }
+    // Segunda pasada: asignar parent_id y nivel usando parentCode
+    try {
+      const refreshed = await chartAccountsService.getAll(user.id);
+      const refreshedByCode: Record<string, typeof refreshed[number]> = {};
+      refreshed.forEach(acc => { refreshedByCode[acc.code] = acc; });
+
+      for (const data of importedData) {
+        if (!data.code || !data.parentCode) continue;
+        const child = refreshedByCode[data.code];
+        const parent = refreshedByCode[data.parentCode];
+        if (!child || !parent) continue;
+
+        const desiredLevel = (parent.level || 1) + 1;
+
+        // Solo actualizar si cambian parent o nivel
+        if (child.parentId !== parent.id || child.level !== desiredLevel) {
+          try {
+            await chartAccountsService.update(child.id, {
+              parent_id: parent.id,
+              level: desiredLevel,
+            });
+          } catch (err) {
+            console.error('Error updating parent/level for', data.code, err);
+            failed.push({ code: data.code, errorMessage: (err as any)?.message || 'Error al asignar cuenta madre' });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error refreshing accounts after import:', err);
     }
 
     await loadAccounts();
+    return { created, updated, skippedDuplicates, failed };
   };
 
   const downloadTemplate = (formatId: string) => {
@@ -598,9 +697,17 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
       alert('Por favor complete código y nombre.');
       return;
     }
+
+    // Validar que no exista otra cuenta con el mismo código
+    const trimmedCode = newAccount.code.trim();
+    const exists = accounts.some(acc => acc.code === trimmedCode);
+    if (exists) {
+      alert(`Ya existe una cuenta con el código ${trimmedCode}. Use un código único.`);
+      return;
+    }
     try {
       const account = {
-        code: newAccount.code,
+        code: trimmedCode,
         name: newAccount.name,
         type: newAccount.type,
         parent_id: newAccount.parentId || null,
@@ -637,9 +744,17 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
       return;
     }
 
+    // Validar que no exista otra cuenta con el mismo código
+    const trimmedCode = editingAccount.code.trim();
+    const exists = accounts.some(acc => acc.code === trimmedCode && acc.id !== editingAccount.id);
+    if (exists) {
+      alert(`Ya existe otra cuenta con el código ${trimmedCode}. Use un código único.`);
+      return;
+    }
+
     try {
       const account = {
-        code: editingAccount.code,
+        code: trimmedCode,
         name: editingAccount.name,
         description: editingAccount.description,
         allow_posting: editingAccount.allowPosting,
@@ -689,48 +804,70 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
 
   const downloadExcel = () => {
     try {
-      // Construir datos en formato de hoja
-      const header = ['Código', 'Nombre', 'Tipo', 'Nivel', 'Saldo', 'Estado', 'Descripción'];
-      const rows = filteredAccounts.map(acc => ([
-        acc.code,
-        acc.name,
-        getAccountTypeName(acc.type),
-        acc.level,
-        Math.abs(acc.balance), // número
-        acc.isActive ? 'Activa' : 'Inactiva',
-        acc.description || ''
-      ]));
-      const aoa = [header, ...rows];
+      // Construir datos en formato similar al ejemplo:
+      // Codigo | Nombre | Grupo | Tipo | Nivel | Cuenta Madre | Descripcion
+
+      // Mapa para obtener código padre rápidamente
+      const idToCode: Record<string, string> = {};
+      accounts.forEach((acc) => {
+        idToCode[acc.id] = acc.code;
+      });
+
+      const header = ['Codigo', 'Nombre', 'Grupo', 'Tipo', 'Nivel', 'Cuenta Madre', 'Descripcion'];
+      const rows = filteredAccounts.map(acc => {
+        const parentCode = acc.parentId ? idToCode[acc.parentId] || '' : '';
+        const group = getAccountTypeName(acc.type); // Activo, Pasivo, etc.
+        const tipo = acc.allowPosting ? 'Detalle' : 'General';
+
+        return [
+          acc.code,
+          acc.name,
+          group,
+          tipo,
+          acc.level,
+          parentCode,
+          acc.description || '',
+        ];
+      });
+
+      // Fila de título + fila en blanco + encabezados + datos
+      const aoa = [
+        ['Catálogo de Cuentas'],
+        [],
+        header,
+        ...rows,
+      ];
+
       const ws = XLSX.utils.aoa_to_sheet(aoa);
 
       // Anchos de columnas para legibilidad en Excel
       ws['!cols'] = [
-        { wch: 12 }, // Código
-        { wch: 30 }, // Nombre
-        { wch: 16 }, // Tipo
+        { wch: 12 }, // Codigo
+        { wch: 40 }, // Nombre
+        { wch: 12 }, // Grupo
+        { wch: 12 }, // Tipo (General/Detalle)
         { wch: 8 },  // Nivel
-        { wch: 14 }, // Saldo
-        { wch: 12 }, // Estado
-        { wch: 40 }  // Descripción
+        { wch: 14 }, // Cuenta Madre
+        { wch: 40 }, // Descripcion
       ];
 
-      // Formato numérico para la columna Saldo (E = 5ta columna indexada desde 1)
-      const startRow = 2; // datos desde la fila 2
-      const endRow = rows.length + 1;
-      for (let r = startRow; r <= endRow; r++) {
-        const cellRef = XLSX.utils.encode_cell({ r: r - 1, c: 4 }); // 0-based indices; c:4 es 5ta col
-        const cell = ws[cellRef];
-        if (cell) {
-          cell.t = 'n';
-          cell.z = '#,##0.00';
-        }
+      // Dar formato al título en A1 (negrita y subrayado) y combinar columnas A1:G1
+      const titleCellRef = 'A1';
+      if (!ws[titleCellRef]) {
+        ws[titleCellRef] = { t: 's', v: 'Catálogo de Cuentas' } as any;
       }
+      (ws[titleCellRef] as any).s = {
+        font: { bold: true, underline: true, sz: 14 },
+        alignment: { horizontal: 'center' },
+      };
+      (ws as any)['!merges'] = (ws as any)['!merges'] || [];
+      (ws as any)['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } });
 
-      // Congelar primera fila (encabezados)
-      (ws as any)['!freeze'] = { rows: 1, columns: 0 };
+      // Congelar fila de encabezados de columnas (tercera fila)
+      (ws as any)['!freeze'] = { rows: 3, columns: 0 };
 
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Catálogo');
+      XLSX.utils.book_append_sheet(wb, ws, 'Catalogo');
       const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const link = document.createElement('a');
@@ -764,7 +901,14 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                 <i className={`ri-arrow-${isExpanded ? 'down' : 'right'}-s-line`}></i>
               </button>
             )}
-            <div className="flex-1 grid grid-cols-7 gap-4 items-center">
+            <div className="flex-1 grid grid-cols-8 gap-4 items-center">
+              <div>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(account.id)}
+                  onChange={() => toggleSelectOne(account.id)}
+                />
+              </div>
               <div className="font-medium text-gray-900">{account.code}</div>
               <div className="text-gray-900">{account.name}</div>
               <div>
@@ -827,12 +971,12 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
   return (
     <DashboardLayout>
       <div className="p-6">
-        <div className="flex justify-between items-center mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Catálogo de Cuentas</h1>
-            <p className="text-gray-600 mt-1">Gestión completa del plan de cuentas contables</p>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+          <div className="flex-1">
+            <p className="text-sm text-gray-600 mb-1">Gestión completa del plan de cuentas contables</p>
+            <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Catálogo de Cuentas</h1>
           </div>
-          <div className="flex space-x-3">
+          <div className="flex flex-wrap gap-3 justify-start md:justify-end">
             <button
               onClick={downloadExcel}
               className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
@@ -853,6 +997,14 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
             >
               <i className="ri-add-line mr-2"></i>
               Nueva Cuenta
+            </button>
+            <button
+              onClick={handleDeleteSelected}
+              disabled={selectedIds.length === 0}
+              className={`px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${selectedIds.length === 0 ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}
+            >
+              <i className="ri-delete-bin-line mr-2"></i>
+              Eliminar seleccionadas
             </button>
           </div>
         </div>
@@ -889,7 +1041,14 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
         {/* Chart of Accounts */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-            <div className="grid grid-cols-7 gap-4 text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <div className="grid grid-cols-8 gap-4 text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <div>
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  onChange={toggleSelectAll}
+                />
+              </div>
               <div>Código</div>
               <div>Nombre de la Cuenta</div>
               <div>Tipo</div>
@@ -1016,18 +1175,30 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
         {/* Add Account Modal */}
         {showAddModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-semibold mb-4">Agregar Nueva Cuenta</h3>
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Código</label>
-                  <input
-                    type="text"
-                    value={newAccount.code}
-                    onChange={(e) => setNewAccount({...newAccount, code: e.target.value})}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Ej: 1114"
-                  />
+                  <div className="flex space-x-2">
+                    <input
+                      type="text"
+                      value={newAccount.code}
+                      onChange={(e) => setNewAccount({...newAccount, code: e.target.value})}
+                      className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Ej: 1114"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextCode = generateNextCode();
+                        setNewAccount(prev => ({ ...prev, code: nextCode }));
+                      }}
+                      className="px-3 py-2 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 whitespace-nowrap"
+                    >
+                      Generar
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
@@ -1112,7 +1283,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
         {/* Edit Account Modal */}
         {showEditModal && editingAccount && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-semibold mb-4">Editar Cuenta</h3>
               <div className="space-y-4">
                 <div>

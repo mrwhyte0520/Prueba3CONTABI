@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { assetTypesService } from '../../../services/database';
 
 interface AssetType {
   id: string;
@@ -18,90 +20,150 @@ interface AssetType {
 
 export default function AssetTypesPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [editingType, setEditingType] = useState<AssetType | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  const [assetTypes] = useState<AssetType[]>([
-    {
-      id: '1',
-      name: 'Edificios y Construcciones',
-      description: 'Inmuebles, edificios, construcciones y mejoras',
-      depreciationRate: 2,
-      usefulLife: 50,
-      depreciationMethod: 'Línea Recta',
-      account: '1210 - Edificios',
-      depreciationAccount: '5120 - Depreciación Edificios',
-      accumulatedDepreciationAccount: '1211 - Depreciación Acumulada Edificios',
-      isActive: true,
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '2',
-      name: 'Maquinaria y Equipo',
-      description: 'Maquinaria industrial, equipos de producción',
-      depreciationRate: 10,
-      usefulLife: 10,
-      depreciationMethod: 'Línea Recta',
-      account: '1220 - Maquinaria y Equipo',
-      depreciationAccount: '5121 - Depreciación Maquinaria',
-      accumulatedDepreciationAccount: '1221 - Depreciación Acumulada Maquinaria',
-      isActive: true,
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '3',
-      name: 'Vehículos',
-      description: 'Automóviles, camiones, motocicletas',
-      depreciationRate: 20,
-      usefulLife: 5,
-      depreciationMethod: 'Línea Recta',
-      account: '1230 - Vehículos',
-      depreciationAccount: '5122 - Depreciación Vehículos',
-      accumulatedDepreciationAccount: '1231 - Depreciación Acumulada Vehículos',
-      isActive: true,
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '4',
-      name: 'Mobiliario y Equipo de Oficina',
-      description: 'Muebles, escritorios, sillas, archivadores',
-      depreciationRate: 10,
-      usefulLife: 10,
-      depreciationMethod: 'Línea Recta',
-      account: '1240 - Mobiliario y Equipo de Oficina',
-      depreciationAccount: '5123 - Depreciación Mobiliario',
-      accumulatedDepreciationAccount: '1241 - Depreciación Acumulada Mobiliario',
-      isActive: true,
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '5',
-      name: 'Equipo de Computación',
-      description: 'Computadoras, servidores, equipos de red',
-      depreciationRate: 25,
-      usefulLife: 4,
-      depreciationMethod: 'Línea Recta',
-      account: '1250 - Equipo de Computación',
-      depreciationAccount: '5124 - Depreciación Equipo Computación',
-      accumulatedDepreciationAccount: '1251 - Depreciación Acumulada Equipo Computación',
-      isActive: true,
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '6',
-      name: 'Herramientas y Equipos Menores',
-      description: 'Herramientas, equipos menores de trabajo',
-      depreciationRate: 33.33,
-      usefulLife: 3,
-      depreciationMethod: 'Línea Recta',
-      account: '1260 - Herramientas',
-      depreciationAccount: '5125 - Depreciación Herramientas',
-      accumulatedDepreciationAccount: '1261 - Depreciación Acumulada Herramientas',
-      isActive: false,
-      createdAt: '2024-01-15'
+  const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
+
+  useEffect(() => {
+    const loadTypes = async () => {
+      if (!user) return;
+      try {
+        const data = await assetTypesService.getAll(user.id);
+        const mapped: AssetType[] = (data || []).map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          description: t.description || '',
+          depreciationRate: Number(t.depreciation_rate) || 0,
+          usefulLife: t.useful_life || 0,
+          depreciationMethod: t.depreciation_method || '',
+          account: t.account || '',
+          depreciationAccount: t.depreciation_account || '',
+          accumulatedDepreciationAccount: t.accumulated_depreciation_account || '',
+          isActive: !!t.is_active,
+          createdAt: t.created_at || new Date().toISOString(),
+        }));
+        setAssetTypes(mapped);
+      } catch (error) {
+        console.error('Error loading asset types:', error);
+      }
+    };
+
+    loadTypes();
+  }, [user]);
+
+  const handleAddType = () => {
+    setEditingType(null);
+    setShowModal(true);
+  };
+
+  const handleEditType = (type: AssetType) => {
+    setEditingType(type);
+    setShowModal(true);
+  };
+
+  const handleDeleteType = async (typeId: string) => {
+    if (!user) return;
+    if (!confirm('¿Está seguro de que desea eliminar este tipo de activo?')) return;
+    try {
+      await assetTypesService.delete(typeId);
+      setAssetTypes(prev => prev.filter(type => type.id !== typeId));
+    } catch (error) {
+      console.error('Error deleting asset type:', error);
+      alert('Error al eliminar el tipo de activo');
     }
-  ]);
+  };
+
+  const handleToggleStatus = async (typeId: string) => {
+    if (!user) return;
+    const type = assetTypes.find(t => t.id === typeId);
+    if (!type) return;
+    try {
+      const payload: any = {
+        name: type.name,
+        description: type.description,
+        depreciation_rate: type.depreciationRate,
+        useful_life: type.usefulLife,
+        depreciation_method: type.depreciationMethod,
+        account: type.account,
+        depreciation_account: type.depreciationAccount,
+        accumulated_depreciation_account: type.accumulatedDepreciationAccount,
+        is_active: !type.isActive,
+      };
+      const updated = await assetTypesService.update(typeId, payload);
+      setAssetTypes(prev => prev.map(t => t.id === typeId ? {
+        ...t,
+        isActive: !!updated.is_active,
+      } : t));
+    } catch (error) {
+      console.error('Error toggling asset type status:', error);
+      alert('Error al cambiar el estado del tipo de activo');
+    }
+  };
+
+  const handleSaveType = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user) return;
+
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const payload: any = {
+      name: String(formData.get('name') || '').trim(),
+      description: String(formData.get('description') || '').trim() || null,
+      depreciation_rate: Number(formData.get('depreciationRate') || 0) || 0,
+      useful_life: Number(formData.get('usefulLife') || 0) || 0,
+      depreciation_method: String(formData.get('depreciationMethod') || '').trim(),
+      account: String(formData.get('account') || '').trim(),
+      depreciation_account: String(formData.get('depreciationAccount') || '').trim(),
+      accumulated_depreciation_account: String(formData.get('accumulatedDepreciationAccount') || '').trim(),
+      is_active: editingType ? editingType.isActive : true,
+    };
+
+    try {
+      if (editingType) {
+        const updated = await assetTypesService.update(editingType.id, payload);
+        const mapped: AssetType = {
+          id: updated.id,
+          name: updated.name,
+          description: updated.description || '',
+          depreciationRate: Number(updated.depreciation_rate) || 0,
+          usefulLife: updated.useful_life || 0,
+          depreciationMethod: updated.depreciation_method || '',
+          account: updated.account || '',
+          depreciationAccount: updated.depreciation_account || '',
+          accumulatedDepreciationAccount: updated.accumulated_depreciation_account || '',
+          isActive: !!updated.is_active,
+          createdAt: updated.created_at || new Date().toISOString(),
+        };
+        setAssetTypes(prev => prev.map(type => type.id === editingType.id ? mapped : type));
+      } else {
+        const created = await assetTypesService.create(user.id, payload);
+        const mapped: AssetType = {
+          id: created.id,
+          name: created.name,
+          description: created.description || '',
+          depreciationRate: Number(created.depreciation_rate) || 0,
+          usefulLife: created.useful_life || 0,
+          depreciationMethod: created.depreciation_method || '',
+          account: created.account || '',
+          depreciationAccount: created.depreciation_account || '',
+          accumulatedDepreciationAccount: created.accumulated_depreciation_account || '',
+          isActive: !!created.is_active,
+          createdAt: created.created_at || new Date().toISOString(),
+        };
+        setAssetTypes(prev => [mapped, ...prev]);
+      }
+
+      setShowModal(false);
+      setEditingType(null);
+      form.reset();
+    } catch (error) {
+      console.error('Error saving asset type:', error);
+      alert('Error al guardar el tipo de activo');
+    }
+  };
 
   const depreciationMethods = [
     'Línea Recta',
@@ -114,32 +176,6 @@ export default function AssetTypesPage() {
     type.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     type.description.toLowerCase().includes(searchTerm.toLowerCase())
   );
-
-  const handleAddType = () => {
-    setEditingType(null);
-    setShowModal(true);
-  };
-
-  const handleEditType = (type: AssetType) => {
-    setEditingType(type);
-    setShowModal(true);
-  };
-
-  const handleDeleteType = (typeId: string) => {
-    if (confirm('¿Está seguro de que desea eliminar este tipo de activo?')) {
-      alert('Tipo de activo eliminado correctamente');
-    }
-  };
-
-  const handleToggleStatus = (typeId: string) => {
-    alert('Estado del tipo de activo actualizado');
-  };
-
-  const handleSaveType = (e: React.FormEvent) => {
-    e.preventDefault();
-    alert(editingType ? 'Tipo de activo actualizado correctamente' : 'Tipo de activo creado correctamente');
-    setShowModal(false);
-  };
 
   const exportToPDF = () => {
     // Crear contenido del PDF
@@ -500,6 +536,7 @@ export default function AssetTypesPage() {
                     <input
                       type="text"
                       required
+                      name="name"
                       defaultValue={editingType?.name || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Ej: Maquinaria y Equipo"
@@ -515,6 +552,7 @@ export default function AssetTypesPage() {
                       step="0.01"
                       min="0"
                       max="100"
+                      name="depreciationRate"
                       defaultValue={editingType?.depreciationRate || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="10.00"
@@ -528,6 +566,7 @@ export default function AssetTypesPage() {
                       type="number"
                       required
                       min="1"
+                      name="usefulLife"
                       defaultValue={editingType?.usefulLife || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="10"
@@ -539,6 +578,7 @@ export default function AssetTypesPage() {
                     </label>
                     <select
                       required
+                      name="depreciationMethod"
                       defaultValue={editingType?.depreciationMethod || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
@@ -555,6 +595,7 @@ export default function AssetTypesPage() {
                     <input
                       type="text"
                       required
+                      name="account"
                       defaultValue={editingType?.account || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="1220 - Maquinaria y Equipo"
@@ -567,6 +608,7 @@ export default function AssetTypesPage() {
                     <input
                       type="text"
                       required
+                      name="depreciationAccount"
                       defaultValue={editingType?.depreciationAccount || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="5121 - Depreciación Maquinaria"
@@ -579,6 +621,7 @@ export default function AssetTypesPage() {
                     <input
                       type="text"
                       required
+                      name="accumulatedDepreciationAccount"
                       defaultValue={editingType?.accumulatedDepreciationAccount || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="1221 - Depreciación Acumulada Maquinaria"
@@ -591,6 +634,7 @@ export default function AssetTypesPage() {
                   </label>
                   <textarea
                     rows={3}
+                    name="description"
                     defaultValue={editingType?.description || ''}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Descripción detallada del tipo de activo"

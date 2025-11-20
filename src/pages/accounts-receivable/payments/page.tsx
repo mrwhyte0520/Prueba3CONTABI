@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { useAuth } from '../../../hooks/useAuth';
+import { customerPaymentsService, invoicesService, bankAccountsService, accountingSettingsService, journalEntriesService } from '../../../services/database';
 
 interface Payment {
   id: string;
@@ -15,77 +17,79 @@ interface Payment {
   reference: string;
 }
 
+interface InvoiceOption {
+  id: string;
+  invoiceNumber: string;
+  customerName: string;
+  balance: number;
+  customerId: string;
+}
+
+interface BankAccountOption {
+  id: string;
+  name: string;
+}
+
 export default function PaymentsPage() {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [methodFilter, setMethodFilter] = useState('all');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceOption[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
 
-  // Mock data
-  const payments: Payment[] = [
-    {
-      id: '1',
-      customerId: '1',
-      customerName: 'Empresa ABC S.R.L.',
-      invoiceId: '1',
-      invoiceNumber: 'FAC-001',
-      amount: 50000,
-      paymentMethod: 'transfer',
-      date: '2024-01-15',
-      reference: 'TRF-001'
-    },
-    {
-      id: '2',
-      customerId: '2',
-      customerName: 'Comercial XYZ',
-      invoiceId: '5',
-      invoiceNumber: 'FAC-005',
-      amount: 120000,
-      paymentMethod: 'check',
-      date: '2024-01-20',
-      reference: 'CHK-001'
-    },
-    {
-      id: '3',
-      customerId: '1',
-      customerName: 'Empresa ABC S.R.L.',
-      invoiceId: '1',
-      invoiceNumber: 'FAC-001',
-      amount: 25000,
-      paymentMethod: 'cash',
-      date: '2024-01-25',
-      reference: 'EFE-001'
-    },
-    {
-      id: '4',
-      customerId: '3',
-      customerName: 'Distribuidora DEF',
-      invoiceId: '4',
-      invoiceNumber: 'FAC-004',
-      amount: 45000,
-      paymentMethod: 'card',
-      date: '2024-01-28',
-      reference: 'TAR-001'
-    },
-    {
-      id: '5',
-      customerId: '2',
-      customerName: 'Comercial XYZ',
-      invoiceId: '3',
-      invoiceNumber: 'FAC-003',
-      amount: 85000,
-      paymentMethod: 'transfer',
-      date: '2024-01-30',
-      reference: 'TRF-002'
-    }
-  ];
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user) return;
+      try {
+        const [paymentsData, invoicesData, bankAccountsData] = await Promise.all([
+          customerPaymentsService.getAll(user.id),
+          invoicesService.getAll(user.id),
+          bankAccountsService.getAll(user.id),
+        ]);
 
-  const invoices = [
-    { id: '1', invoiceNumber: 'FAC-001', customerName: 'Empresa ABC S.R.L.', balance: 25000 },
-    { id: '2', invoiceNumber: 'FAC-002', customerName: 'Empresa ABC S.R.L.', balance: 75000 },
-    { id: '3', invoiceNumber: 'FAC-003', customerName: 'Comercial XYZ', balance: 0 },
-    { id: '4', invoiceNumber: 'FAC-004', customerName: 'Distribuidora DEF', balance: 0 }
-  ];
+        const mappedPayments: Payment[] = (paymentsData || []).map((p: any) => ({
+          id: p.id,
+          customerId: p.customer_id,
+          customerName: p.customers?.name || '',
+          invoiceId: p.invoice_id,
+          invoiceNumber: p.invoices?.invoice_number || '',
+          amount: Number(p.amount) || 0,
+          paymentMethod: p.payment_method,
+          date: p.payment_date,
+          reference: p.reference || '',
+        }));
+        setPayments(mappedPayments);
+
+        const mappedInvoices: InvoiceOption[] = (invoicesData || [])
+          .filter((inv: any) => inv.status !== 'Cancelada')
+          .map((inv: any) => {
+            const total = Number(inv.total_amount) || 0;
+            const paid = Number(inv.paid_amount) || 0;
+            return {
+              id: inv.id,
+              invoiceNumber: inv.invoice_number,
+              customerName: inv.customers?.name || '',
+              customerId: inv.customer_id,
+              balance: Math.max(total - paid, 0),
+            };
+          });
+        setInvoices(mappedInvoices);
+
+        const mappedBankAccounts: BankAccountOption[] = (bankAccountsData || []).map((ba: any) => ({
+          id: ba.id,
+          name: `${ba.bank_name} - ${ba.account_number}`,
+        }));
+        setBankAccounts(mappedBankAccounts);
+      } catch (error) {
+        console.error('Error loading customer payments:', error);
+      }
+    };
+
+    loadData();
+  }, [user]);
 
   const getPaymentMethodName = (method: string) => {
     switch (method) {
@@ -232,11 +236,108 @@ export default function PaymentsPage() {
     }
   };
 
-  const handleSavePayment = (e: React.FormEvent) => {
+  const handleSavePayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert('Pago registrado exitosamente');
-    setShowPaymentModal(false);
-    setSelectedPayment(null);
+    if (!user) return;
+
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const invoiceId = String(formData.get('invoiceId') || '');
+    const bankAccountId = String(formData.get('bankAccountId') || '');
+    const amount = Number(formData.get('amount') || 0) || 0;
+    const paymentMethod = String(formData.get('paymentMethod') || 'cash') as Payment['paymentMethod'];
+    const reference = String(formData.get('reference') || '').trim();
+    const paymentDate = String(formData.get('paymentDate') || '') || new Date().toISOString().split('T')[0];
+
+    const invoice = invoices.find(inv => inv.id === invoiceId);
+    if (!invoice) {
+      alert('Debe seleccionar una factura válida');
+      return;
+    }
+
+    const bankAccount = bankAccounts.find(b => b.id === bankAccountId);
+    if (!bankAccount) {
+      alert('Debe seleccionar una cuenta de banco');
+      return;
+    }
+
+    const payload: any = {
+      customer_id: invoice.customerId,
+      invoice_id: invoiceId,
+      bank_account_id: bankAccountId,
+      amount,
+      payment_method: paymentMethod,
+      payment_date: paymentDate,
+      reference,
+    };
+
+    try {
+      const created = await customerPaymentsService.create(user.id, payload);
+      const mapped: Payment = {
+        id: created.id,
+        customerId: created.customer_id,
+        customerName: created.customers?.name || invoice.customerName,
+        invoiceId: created.invoice_id,
+        invoiceNumber: created.invoices?.invoice_number || invoice.invoiceNumber,
+        amount: Number(created.amount) || amount,
+        paymentMethod: created.payment_method,
+        date: created.payment_date,
+        reference: created.reference || reference,
+      };
+      setPayments(prev => [mapped, ...prev]);
+
+      setShowPaymentModal(false);
+      setSelectedPayment(null);
+      form.reset();
+
+      // Best-effort: registrar asiento contable del pago (Banco vs CxC)
+      try {
+        const settings = await accountingSettingsService.get(user.id);
+        const arAccountId = settings?.ar_account_id;
+
+        // Necesitamos la cuenta contable del banco (chart_account_id)
+        const { chart_account_id: bankAccountAccountId } = created.bank_accounts || {};
+
+        if (arAccountId && bankAccountAccountId) {
+          const paymentAmount = Number(created.amount) || amount;
+
+          const lines: any[] = [
+            {
+              account_id: bankAccountAccountId,
+              description: 'Cobro de cliente - Banco',
+              debit_amount: paymentAmount,
+              credit_amount: 0,
+              line_number: 1,
+            },
+            {
+              account_id: arAccountId,
+              description: 'Cobro de cliente - Cuentas por Cobrar',
+              debit_amount: 0,
+              credit_amount: paymentAmount,
+              line_number: 2,
+            },
+          ];
+
+          const entryPayload = {
+            entry_number: created.id,
+            entry_date: created.payment_date || paymentDate,
+            description: `Pago factura ${mapped.invoiceNumber}`,
+            reference: created.id,
+            total_debit: paymentAmount,
+            total_credit: paymentAmount,
+            status: 'posted',
+          };
+
+          await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Error posting customer payment to ledger:', err);
+      }
+    } catch (error) {
+      console.error('Error saving customer payment:', error);
+      alert('Error al registrar el pago');
+    }
   };
 
   return (
@@ -399,6 +500,7 @@ export default function PaymentsPage() {
                   </label>
                   <select 
                     required
+                    name="invoiceId"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar factura</option>
@@ -412,12 +514,31 @@ export default function PaymentsPage() {
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de Banco
+                  </label>
+                  <select 
+                    required
+                    name="bankAccountId"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {bankAccounts.map((ba) => (
+                      <option key={ba.id} value={ba.id}>
+                        {ba.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Monto a Pagar
                   </label>
                   <input
                     type="number"
                     step="0.01"
                     required
+                    name="amount"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="0.00"
                   />
@@ -445,6 +566,7 @@ export default function PaymentsPage() {
                   <input
                     type="text"
                     required
+                    name="reference"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Número de referencia"
                   />

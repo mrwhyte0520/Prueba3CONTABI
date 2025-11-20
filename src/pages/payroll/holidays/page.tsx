@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { holidaysService } from '../../../services/database';
 
 interface Holiday {
   id: string;
@@ -17,6 +19,7 @@ interface Holiday {
 
 export default function HolidaysPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('todos');
@@ -34,6 +37,32 @@ export default function HolidaysPage() {
     isRecurring: true
   });
 
+  useEffect(() => {
+    const loadHolidays = async () => {
+      if (!user) return;
+      try {
+        const data = await holidaysService.getAll(user.id);
+        const mapped: Holiday[] = (data || []).map((h: any) => ({
+          id: h.id,
+          name: h.name,
+          date: h.date,
+          type: h.type,
+          isPaid: !!h.is_paid,
+          multiplier: Number(h.multiplier) || 1,
+          description: h.description || '',
+          isRecurring: !!h.is_recurring,
+          status: h.status as 'activo' | 'inactivo',
+          createdAt: h.created_at || new Date().toISOString(),
+        }));
+        setHolidays(mapped);
+      } catch (error) {
+        console.error('Error loading holidays:', error);
+      }
+    };
+
+    loadHolidays();
+  }, [user]);
+
   const filteredHolidays = holidays.filter(holiday => {
     const matchesSearch = holiday.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          holiday.description.toLowerCase().includes(searchTerm.toLowerCase());
@@ -43,26 +72,60 @@ export default function HolidaysPage() {
     return matchesSearch && matchesType && matchesStatus;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!user) return;
     
-    if (editingHoliday) {
-      setHolidays(holidays.map(holiday => 
-        holiday.id === editingHoliday.id 
-          ? { ...holiday, ...formData }
-          : holiday
-      ));
-    } else {
-      const newHoliday: Holiday = {
-        id: Date.now().toString(),
-        ...formData,
-        status: 'activo',
-        createdAt: new Date().toISOString()
-      };
-      setHolidays([...holidays, newHoliday]);
+    const payload: any = {
+      name: formData.name,
+      date: formData.date,
+      type: formData.type,
+      is_paid: formData.isPaid,
+      multiplier: formData.multiplier,
+      description: formData.description,
+      is_recurring: formData.isRecurring,
+      status: editingHoliday?.status ?? 'activo',
+    };
+
+    try {
+      if (editingHoliday) {
+        const updated = await holidaysService.update(editingHoliday.id, payload);
+        const mapped: Holiday = {
+          id: updated.id,
+          name: updated.name,
+          date: updated.date,
+          type: updated.type,
+          isPaid: !!updated.is_paid,
+          multiplier: Number(updated.multiplier) || 1,
+          description: updated.description || '',
+          isRecurring: !!updated.is_recurring,
+          status: updated.status as 'activo' | 'inactivo',
+          createdAt: updated.created_at || new Date().toISOString(),
+        };
+        setHolidays(prev => prev.map(h => h.id === editingHoliday.id ? mapped : h));
+      } else {
+        const created = await holidaysService.create(user.id, payload);
+        const mapped: Holiday = {
+          id: created.id,
+          name: created.name,
+          date: created.date,
+          type: created.type,
+          isPaid: !!created.is_paid,
+          multiplier: Number(created.multiplier) || 1,
+          description: created.description || '',
+          isRecurring: !!created.is_recurring,
+          status: created.status as 'activo' | 'inactivo',
+          createdAt: created.created_at || new Date().toISOString(),
+        };
+        setHolidays(prev => [...prev, mapped]);
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error('Error saving holiday:', error);
+      alert('Error al guardar el día feriado');
     }
-    
-    resetForm();
   };
 
   const resetForm = () => {
@@ -93,18 +156,35 @@ export default function HolidaysPage() {
     setShowForm(true);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('¿Está seguro de que desea eliminar este día feriado?')) {
-      setHolidays(holidays.filter(holiday => holiday.id !== id));
+  const handleDelete = async (id: string) => {
+    if (!confirm('¿Está seguro de que desea eliminar este día feriado?')) return;
+
+    try {
+      await holidaysService.delete(id);
+      setHolidays(prev => prev.filter(holiday => holiday.id !== id));
+    } catch (error) {
+      console.error('Error deleting holiday:', error);
+      alert('Error al eliminar el día feriado');
     }
   };
 
-  const toggleStatus = (id: string) => {
-    setHolidays(holidays.map(holiday => 
-      holiday.id === id 
-        ? { ...holiday, status: holiday.status === 'activo' ? 'inactivo' : 'activo' }
-        : holiday
-    ));
+  const toggleStatus = async (id: string) => {
+    const current = holidays.find(h => h.id === id);
+    if (!current) return;
+
+    const newStatus: 'activo' | 'inactivo' = current.status === 'activo' ? 'inactivo' : 'activo';
+
+    try {
+      await holidaysService.update(id, { status: newStatus });
+      setHolidays(prev => prev.map(holiday => 
+        holiday.id === id 
+          ? { ...holiday, status: newStatus }
+          : holiday
+      ));
+    } catch (error) {
+      console.error('Error updating holiday status:', error);
+      alert('Error al actualizar el estado del día feriado');
+    }
   };
 
   const exportToCSV = () => {
@@ -471,7 +551,7 @@ export default function HolidaysPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
-                        {new Date(holiday.date).toLocaleDateString('es-DO', {
+                        {holiday.date && new Date(holiday.date).toLocaleDateString('es-DO', {
                           weekday: 'long',
                           year: 'numeric',
                           month: 'long',

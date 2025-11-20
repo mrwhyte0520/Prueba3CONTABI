@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { inventoryService } from '../../services/database';
+import { inventoryService, settingsService } from '../../services/database';
 import { useNavigate } from 'react-router-dom';
 
 // Eliminados datos de ejemplo: la vista se alimenta solo de la base de datos
@@ -84,8 +84,8 @@ export default function InventoryPage() {
 
   const loadWarehouses = async () => {
     try {
-      // No hay datos de ejemplo; mantener vacío hasta implementar backend de almacenes
-      setWarehouses([]);
+      const data = await settingsService.getWarehouses();
+      setWarehouses(data || []);
     } catch (error) {
       console.error('Error loading warehouses:', error);
       setWarehouses([]);
@@ -140,9 +140,21 @@ export default function InventoryPage() {
           });
         }
       } else if (modalType === 'warehouse') {
-        // Aquí se implementaría la creación de almacenes
-        console.log('Crear almacén:', formData);
-        alert('Funcionalidad de almacenes implementada correctamente');
+        if (selectedItem && selectedItem.id) {
+          await settingsService.updateWarehouse(selectedItem.id, {
+            name: formData.name,
+            location: formData.location,
+            description: formData.description || null,
+          });
+        } else {
+          await settingsService.createWarehouse({
+            name: formData.name,
+            location: formData.location,
+            description: formData.description || null,
+            active: true,
+          });
+        }
+        await loadWarehouses();
       }
       
       handleCloseModal();

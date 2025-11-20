@@ -1,8 +1,10 @@
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { useAuth } from '../../../hooks/useAuth';
+import { purchaseOrdersService, supplierPaymentsService, suppliersService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -11,90 +13,146 @@ declare module 'jspdf' {
 }
 
 export default function ReportsPage() {
+  const { user } = useAuth();
   const [reportType, setReportType] = useState('aging');
-  const [startDate, setStartDate] = useState('2024-01-01');
-  const [endDate, setEndDate] = useState('2024-01-31');
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [supplier, setSupplier] = useState('all');
   const [showReport, setShowReport] = useState(false);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [payments, setPayments] = useState<any[]>([]);
+  const [agingData, setAgingData] = useState<any[]>([]);
+  const [paymentsData, setPaymentsData] = useState<any[]>([]);
 
-  const suppliers = [
-    'Proveedor Industrial SA',
-    'Distribuidora Nacional SRL',
-    'Servicios Técnicos EIRL',
-    'Materiales Construcción SA'
-  ];
-
-  const agingData = [
-    {
-      supplier: 'Proveedor Industrial SA',
-      total: 350000,
-      current: 150000,
-      days1_30: 100000,
-      days31_60: 75000,
-      days61_90: 25000,
-      over90: 0
-    },
-    {
-      supplier: 'Distribuidora Nacional SRL',
-      total: 280000,
-      current: 200000,
-      days1_30: 50000,
-      days31_60: 30000,
-      days61_90: 0,
-      over90: 0
-    },
-    {
-      supplier: 'Servicios Técnicos EIRL',
-      total: 195000,
-      current: 95000,
-      days1_30: 60000,
-      days31_60: 25000,
-      days61_90: 15000,
-      over90: 0
-    },
-    {
-      supplier: 'Materiales Construcción SA',
-      total: 165000,
-      current: 65000,
-      days1_30: 45000,
-      days31_60: 35000,
-      days61_90: 20000,
-      over90: 0
+  const loadSuppliers = async () => {
+    if (!user?.id) {
+      setSuppliers([]);
+      return;
     }
-  ];
-
-  const paymentsData = [
-    {
-      date: '2024-01-15',
-      supplier: 'Proveedor Industrial SA',
-      reference: 'PAY-2024-001',
-      method: 'Transferencia',
-      amount: 125000
-    },
-    {
-      date: '2024-01-14',
-      supplier: 'Distribuidora Nacional SRL',
-      reference: 'PAY-2024-002',
-      method: 'Cheque',
-      amount: 85000
-    },
-    {
-      date: '2024-01-13',
-      supplier: 'Servicios Técnicos EIRL',
-      reference: 'PAY-2024-003',
-      method: 'Efectivo',
-      amount: 45000
-    },
-    {
-      date: '2024-01-12',
-      supplier: 'Materiales Construcción SA',
-      reference: 'PAY-2024-004',
-      method: 'Transferencia',
-      amount: 195000
+    try {
+      const data = await suppliersService.getAll(user.id);
+      setSuppliers(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading suppliers for AP reports', error);
+      setSuppliers([]);
     }
-  ];
+  };
+
+  const loadOrders = async () => {
+    if (!user?.id) {
+      setOrders([]);
+      return;
+    }
+    try {
+      const data = await purchaseOrdersService.getAll(user.id);
+      setOrders(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading purchase orders for AP reports', error);
+      setOrders([]);
+    }
+  };
+
+  const loadPayments = async () => {
+    if (!user?.id) {
+      setPayments([]);
+      return;
+    }
+    try {
+      const data = await supplierPaymentsService.getAll(user.id);
+      setPayments(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading supplier payments for AP reports', error);
+      setPayments([]);
+    }
+  };
+
+  useEffect(() => {
+    loadSuppliers();
+    loadOrders();
+    loadPayments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const generateReport = () => {
+    if (!user?.id) {
+      alert('Debes iniciar sesión para generar reportes');
+      return;
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const selectedSupplierId = supplier === 'all' ? null : supplier;
+
+    if (reportType === 'aging') {
+      const bySupplier: Record<string, any> = {};
+
+      orders.forEach((po: any) => {
+        if (po.status === 'cancelled') return;
+        const poDate = po.order_date ? new Date(po.order_date) : null;
+        if (poDate && (poDate < start || poDate > end)) return;
+        if (selectedSupplierId && po.supplier_id !== selectedSupplierId) return;
+
+        const supplierId = po.supplier_id as string;
+        const supplierName = (po.suppliers as any)?.name || 'Proveedor';
+        if (!bySupplier[supplierId]) {
+          bySupplier[supplierId] = {
+            supplierId,
+            supplier: supplierName,
+            total: 0,
+            current: 0,
+            days1_30: 0,
+            days31_60: 0,
+            days61_90: 0,
+            over90: 0,
+          };
+        }
+
+        const total = Number(po.total_amount) || 0;
+        const expected = po.expected_date ? new Date(po.expected_date) : null;
+        const today = new Date();
+        let days = 0;
+        if (expected) {
+          days = Math.floor((today.getTime() - expected.getTime()) / (1000 * 60 * 60 * 24));
+        }
+
+        bySupplier[supplierId].total += total;
+        if (!expected || days <= 0) {
+          bySupplier[supplierId].current += total;
+        } else if (days <= 30) {
+          bySupplier[supplierId].days1_30 += total;
+        } else if (days <= 60) {
+          bySupplier[supplierId].days31_60 += total;
+        } else if (days <= 90) {
+          bySupplier[supplierId].days61_90 += total;
+        } else {
+          bySupplier[supplierId].over90 += total;
+        }
+      });
+
+      setAgingData(Object.values(bySupplier));
+    } else {
+      const filteredPayments = payments.filter((p: any) => {
+        const payDate = p.payment_date ? new Date(p.payment_date) : null;
+        if (!payDate || payDate < start || payDate > end) return false;
+        if (p.status && p.status !== 'Completado' && p.status !== 'completed') return false;
+        if (selectedSupplierId && p.supplier_id !== selectedSupplierId) return false;
+        return true;
+      });
+
+      const rows = filteredPayments.map((p: any) => ({
+        date: p.payment_date,
+        supplier: (p.suppliers as any)?.name || 'Proveedor',
+        reference: p.reference,
+        method: p.method,
+        amount: Number(p.amount) || 0,
+      }));
+      setPaymentsData(rows);
+    }
+
     setShowReport(true);
     alert('Reporte generado exitosamente');
   };
@@ -293,8 +351,8 @@ export default function ReportsPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="all">Todos los Proveedores</option>
-                {suppliers.map(sup => (
-                  <option key={sup} value={sup}>{sup}</option>
+                {suppliers.map((sup: any) => (
+                  <option key={sup.id} value={sup.id}>{sup.name}</option>
                 ))}
               </select>
             </div>

@@ -1,6 +1,21 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
+import { referralsService } from '../../services/database';
 
 export default function HomePage() {
+  const location = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const ref = params.get('ref');
+    if (ref) {
+      try {
+        localStorage.setItem('ref_code', ref);
+        referralsService.recordVisit(ref);
+        const el = document.getElementById('pricing');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+      } catch {}
+    }
+  }, [location.search]);
   const features = [
     {
       icon: 'ri-file-list-3-line',

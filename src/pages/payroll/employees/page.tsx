@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
-import { departmentsService, positionsService } from '../../../services/database';
+import { departmentsService, positionsService, employeesService, employeeTypesService, salaryTypesService } from '../../../services/database';
 
 interface Employee {
   id: string;
@@ -56,8 +56,8 @@ export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
-  const [employeeTypes] = useState<EmployeeType[]>([]);
-  const [salaryTypes] = useState<SalaryType[]>([]);
+  const [employeeTypes, setEmployeeTypes] = useState<EmployeeType[]>([]);
+  const [salaryTypes, setSalaryTypes] = useState<SalaryType[]>([]);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
@@ -76,12 +76,44 @@ export default function EmployeesPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [depts, poss] = await Promise.all([
+      const [emps, depts, poss, empTypes, salTypes] = await Promise.all([
+        employeesService.getAll(user.id),
         departmentsService.getAll(user.id),
-        positionsService.getAll(user.id)
+        positionsService.getAll(user.id),
+        employeeTypesService.getAll(user.id),
+        salaryTypesService.getAll(user.id)
       ]);
-      setDepartments(depts);
-      setPositions(poss);
+      const mappedEmployees: Employee[] = (emps || []).map((e: any) => ({
+        id: e.id,
+        employee_code: e.employee_code || '',
+        first_name: e.first_name || '',
+        last_name: e.last_name || '',
+        email: e.email || '',
+        phone: e.phone || '',
+        identification: e.identification || '',
+        department_id: e.department_id || '',
+        position_id: e.position_id || '',
+        employee_type_id: e.employee_type_id || '',
+        salary_type_id: e.salary_type_id || '',
+        base_salary: Number(e.base_salary) || 0,
+        hire_date: e.hire_date || '',
+        birth_date: e.birth_date || '',
+        gender: (e.gender as 'M' | 'F') || 'M',
+        marital_status: (e.marital_status as Employee['marital_status']) || 'single',
+        address: e.address || '',
+        bank_account: e.bank_account || '',
+        bank_name: e.bank_name || '',
+        emergency_contact: e.emergency_contact || '',
+        emergency_phone: e.emergency_phone || '',
+        status: (e.status as Employee['status']) || 'active',
+        photo_url: e.photo_url || undefined,
+      }));
+
+      setEmployees(mappedEmployees);
+      setDepartments(depts || []);
+      setPositions(poss || []);
+      setEmployeeTypes(empTypes || []);
+      setSalaryTypes(salTypes || []);
     } catch (error) {
       console.error('Error loading payroll catalogs:', error);
     } finally {
@@ -114,15 +146,89 @@ export default function EmployeesPage() {
     setLoading(true);
 
     try {
+      if (!user) return;
+
+      const payload: any = {
+        first_name: formData.first_name || '',
+        last_name: formData.last_name || '',
+        email: formData.email || '',
+        phone: formData.phone || '',
+        identification: formData.identification || '',
+        department_id: formData.department_id || null,
+        position_id: formData.position_id || null,
+        employee_type_id: formData.employee_type_id || null,
+        salary_type_id: formData.salary_type_id || null,
+        base_salary: Number(formData.base_salary) || 0,
+        hire_date: formData.hire_date || new Date().toISOString().slice(0, 10),
+        birth_date: formData.birth_date || null,
+        gender: formData.gender || 'M',
+        marital_status: formData.marital_status || 'single',
+        address: formData.address || '',
+        bank_account: formData.bank_account || '',
+        bank_name: formData.bank_name || '',
+        emergency_contact: formData.emergency_contact || '',
+        emergency_phone: formData.emergency_phone || '',
+        status: formData.status || 'active',
+        photo_url: formData.photo_url || null,
+      };
+
       if (selectedEmployee) {
-        setEmployees(prev => prev.map(emp => 
-          emp.id === selectedEmployee.id ? { ...emp, ...formData } : emp
+        const updated = await employeesService.update(selectedEmployee.id, payload);
+        setEmployees(prev => prev.map(emp =>
+          emp.id === selectedEmployee.id
+            ? {
+                id: updated.id,
+                employee_code: updated.employee_code || '',
+                first_name: updated.first_name || '',
+                last_name: updated.last_name || '',
+                email: updated.email || '',
+                phone: updated.phone || '',
+                identification: updated.identification || '',
+                department_id: updated.department_id || '',
+                position_id: updated.position_id || '',
+                employee_type_id: updated.employee_type_id || '',
+                salary_type_id: updated.salary_type_id || '',
+                base_salary: Number(updated.base_salary) || 0,
+                hire_date: updated.hire_date || '',
+                birth_date: updated.birth_date || '',
+                gender: (updated.gender as 'M' | 'F') || 'M',
+                marital_status: (updated.marital_status as Employee['marital_status']) || 'single',
+                address: updated.address || '',
+                bank_account: updated.bank_account || '',
+                bank_name: updated.bank_name || '',
+                emergency_contact: updated.emergency_contact || '',
+                emergency_phone: updated.emergency_phone || '',
+                status: (updated.status as Employee['status']) || 'active',
+                photo_url: updated.photo_url || undefined,
+              }
+            : emp
         ));
       } else {
+        const created = await employeesService.create(user.id, payload);
         const newEmployee: Employee = {
-          ...formData,
-          id: Date.now().toString(),
-          employee_code: `EMP${String(employees.length + 1).padStart(3, '0')}`
+          id: created.id,
+          employee_code: created.employee_code || '',
+          first_name: created.first_name || '',
+          last_name: created.last_name || '',
+          email: created.email || '',
+          phone: created.phone || '',
+          identification: created.identification || '',
+          department_id: created.department_id || '',
+          position_id: created.position_id || '',
+          employee_type_id: created.employee_type_id || '',
+          salary_type_id: created.salary_type_id || '',
+          base_salary: Number(created.base_salary) || 0,
+          hire_date: created.hire_date || '',
+          birth_date: created.birth_date || '',
+          gender: (created.gender as 'M' | 'F') || 'M',
+          marital_status: (created.marital_status as Employee['marital_status']) || 'single',
+          address: created.address || '',
+          bank_account: created.bank_account || '',
+          bank_name: created.bank_name || '',
+          emergency_contact: created.emergency_contact || '',
+          emergency_phone: created.emergency_phone || '',
+          status: (created.status as Employee['status']) || 'active',
+          photo_url: created.photo_url || undefined,
         };
         setEmployees(prev => [...prev, newEmployee]);
       }
@@ -135,9 +241,16 @@ export default function EmployeesPage() {
     }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('¿Está seguro de que desea eliminar este empleado?')) return;
-    setEmployees(prev => prev.filter(emp => emp.id !== id));
+
+    try {
+      await employeesService.delete(id);
+      setEmployees(prev => prev.filter(emp => emp.id !== id));
+    } catch (error) {
+      console.error('Error deleting employee:', error);
+      alert('Ocurrió un error al eliminar el empleado.');
+    }
   };
 
   const filteredEmployees = employees.filter(employee => {

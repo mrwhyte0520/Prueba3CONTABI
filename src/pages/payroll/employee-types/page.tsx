@@ -1,7 +1,9 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { exportToExcelStyled } from '../../../utils/exportImportUtils';
+import { useAuth } from '../../../hooks/useAuth';
+import { employeeTypesService } from '../../../services/database';
 
 interface EmployeeType {
   id: string;
@@ -16,63 +18,8 @@ interface EmployeeType {
 }
 
 export default function EmployeeTypesPage() {
-  const [employeeTypes, setEmployeeTypes] = useState<EmployeeType[]>([
-    {
-      id: '1',
-      name: 'Tiempo Completo',
-      description: 'Empleado con jornada completa de 8 horas diarias',
-      benefits: ['Seguro médico', 'Vacaciones pagadas', 'Bonificación navideña', 'Seguro de vida'],
-      workingHours: 8,
-      overtimeEligible: true,
-      vacationDays: 14,
-      status: 'active',
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '2',
-      name: 'Medio Tiempo',
-      description: 'Empleado con jornada de 4 horas diarias',
-      benefits: ['Vacaciones proporcionales', 'Bonificación proporcional'],
-      workingHours: 4,
-      overtimeEligible: false,
-      vacationDays: 7,
-      status: 'active',
-      createdAt: '2024-01-20'
-    },
-    {
-      id: '3',
-      name: 'Temporal',
-      description: 'Empleado contratado por tiempo determinado',
-      benefits: ['Pago por servicios'],
-      workingHours: 8,
-      overtimeEligible: false,
-      vacationDays: 0,
-      status: 'active',
-      createdAt: '2024-02-01'
-    },
-    {
-      id: '4',
-      name: 'Contratista',
-      description: 'Prestador de servicios independiente',
-      benefits: ['Pago por proyecto'],
-      workingHours: 0,
-      overtimeEligible: false,
-      vacationDays: 0,
-      status: 'active',
-      createdAt: '2024-02-10'
-    },
-    {
-      id: '5',
-      name: 'Practicante',
-      description: 'Estudiante en práctica profesional',
-      benefits: ['Certificado de práctica', 'Experiencia laboral'],
-      workingHours: 6,
-      overtimeEligible: false,
-      vacationDays: 0,
-      status: 'active',
-      createdAt: '2024-02-15'
-    }
-  ]);
+  const { user } = useAuth();
+  const [employeeTypes, setEmployeeTypes] = useState<EmployeeType[]>([]);
 
   const [showForm, setShowForm] = useState(false);
   const [editingType, setEditingType] = useState<EmployeeType | null>(null);
@@ -89,6 +36,33 @@ export default function EmployeeTypesPage() {
     status: 'active' as 'active' | 'inactive'
   });
 
+  useEffect(() => {
+    const loadTypes = async () => {
+      if (!user) return;
+      try {
+        const data = await employeeTypesService.getAll(user.id);
+        const mapped: EmployeeType[] = (data || []).map((t: any) => ({
+          id: t.id,
+          name: t.name || '',
+          description: t.description || '',
+          benefits: Array.isArray(t.benefits)
+            ? t.benefits
+            : (t.benefits || '').toString().split(',').map((b: string) => b.trim()).filter(Boolean),
+          workingHours: Number(t.working_hours) || 0,
+          overtimeEligible: !!t.overtime_eligible,
+          vacationDays: Number(t.vacation_days) || 0,
+          status: (t.status as 'active' | 'inactive') || 'active',
+          createdAt: (t.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+        }));
+        setEmployeeTypes(mapped);
+      } catch (error) {
+        console.error('Error loading employee types:', error);
+      }
+    };
+
+    loadTypes();
+  }, [user]);
+
   const filteredTypes = employeeTypes.filter(type => {
     const matchesSearch = type.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          type.description.toLowerCase().includes(searchTerm.toLowerCase());
@@ -96,28 +70,68 @@ export default function EmployeeTypesPage() {
     return matchesSearch && matchesStatus;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const benefitsArray = formData.benefits.split(',').map(b => b.trim()).filter(b => b);
-    
-    if (editingType) {
-      setEmployeeTypes(prev => prev.map(type => 
-        type.id === editingType.id 
-          ? { ...type, ...formData, benefits: benefitsArray }
-          : type
-      ));
-    } else {
-      const newType: EmployeeType = {
-        id: Date.now().toString(),
-        ...formData,
-        benefits: benefitsArray,
-        createdAt: new Date().toISOString().split('T')[0]
-      };
-      setEmployeeTypes(prev => [...prev, newType]);
+
+    if (!user) {
+      alert('Debe iniciar sesión para gestionar tipos de empleados.');
+      return;
     }
-    
-    resetForm();
+
+    const benefitsArray = formData.benefits.split(',').map(b => b.trim()).filter(b => b);
+    const payload = {
+      name: formData.name,
+      description: formData.description,
+      benefits: benefitsArray,
+      working_hours: formData.workingHours,
+      overtime_eligible: formData.overtimeEligible,
+      vacation_days: formData.vacationDays,
+      status: formData.status,
+    };
+
+    try {
+      if (editingType) {
+        const updated = await employeeTypesService.update(editingType.id, payload);
+        setEmployeeTypes(prev => prev.map(type =>
+          type.id === editingType.id
+            ? {
+                id: updated.id,
+                name: updated.name || '',
+                description: updated.description || '',
+                benefits: Array.isArray(updated.benefits)
+                  ? updated.benefits
+                  : (updated.benefits || '').toString().split(',').map((b: string) => b.trim()).filter(Boolean),
+                workingHours: Number(updated.working_hours) || 0,
+                overtimeEligible: !!updated.overtime_eligible,
+                vacationDays: Number(updated.vacation_days) || 0,
+                status: (updated.status as 'active' | 'inactive') || 'active',
+                createdAt: (updated.created_at || '').split('T')[0] || editingType.createdAt,
+              }
+            : type
+        ));
+      } else {
+        const created = await employeeTypesService.create(user.id, payload);
+        const newType: EmployeeType = {
+          id: created.id,
+          name: created.name || '',
+          description: created.description || '',
+          benefits: Array.isArray(created.benefits)
+            ? created.benefits
+            : (created.benefits || '').toString().split(',').map((b: string) => b.trim()).filter(Boolean),
+          workingHours: Number(created.working_hours) || 0,
+          overtimeEligible: !!created.overtime_eligible,
+          vacationDays: Number(created.vacation_days) || 0,
+          status: (created.status as 'active' | 'inactive') || 'active',
+          createdAt: (created.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+        };
+        setEmployeeTypes(prev => [...prev, newType]);
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error('Error saving employee type:', error);
+      alert('Error al guardar el tipo de empleado');
+    }
   };
 
   const resetForm = () => {
@@ -148,18 +162,34 @@ export default function EmployeeTypesPage() {
     setShowForm(true);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('¿Está seguro de eliminar este tipo de empleado?')) {
+  const handleDelete = async (id: string) => {
+    if (!confirm('¿Está seguro de eliminar este tipo de empleado?')) return;
+
+    try {
+      await employeeTypesService.delete(id);
       setEmployeeTypes(prev => prev.filter(type => type.id !== id));
+    } catch (error) {
+      console.error('Error deleting employee type:', error);
+      alert('Error al eliminar el tipo de empleado');
     }
   };
 
-  const toggleStatus = (id: string) => {
-    setEmployeeTypes(prev => prev.map(type => 
-      type.id === id 
-        ? { ...type, status: type.status === 'active' ? 'inactive' : 'active' }
-        : type
-    ));
+  const toggleStatus = async (id: string) => {
+    const current = employeeTypes.find(t => t.id === id);
+    if (!current) return;
+    const newStatus = current.status === 'active' ? 'inactive' : 'active';
+
+    try {
+      await employeeTypesService.update(id, { status: newStatus });
+      setEmployeeTypes(prev => prev.map(type => 
+        type.id === id 
+          ? { ...type, status: newStatus }
+          : type
+      ));
+    } catch (error) {
+      console.error('Error toggling employee type status:', error);
+      alert('Error al cambiar el estado del tipo de empleado');
+    }
   };
 
   const downloadExcel = async () => {

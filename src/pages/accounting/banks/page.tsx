@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { toast } from 'sonner';
+import { useAuth } from '../../../hooks/useAuth';
+import { bankAccountsService, chartAccountsService } from '../../../services/database';
 
 interface Bank {
   id: string;
@@ -16,23 +18,17 @@ interface Bank {
   created_at: string;
 }
 
+interface AccountOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
 export default function BanksPage() {
-  // Datos de ejemplo
-  const [banks, setBanks] = useState<Bank[]>([
-    {
-      id: '1',
-      name: 'Banco Popular',
-      account_number: '1234567890',
-      account_type: 'checking',
-      balance: 50000,
-      currency: 'DOP',
-      is_active: true,
-      bank_code: 'BPDO',
-      swift_code: 'BPDODOSX',
-      contact_info: 'contacto@bancopopular.com',
-      created_at: new Date().toISOString()
-    }
-  ]);
+  const { user } = useAuth();
+  const [banks, setBanks] = useState<Bank[]>([]);
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
   
   const [showBankModal, setShowBankModal] = useState(false);
 
@@ -45,31 +41,102 @@ export default function BanksPage() {
     }).format(value);
   };
 
-  // Función para manejar el envío del formulario
-  const handleSubmitBank = (e: React.FormEvent) => {
-    e.preventDefault();
-    const form = e.target as HTMLFormElement;
-    const formData = new FormData(form);
-    
-    const newBank: Bank = {
-      id: Date.now().toString(),
-      name: formData.get('name') as string,
-      account_number: formData.get('account_number') as string,
-      account_type: formData.get('account_type') as string,
-      balance: parseFloat(formData.get('balance') as string) || 0,
-      currency: formData.get('currency') as string || 'DOP',
-      is_active: true,
-      bank_code: formData.get('bank_code') as string,
-      swift_code: formData.get('swift_code') as string || '',
-      contact_info: formData.get('contact_info') as string || '',
-      created_at: new Date().toISOString()
+  const loadBanks = async () => {
+    if (!user?.id) {
+      setBanks([]);
+      return;
+    }
+    try {
+      const rows = await bankAccountsService.getAll(user.id);
+      const mapped: Bank[] = (rows || []).map((b: any) => ({
+        id: b.id,
+        name: b.bank_name,
+        account_number: b.account_number,
+        account_type: b.account_type,
+        balance: Number(b.current_balance ?? b.initial_balance ?? 0),
+        currency: b.currency || 'DOP',
+        is_active: b.is_active !== false,
+        bank_code: b.bank_code || '',
+        swift_code: b.swift_bic || '',
+        contact_info: b.contact_info || '',
+        created_at: b.created_at,
+      }));
+      setBanks(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading bank accounts', error);
+      setBanks([]);
+    }
+  };
+
+  useEffect(() => {
+    loadBanks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadAccounts = async () => {
+      if (!user?.id) return;
+      setLoadingAccounts(true);
+      try {
+        const data = await chartAccountsService.getAll(user.id);
+        const opts: AccountOption[] = (data || [])
+          .filter((acc: any) => acc.allow_posting !== false)
+          .map((acc: any) => ({
+            id: acc.id,
+            code: acc.code,
+            name: acc.name,
+          }));
+        setAccounts(opts);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading chart of accounts for banks', error);
+      } finally {
+        setLoadingAccounts(false);
+      }
     };
 
-    // Agregar el nuevo banco al estado local
-    setBanks(prev => [newBank, ...prev]);
-    setShowBankModal(false);
-    form.reset();
-    toast.success('Banco agregado correctamente (modo demo)');
+    loadAccounts();
+  }, [user?.id]);
+
+  // Función para manejar el envío del formulario
+  const handleSubmitBank = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para guardar bancos');
+      return;
+    }
+
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+
+    const initialBalance = parseFloat((formData.get('balance') as string) || '0') || 0;
+    const chartAccountId = (formData.get('chart_account_id') as string) || null;
+
+    try {
+      await bankAccountsService.create(user.id, {
+        bank_name: formData.get('name') as string,
+        account_number: formData.get('account_number') as string,
+        account_type: formData.get('account_type') as string,
+        currency: (formData.get('currency') as string) || 'DOP',
+        initial_balance: initialBalance,
+        current_balance: initialBalance,
+        is_active: true,
+        bank_code: formData.get('bank_code') as string,
+        swift_bic: (formData.get('swift_code') as string) || '',
+        contact_info: (formData.get('contact_info') as string) || '',
+        chart_account_id: chartAccountId,
+      });
+
+      await loadBanks();
+      setShowBankModal(false);
+      form.reset();
+      toast.success('Banco agregado correctamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error saving bank account', error);
+      toast.error('Error al guardar el banco');
+    }
   };
 
   return (
@@ -250,7 +317,7 @@ export default function BanksPage() {
                         placeholder="Ej: BPDODOSX"
                       />
                     </div>
-                    <div className="md:col-span-2">
+                    <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         Información de Contacto
                       </label>
@@ -260,6 +327,30 @@ export default function BanksPage() {
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         placeholder="Ej: contacto@bancopopular.com"
                       />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Cuenta Contable del Banco
+                      </label>
+                      {loadingAccounts ? (
+                        <p className="text-sm text-gray-500">Cargando plan de cuentas...</p>
+                      ) : (
+                        <select
+                          name="chart_account_id"
+                          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                          defaultValue=""
+                        >
+                          <option value="">Seleccionar cuenta contable (opcional)</option>
+                          {accounts.map((acc) => (
+                            <option key={acc.id} value={acc.id}>
+                              {acc.code} - {acc.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <p className="mt-1 text-xs text-gray-500">
+                        Esta cuenta se usará para los asientos contables de este banco.
+                      </p>
                     </div>
                   </div>
 

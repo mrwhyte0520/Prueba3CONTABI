@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { fixedAssetsService, assetDisposalService } from '../../../services/database';
 
 interface AssetDisposal {
   id: string;
+  assetId: string;
   assetCode: string;
   assetName: string;
   category: string;
@@ -21,89 +24,74 @@ interface AssetDisposal {
   buyer: string;
 }
 
+interface AssetOption {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  bookValue: number;
+}
+
 export default function AssetDisposalPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [editingDisposal, setEditingDisposal] = useState<AssetDisposal | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterMethod, setFilterMethod] = useState('');
 
-  const [disposals] = useState<AssetDisposal[]>([
-    {
-      id: '1',
-      assetCode: 'ACT-078',
-      assetName: 'Computadora Dell Optiplex',
-      category: 'Equipo de Computación',
-      originalCost: 35000,
-      accumulatedDepreciation: 32000,
-      bookValue: 3000,
-      disposalDate: '2024-01-15',
-      disposalMethod: 'Venta',
-      disposalReason: 'Obsolescencia Tecnológica',
-      salePrice: 5000,
-      gainLoss: 2000,
-      authorizedBy: 'Juan Pérez',
-      status: 'Completado',
-      notes: 'Venta a empleado por actualización tecnológica',
-      buyer: 'Carlos Martínez'
-    },
-    {
-      id: '2',
-      assetCode: 'ACT-134',
-      assetName: 'Vehículo Nissan Sentra 2015',
-      category: 'Vehículos',
-      originalCost: 450000,
-      accumulatedDepreciation: 400000,
-      bookValue: 50000,
-      disposalDate: '2023-12-20',
-      disposalMethod: 'Venta',
-      disposalReason: 'Fin de Vida Útil',
-      salePrice: 75000,
-      gainLoss: 25000,
-      authorizedBy: 'María González',
-      status: 'Completado',
-      notes: 'Venta por alto kilometraje y costos de mantenimiento',
-      buyer: 'AutoUsados SA'
-    },
-    {
-      id: '3',
-      assetCode: 'ACT-089',
-      assetName: 'Maquinaria Antigua',
-      category: 'Maquinaria y Equipo',
-      originalCost: 180000,
-      accumulatedDepreciation: 180000,
-      bookValue: 0,
-      disposalDate: '2024-01-10',
-      disposalMethod: 'Desecho',
-      disposalReason: 'Daño Irreparable',
-      salePrice: 0,
-      gainLoss: 0,
-      authorizedBy: 'Pedro Rodríguez',
-      status: 'Completado',
-      notes: 'Equipo dañado sin posibilidad de reparación',
-      buyer: ''
-    },
-    {
-      id: '4',
-      assetCode: 'ACT-201',
-      assetName: 'Mobiliario de Oficina Antiguo',
-      category: 'Mobiliario y Equipo de Oficina',
-      originalCost: 15000,
-      accumulatedDepreciation: 12000,
-      bookValue: 3000,
-      disposalDate: '2024-02-01',
-      disposalMethod: 'Donación',
-      disposalReason: 'Renovación de Oficinas',
-      salePrice: 0,
-      gainLoss: -3000,
-      authorizedBy: 'Ana López',
-      status: 'Pendiente',
-      notes: 'Donación a institución educativa',
-      buyer: 'Escuela Primaria San José'
-    }
-  ]);
+  const [disposals, setDisposals] = useState<AssetDisposal[]>([]);
+  const [assets, setAssets] = useState<AssetOption[]>([]);
+  const [selectedAssetId, setSelectedAssetId] = useState<string>('');
+  const [bookValueInput, setBookValueInput] = useState<string>('');
 
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user) return;
+      try {
+        const [disposalsData, assetsData] = await Promise.all([
+          assetDisposalService.getAll(user.id),
+          fixedAssetsService.getAll(user.id),
+        ]);
+
+        const mappedDisposals: AssetDisposal[] = (disposalsData || []).map((d: any) => ({
+          id: d.id,
+          assetId: d.asset_id,
+          assetCode: d.asset_code,
+          assetName: d.asset_name,
+          category: d.category,
+          originalCost: Number(d.original_cost) || 0,
+          accumulatedDepreciation: Number(d.accumulated_depreciation) || 0,
+          bookValue: Number(d.book_value) || 0,
+          disposalDate: d.disposal_date,
+          disposalMethod: d.disposal_method,
+          disposalReason: d.disposal_reason,
+          salePrice: Number(d.sale_price) || 0,
+          gainLoss: Number(d.gain_loss) || 0,
+          authorizedBy: d.authorized_by || '',
+          status: d.status,
+          notes: d.notes || '',
+          buyer: d.buyer || '',
+        }));
+        setDisposals(mappedDisposals);
+
+        const mappedAssets: AssetOption[] = (assetsData || []).map((a: any) => ({
+          id: a.id,
+          code: a.code,
+          name: a.name,
+          category: a.category || '',
+          // usaremos current_value como valor en libros base
+          bookValue: Number(a.current_value) || 0,
+        }));
+        setAssets(mappedAssets);
+      } catch (error) {
+        console.error('Error loading disposal data:', error);
+      }
+    };
+
+    loadData();
+ }, [user]);   // ← ESTA LÍNEA ES LA QUE FALTA
   const disposalMethods = [
     'Venta',
     'Donación',
@@ -129,166 +117,304 @@ export default function AssetDisposalPage() {
     
     return matchesSearch && matchesStatus && matchesMethod;
   });
-
-  const totalGainLoss = filteredDisposals.reduce((sum, disposal) => sum + disposal.gainLoss, 0);
-  const totalSaleValue = filteredDisposals.reduce((sum, disposal) => sum + disposal.salePrice, 0);
-  const totalBookValue = filteredDisposals.reduce((sum, disposal) => sum + disposal.bookValue, 0);
+  
+  const totalSaleValue = filteredDisposals.reduce((sum, d) => sum + (d.salePrice || 0), 0);
+  const totalBookValue = filteredDisposals.reduce((sum, d) => sum + (d.bookValue || 0), 0);
+  const totalGainLoss = filteredDisposals.reduce((sum, d) => sum + (d.gainLoss || 0), 0);
 
   const handleAddDisposal = () => {
     setEditingDisposal(null);
+    setSelectedAssetId('');
+    setBookValueInput('');
     setShowModal(true);
   };
 
   const handleEditDisposal = (disposal: AssetDisposal) => {
     setEditingDisposal(disposal);
+    setSelectedAssetId(disposal.assetId);
+    setBookValueInput(disposal.bookValue.toString());
     setShowModal(true);
   };
 
-  const handleDeleteDisposal = (disposalId: string) => {
-    if (confirm('¿Está seguro de que desea eliminar este registro de baja?')) {
-      alert('Registro de baja eliminado correctamente');
+  const handleDeleteDisposal = async (disposalId: string) => {
+    if (!user) return;
+    if (!confirm('¿Está seguro de que desea eliminar este registro de baja?')) return;
+    try {
+      await assetDisposalService.delete(disposalId);
+      setDisposals(prev => prev.filter(d => d.id !== disposalId));
+    } catch (error) {
+      console.error('Error deleting disposal:', error);
+      alert('Error al eliminar la baja de activo');
     }
   };
 
-  const handleApproveDisposal = (disposalId: string) => {
-    if (confirm('¿Está seguro de que desea aprobar esta baja de activo?')) {
-      alert('Baja de activo aprobada correctamente');
+  const handleApproveDisposal = async (disposalId: string) => {
+    if (!user) return;
+    const disposal = disposals.find(d => d.id === disposalId);
+    if (!disposal) return;
+    if (!confirm('¿Está seguro de que desea aprobar esta baja de activo?')) return;
+
+    try {
+      const payload: any = {
+        asset_id: disposal.assetId,
+        asset_code: disposal.assetCode,
+        asset_name: disposal.assetName,
+        category: disposal.category,
+        original_cost: disposal.originalCost,
+        accumulated_depreciation: disposal.accumulatedDepreciation,
+        book_value: disposal.bookValue,
+        disposal_date: disposal.disposalDate,
+        disposal_method: disposal.disposalMethod,
+        disposal_reason: disposal.disposalReason,
+        sale_price: disposal.salePrice,
+        gain_loss: disposal.gainLoss,
+        authorized_by: disposal.authorizedBy || null,
+        status: 'Completado',
+        notes: disposal.notes || null,
+        buyer: disposal.buyer || null,
+      };
+      const updated = await assetDisposalService.update(disposalId, payload);
+
+      // opcional: actualizar el estado del activo a 'disposed'
+      await fixedAssetsService.update(disposal.assetId, {
+        status: 'disposed',
+      });
+
+      setDisposals(prev => prev.map(d => d.id === disposalId ? { ...d, status: updated.status || 'Completado' } : d));
+    } catch (error) {
+      console.error('Error approving disposal:', error);
+      alert('Error al aprobar la baja de activo');
     }
   };
 
-  const handleSaveDisposal = (e: React.FormEvent) => {
+  const handleSaveDisposal = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert(editingDisposal ? 'Baja de activo actualizada correctamente' : 'Baja de activo registrada correctamente');
-    setShowModal(false);
-  };
+    if (!user) return;
 
-  const exportToPDF = () => {
-    // Crear contenido del PDF
-    const filteredData = filteredDisposals;
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    const assetId = selectedAssetId || String(formData.get('assetId') || '').trim();
+    const asset = assets.find(a => a.id === assetId);
+    if (!asset) {
+      alert('Debe seleccionar un activo válido');
+      return;
+    }
 
-    // Función auxiliar para formatear moneda
-    const formatCurrency = (amount: number) => {
-      return new Intl.NumberFormat('es-DO', {
-        style: 'currency',
-        currency: 'DOP'
-      }).format(amount);
+    const bookValue = bookValueInput !== '' ? Number(bookValueInput) : asset.bookValue;
+    const salePrice = Number(formData.get('salePrice') || 0) || 0;
+    const gainLoss = salePrice - bookValue;
+    const disposalDate = String(formData.get('disposalDate') || '').trim() || new Date().toISOString().split('T')[0];
+    const disposalMethod = String(formData.get('disposalMethod') || '').trim();
+    const disposalReason = String(formData.get('disposalReason') || '').trim();
+    const buyer = String(formData.get('buyer') || '').trim() || null;
+    const authorizedBy = String(formData.get('authorizedBy') || '').trim() || null;
+    const status = String(formData.get('status') || 'Pendiente');
+    const notes = String(formData.get('notes') || '').trim() || null;
+
+    const payload: any = {
+      asset_id: asset.id,
+      asset_code: asset.code,
+      asset_name: asset.name,
+      category: asset.category,
+      original_cost: asset.bookValue + (asset.bookValue - bookValue), // aproximación, puedes ajustarlo si llevas costo original real
+      accumulated_depreciation: 0,
+      book_value: bookValue,
+      disposal_date: disposalDate,
+      disposal_method: disposalMethod,
+      disposal_reason: disposalReason,
+      sale_price: salePrice,
+      gain_loss: gainLoss,
+      authorized_by: authorizedBy,
+      status,
+      notes,
+      buyer,
     };
 
-    // Generar contenido HTML para el PDF
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>Retiro de Activos Fijos</title>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 20px; }
-          .header { text-align: center; margin-bottom: 30px; }
-          .summary { background: #f8f9fa; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
-          .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
-          .summary-item { text-align: center; }
-          .summary-value { font-size: 18px; font-weight: bold; color: #2563eb; }
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-          th { background-color: #f8f9fa; font-weight: bold; }
-          .currency { text-align: right; }
-          .positive { color: #059669; font-weight: bold; }
-          .negative { color: #dc2626; font-weight: bold; }
-          .status-completado { color: #059669; font-weight: bold; }
-          .status-pendiente { color: #d97706; font-weight: bold; }
-          .status-proceso { color: #2563eb; font-weight: bold; }
-          .status-cancelado { color: #dc2626; font-weight: bold; }
-          .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>Retiro de Activos Fijos</h1>
-          <p>Reporte generado el ${new Date().toLocaleDateString('es-DO')} a las ${new Date().toLocaleTimeString('es-DO')}</p>
-        </div>
-        
-        <div class="summary">
-          <h3>Resumen de Bajas de Activos</h3>
-          <div class="summary-grid">
-            <div class="summary-item">
-              <div>Ganancia/Pérdida Total</div>
-              <div class="summary-value ${totalGainLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(totalGainLoss)}</div>
-            </div>
-            <div class="summary-item">
-              <div>Valor de Venta Total</div>
-              <div class="summary-value">${formatCurrency(totalSaleValue)}</div>
-            </div>
-            <div class="summary-item">
-              <div>Valor en Libros</div>
-              <div class="summary-value">${formatCurrency(totalBookValue)}</div>
-            </div>
-            <div class="summary-item">
-              <div>Activos Dados de Baja</div>
-              <div class="summary-value">${filteredData.length}</div>
-            </div>
-          </div>
-        </div>
+    try {
+      if (editingDisposal) {
+        const updated = await assetDisposalService.update(editingDisposal.id, payload);
+        const mapped: AssetDisposal = {
+          id: updated.id,
+          assetId: updated.asset_id,
+          assetCode: updated.asset_code,
+          assetName: updated.asset_name,
+          category: updated.category,
+          originalCost: Number(updated.original_cost) || 0,
+          accumulatedDepreciation: Number(updated.accumulated_depreciation) || 0,
+          bookValue: Number(updated.book_value) || 0,
+          disposalDate: updated.disposal_date,
+          disposalMethod: updated.disposal_method,
+          disposalReason: updated.disposal_reason,
+          salePrice: Number(updated.sale_price) || 0,
+          gainLoss: Number(updated.gain_loss) || 0,
+          authorizedBy: updated.authorized_by || '',
+          status: updated.status,
+          notes: updated.notes || '',
+          buyer: updated.buyer || '',
+        };
+        setDisposals(prev => prev.map(d => d.id === editingDisposal.id ? mapped : d));
+      } else {
+        const created = await assetDisposalService.create(user.id, payload);
+        const mapped: AssetDisposal = {
+          id: created.id,
+          assetId: created.asset_id,
+          assetCode: created.asset_code,
+          assetName: created.asset_name,
+          category: created.category,
+          originalCost: Number(created.original_cost) || 0,
+          accumulatedDepreciation: Number(created.accumulated_depreciation) || 0,
+          bookValue: Number(created.book_value) || 0,
+          disposalDate: created.disposal_date,
+          disposalMethod: created.disposal_method,
+          disposalReason: created.disposal_reason,
+          salePrice: Number(created.sale_price) || 0,
+          gainLoss: Number(created.gain_loss) || 0,
+          authorizedBy: created.authorized_by || '',
+          status: created.status,
+          notes: created.notes || '',
+          buyer: created.buyer || '',
+        };
+        setDisposals(prev => [mapped, ...prev]);
+      }
 
-        <table>
-          <thead>
-            <tr>
-              <th>Código</th>
-              <th>Activo</th>
-              <th>Categoría</th>
-              <th>Costo Original</th>
-              <th>Depreciación Acumulada</th>
-              <th>Valor en Libros</th>
-              <th>Precio de Venta</th>
-              <th>Ganancia/Pérdida</th>
-              <th>Método</th>
-              <th>Motivo</th>
-              <th>Fecha</th>
-              <th>Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${filteredData.map(disposal => `
-              <tr>
-                <td>${disposal.assetCode}</td>
-                <td>${disposal.assetName}</td>
-                <td>${disposal.category}</td>
-                <td class="currency">${formatCurrency(disposal.originalCost)}</td>
-                <td class="currency">${formatCurrency(disposal.accumulatedDepreciation)}</td>
-                <td class="currency">${formatCurrency(disposal.bookValue)}</td>
-                <td class="currency">${formatCurrency(disposal.salePrice)}</td>
-                <td class="currency ${disposal.gainLoss >= 0 ? 'positive' : 'negative'}">
-                  ${disposal.gainLoss >= 0 ? '+' : ''}${formatCurrency(disposal.gainLoss)}
-                </td>
-                <td>${disposal.disposalMethod}</td>
-                <td>${disposal.disposalReason}</td>
-                <td>${new Date(disposal.disposalDate).toLocaleDateString('es-DO')}</td>
-                <td class="status-${disposal.status.toLowerCase().replace(' ', '')}">${disposal.status}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-
-        <div class="footer">
-          <p>Sistema de Gestión de Activos Fijos - Retiro de Activos</p>
-          <p>Filtros aplicados: ${searchTerm ? `Búsqueda: "${searchTerm}"` : ''} ${filterStatus ? `Estado: "${filterStatus}"` : ''} ${filterMethod ? `Método: "${filterMethod}"` : ''}</p>
-        </div>
-      </body>
-      </html>
-    `;
-
-    // Crear y abrir ventana para imprimir
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-      printWindow.focus();
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    } else {
-      alert('No se pudo abrir la ventana de impresión. Verifique que no esté bloqueada por el navegador.');
+      setShowModal(false);
+      setEditingDisposal(null);
+      setSelectedAssetId('');
+      setBookValueInput('');
+      form.reset();
+    } catch (error) {
+      console.error('Error saving disposal:', error);
+      alert('Error al guardar la baja de activo');
     }
   };
+
+  // const exportToPDF = () => {
+  //   // Crear contenido del PDF
+  //   const filteredData = filteredDisposals;
+  //
+  //   // Función auxiliar para formatear moneda
+  //   const formatCurrency = (amount: number) => {
+  //     return new Intl.NumberFormat('es-DO', {
+  //       style: 'currency',
+  //       currency: 'DOP'
+  //     }).format(amount);
+  //   };
+  //
+  //   // Generar contenido HTML para el PDF
+  //   const htmlContent = `
+  //     <!DOCTYPE html>
+  //     <html>
+  //     <head>
+  //       <meta charset="UTF-8">
+  //       <title>Retiro de Activos Fijos</title>
+  //       <style>
+  //         body { font-family: Arial, sans-serif; margin: 20px; }
+  //         .header { text-align: center; margin-bottom: 30px; }
+  //         .summary { background: #f8f9fa; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+  //         .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+  //         .summary-item { text-align: center; }
+  //         .summary-value { font-size: 18px; font-weight: bold; color: #2563eb; }
+  //         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+  //         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+  //         th { background-color: #f8f9fa; font-weight: bold; }
+  //         .currency { text-align: right; }
+  //         .positive { color: #059669; font-weight: bold; }
+  //         .negative { color: #dc2626; font-weight: bold; }
+  //         .status-completado { color: #059669; font-weight: bold; }
+  //         .status-pendiente { color: #d97706; font-weight: bold; }
+  //         .status-proceso { color: #2563eb; font-weight: bold; }
+  //         .status-cancelado { color: #dc2626; font-weight: bold; }
+  //         .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
+  //       </style>
+  //     </head>
+  //     <body>
+  //       <div class="header">
+  //         <h1>Retiro de Activos Fijos</h1>
+  //         <p>Reporte generado el ${new Date().toLocaleDateString('es-DO')} a las ${new Date().toLocaleTimeString('es-DO')}</p>
+  //       </div>
+  //       
+  //       <div class="summary">
+  //         <h3>Resumen de Bajas de Activos</h3>
+  //         <div class="summary-grid">
+  //           <div class="summary-item">
+  //             <div>Ganancia/Pérdida Total</div>
+  //             <div class="summary-value ${totalGainLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(totalGainLoss)}</div>
+  //           </div>
+  //           <div class="summary-item">
+  //             <div>Valor de Venta Total</div>
+  //             <div class="summary-value">${formatCurrency(totalSaleValue)}</div>
+  //           </div>
+  //           <div class="summary-item">
+  //             <div>Valor en Libros</div>
+  //             <div class="summary-value">${formatCurrency(totalBookValue)}</div>
+  //           </div>
+  //           <div class="summary-item">
+  //             <div>Activos Dados de Baja</div>
+  //             <div class="summary-value">${filteredData.length}</div>
+  //           </div>
+  //         </div>
+  //       </div>
+  //
+  //       <table>
+  //         <thead>
+  //           <tr>
+  //             <th>Código</th>
+  //             <th>Activo</th>
+  //             <th>Categoría</th>
+  //             <th>Costo Original</th>
+  //             <th>Depreciación Acumulada</th>
+  //             <th>Valor en Libros</th>
+  //             <th>Precio de Venta</th>
+  //             <th>Ganancia/Pérdida</th>
+  //             <th>Método</th>
+  //             <th>Motivo</th>
+  //             <th>Fecha</th>
+  //             <th>Estado</th>
+  //           </tr>
+  //         </thead>
+  //         <tbody>
+  //           ${filteredData.map(disposal => `
+  //             <tr>
+  //               <td>${disposal.assetCode}</td>
+  //               <td>${disposal.assetName}</td>
+  //               <td>${disposal.category}</td>
+  //               <td class="currency">${formatCurrency(disposal.originalCost)}</td>
+  //               <td class="currency">${formatCurrency(disposal.accumulatedDepreciation)}</td>
+  //               <td class="currency">${formatCurrency(disposal.bookValue)}</td>
+  //               <td class="currency">${formatCurrency(disposal.salePrice)}</td>
+  //               <td class="currency ${disposal.gainLoss >= 0 ? 'positive' : 'negative'}">
+  //                 ${disposal.gainLoss >= 0 ? '+' : ''}${formatCurrency(disposal.gainLoss)}
+  //               </td>
+  //               <td>${disposal.disposalMethod}</td>
+  //               <td>${disposal.disposalReason}</td>
+  //               <td>${new Date(disposal.disposalDate).toLocaleDateString('es-DO')}</td>
+  //               <td class="status-${disposal.status.toLowerCase().replace(' ', '')}">${disposal.status}</td>
+  //             </tr>
+  //           `).join('')}
+  //         </tbody>
+  //       </table>
+  //
+  //       <div class="footer">
+  //         <p>Sistema de Gestión de Activos Fijos - Retiro de Activos</p>
+  //         <p>Filtros aplicados: ${searchTerm ? `Búsqueda: "${searchTerm}"` : ''} ${filterStatus ? `Estado: "${filterStatus}"` : ''} ${filterMethod ? `Método: "${filterMethod}"` : ''}</p>
+  //       </div>
+  //     </body>
+  //     </html>
+  //   `;
+  //
+  //   // Crear y abrir ventana para imprimir
+  //   const printWindow = window.open('', '_blank');
+  //   if (printWindow) {
+  //     printWindow.document.write(htmlContent);
+  //     printWindow.document.close();
+  //     printWindow.focus();
+  //     setTimeout(() => {
+  //       printWindow.print();
+  //     }, 500);
+  //   } else {
+  //     alert('No se pudo abrir la ventana de impresión. Verifique que no esté bloqueada por el navegador.');
+  //   }
+  // };
 
   const exportToExcel = () => {
     // Preparar datos para Excel
@@ -646,13 +772,29 @@ export default function AssetDisposalPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Código del Activo *
                     </label>
-                    <input
-                      type="text"
+                    <select
                       required
-                      defaultValue={editingDisposal?.assetCode || ''}
+                      name="assetId"
+                      value={selectedAssetId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setSelectedAssetId(id);
+                        const asset = assets.find(a => a.id === id);
+                        if (asset) {
+                          setBookValueInput(asset.bookValue.toString());
+                        } else {
+                          setBookValueInput('');
+                        }
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="ACT-001"
-                    />
+                    >
+                      <option value="">Seleccionar activo</option>
+                      {assets.map(asset => (
+                        <option key={asset.id} value={asset.id}>
+                          {asset.code} - {asset.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -662,7 +804,9 @@ export default function AssetDisposalPage() {
                       type="number"
                       required
                       step="0.01"
-                      defaultValue={editingDisposal?.bookValue || ''}
+                      name="bookValue"
+                      value={bookValueInput}
+                      onChange={(e) => setBookValueInput(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
                     />

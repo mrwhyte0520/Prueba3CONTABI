@@ -1,91 +1,40 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import * as ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { useAuth } from '../../../hooks/useAuth';
+import { invoicesService } from '../../../services/database';
+
+interface UiInvoiceItem {
+  description: string;
+  quantity: number;
+  price: number;
+  total: number;
+}
+
+interface UiInvoice {
+  id: string; // número visible
+  customer: string;
+  customerEmail: string;
+  amount: number; // subtotal
+  tax: number;
+  total: number;
+  status: 'paid' | 'pending' | 'overdue' | 'draft';
+  date: string;
+  dueDate: string;
+  items: UiInvoiceItem[];
+}
 
 export default function InvoicingPage() {
+  const { user } = useAuth();
   const [showNewInvoiceModal, setShowNewInvoiceModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [invoices, setInvoices] = useState([
-    {
-      id: 'FAC-2024-189',
-      customer: 'Empresa ABC SRL',
-      customerEmail: 'contacto@empresaabc.com',
-      amount: 45000,
-      tax: 8100,
-      total: 53100,
-      status: 'paid',
-      date: '2024-01-15',
-      dueDate: '2024-02-14',
-      items: [
-        { description: 'Laptop Dell Inspiron 15', quantity: 1, price: 35000, total: 35000 },
-        { description: 'Mouse Inalámbrico', quantity: 2, price: 5000, total: 10000 }
-      ]
-    },
-    {
-      id: 'FAC-2024-188',
-      customer: 'Comercial XYZ EIRL',
-      customerEmail: 'ventas@comercialxyz.com',
-      amount: 32500,
-      tax: 5850,
-      total: 38350,
-      status: 'pending',
-      date: '2024-01-15',
-      dueDate: '2024-02-14',
-      items: [
-        { description: 'Monitor Samsung 24"', quantity: 2, price: 12500, total: 25000 },
-        { description: 'Teclado Mecánico', quantity: 1, price: 7500, total: 7500 }
-      ]
-    },
-    {
-      id: 'FAC-2024-187',
-      customer: 'Distribuidora DEF SA',
-      customerEmail: 'compras@distribuidoradef.com',
-      amount: 78000,
-      tax: 14040,
-      total: 92040,
-      status: 'paid',
-      date: '2024-01-14',
-      dueDate: '2024-02-13',
-      items: [
-        { description: 'Impresora HP LaserJet', quantity: 3, price: 18000, total: 54000 },
-        { description: 'Papel A4 (Resma)', quantity: 20, price: 1200, total: 24000 }
-      ]
-    },
-    {
-      id: 'FAC-2024-186',
-      customer: 'Servicios GHI SRL',
-      customerEmail: 'admin@serviciosghi.com',
-      amount: 25000,
-      tax: 4500,
-      total: 29500,
-      status: 'overdue',
-      date: '2024-01-13',
-      dueDate: '2024-01-28',
-      items: [
-        { description: 'Servicio de Mantenimiento', quantity: 1, price: 25000, total: 25000 }
-      ]
-    },
-    {
-      id: 'FAC-2024-185',
-      customer: 'Tecnología JKL SA',
-      customerEmail: 'info@tecnologiajkl.com',
-      amount: 156000,
-      tax: 28080,
-      total: 184080,
-      status: 'draft',
-      date: '2024-01-15',
-      dueDate: '2024-02-14',
-      items: [
-        { description: 'Servidor Dell PowerEdge', quantity: 1, price: 120000, total: 120000 },
-        { description: 'Switch de Red 24 puertos', quantity: 2, price: 18000, total: 36000 }
-      ]
-    }
-  ]);
+  const [invoices, setInvoices] = useState<UiInvoice[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const [showInvoiceDetailModal, setShowInvoiceDetailModal] = useState(false);
   const [isEditingInvoice, setIsEditingInvoice] = useState(false);
@@ -105,6 +54,74 @@ export default function InvoicingPage() {
     { id: '4', name: 'Teclado Mecánico RGB', price: 7500, stock: 67 },
     { id: '5', name: 'Mouse Inalámbrico', price: 5000, stock: 120 }
   ];
+
+  const loadInvoices = async () => {
+    if (!user?.id) return;
+    setLoading(true);
+    try {
+      const data = await invoicesService.getAll(user.id as string);
+      const mapped: UiInvoice[] = (data as any[]).map((inv) => {
+        const subtotal = Number(inv.subtotal) || 0;
+        const tax = Number(inv.tax_amount) || 0;
+        const total = Number(inv.total_amount) || subtotal + tax;
+
+        const items: UiInvoiceItem[] = (inv.invoice_lines || []).map((line: any) => {
+          const qty = Number(line.quantity) || 0;
+          const unitPrice = Number(line.unit_price) || 0;
+          const lineTotal = Number(line.line_total) || qty * unitPrice;
+          return {
+            description: line.description || line.inventory_items?.name || 'Ítem',
+            quantity: qty,
+            price: unitPrice,
+            total: lineTotal,
+          };
+        });
+
+        if (items.length === 0) {
+          items.push({
+            description: inv.description || 'Servicio/Producto',
+            quantity: 1,
+            price: total,
+            total,
+          });
+        }
+
+        const statusDb = (inv.status as string) || 'pending';
+        let status: UiInvoice['status'];
+        if (statusDb === 'paid') status = 'paid';
+        else if (statusDb === 'overdue') status = 'overdue';
+        else if (statusDb === 'draft') status = 'draft';
+        else status = 'pending';
+
+        return {
+          id: (inv.invoice_number as string) || String(inv.id),
+          customer: (inv.customers as any)?.name || 'Cliente',
+          customerEmail: (inv.customers as any)?.email || '',
+          amount: subtotal,
+          tax,
+          total,
+          status,
+          date: (inv.invoice_date as string) || new Date().toISOString().slice(0, 10),
+          dueDate: (inv.due_date as string) || (inv.invoice_date as string) || new Date().toISOString().slice(0, 10),
+          items,
+        };
+      });
+
+      setInvoices(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error cargando facturas para Facturación:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (user?.id) {
+      loadInvoices();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const getStatusColor = (status: string) => {
     switch (status) {

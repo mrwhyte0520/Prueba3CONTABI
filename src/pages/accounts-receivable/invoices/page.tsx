@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { useAuth } from '../../../hooks/useAuth';
+import { customersService, invoicesService } from '../../../services/database';
 
 interface Invoice {
   id: string;
@@ -18,87 +20,69 @@ interface Invoice {
 }
 
 export default function InvoicesPage() {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
+  const [loadingCustomers, setLoadingCustomers] = useState(false);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
 
-  // Mock data
-  const invoices: Invoice[] = [
-    {
-      id: '1',
-      customerId: '1',
-      customerName: 'Empresa ABC S.R.L.',
-      invoiceNumber: 'FAC-001',
-      date: '2024-01-01',
-      dueDate: '2024-01-31',
-      amount: 100000,
-      paidAmount: 50000,
-      balance: 50000,
-      status: 'partial',
-      daysOverdue: 0
-    },
-    {
-      id: '2',
-      customerId: '1',
-      customerName: 'Empresa ABC S.R.L.',
-      invoiceNumber: 'FAC-002',
-      date: '2023-12-15',
-      dueDate: '2024-01-14',
-      amount: 75000,
-      paidAmount: 0,
-      balance: 75000,
-      status: 'overdue',
-      daysOverdue: 15
-    },
-    {
-      id: '3',
-      customerId: '2',
-      customerName: 'Comercial XYZ',
-      invoiceNumber: 'FAC-003',
-      date: '2024-01-10',
-      dueDate: '2024-02-09',
-      amount: 85000,
-      paidAmount: 0,
-      balance: 85000,
-      status: 'pending',
-      daysOverdue: 0
-    },
-    {
-      id: '4',
-      customerId: '3',
-      customerName: 'Distribuidora DEF',
-      invoiceNumber: 'FAC-004',
-      date: '2024-01-05',
-      dueDate: '2024-02-04',
-      amount: 45000,
-      paidAmount: 0,
-      balance: 45000,
-      status: 'pending',
-      daysOverdue: 0
-    },
-    {
-      id: '5',
-      customerId: '2',
-      customerName: 'Comercial XYZ',
-      invoiceNumber: 'FAC-005',
-      date: '2023-12-20',
-      dueDate: '2024-01-19',
-      amount: 120000,
-      paidAmount: 120000,
-      balance: 0,
-      status: 'paid',
-      daysOverdue: 0
+  const loadCustomers = async () => {
+    if (!user?.id) return;
+    setLoadingCustomers(true);
+    try {
+      const list = await customersService.getAll(user.id);
+      setCustomers(list.map(c => ({ id: c.id, name: c.name })));
+    } finally {
+      setLoadingCustomers(false);
     }
-  ];
+  };
 
-  const customers = [
-    { id: '1', name: 'Empresa ABC S.R.L.' },
-    { id: '2', name: 'Comercial XYZ' },
-    { id: '3', name: 'Distribuidora DEF' },
-    { id: '4', name: 'Servicios GHI' }
-  ];
+  const loadInvoices = async () => {
+    if (!user?.id) return;
+    setLoadingInvoices(true);
+    try {
+      const data = await invoicesService.getAll(user.id as string);
+      const mapped: Invoice[] = (data as any[]).map((inv) => {
+        const total = Number(inv.total_amount) || 0;
+        const paid = Number(inv.paid_amount) || 0;
+        const balance = total - paid;
+        const today = new Date();
+        const due = inv.due_date ? new Date(inv.due_date) : null;
+        let daysOverdue = 0;
+        if (due && balance > 0) {
+          const diff = Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+          daysOverdue = diff > 0 ? diff : 0;
+        }
+        return {
+          id: String(inv.id),
+          customerId: String(inv.customer_id),
+          customerName: (inv.customers as any)?.name || 'Cliente',
+          invoiceNumber: inv.invoice_number as string,
+          date: inv.invoice_date as string,
+          dueDate: inv.due_date as string,
+          amount: total,
+          paidAmount: paid,
+          balance,
+          status: (inv.status as Invoice['status']) || 'pending',
+          daysOverdue,
+        };
+      });
+      setInvoices(mapped);
+    } finally {
+      setLoadingInvoices(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCustomers();
+    loadInvoices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -257,17 +241,118 @@ export default function InvoicesPage() {
     }
   };
 
-  const handleSaveInvoice = (e: React.FormEvent) => {
+  const handleSaveInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert('Factura creada exitosamente');
-    setShowInvoiceModal(false);
+    if (!user?.id) {
+      alert('Debes iniciar sesión para crear facturas');
+      return;
+    }
+    const formData = new FormData(e.currentTarget);
+    const customerId = String(formData.get('customer_id') || '');
+    const dueDate = String(formData.get('due_date') || '');
+    const description = String(formData.get('description') || '');
+    const amount = Number(formData.get('amount') || 0);
+
+    if (!customerId || !amount) {
+      alert('Cliente y monto son obligatorios');
+      return;
+    }
+
+    // Debug trace
+    // eslint-disable-next-line no-console
+    console.log('[Invoices] handleSaveInvoice payload', { customerId, dueDate, description, amount });
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const invoiceNumber = `FAC-${Date.now()}`;
+
+    const invoicePayload = {
+      customer_id: customerId,
+      invoice_number: invoiceNumber,
+      invoice_date: todayStr,
+      due_date: dueDate || null,
+      currency: 'DOP',
+      subtotal: amount,
+      tax_amount: 0,
+      total_amount: amount,
+      paid_amount: 0,
+      status: 'pending',
+      notes: description,
+    };
+
+    const linesPayload = [
+      {
+        description: description || 'Servicio/Producto',
+        quantity: 1,
+        unit_price: amount,
+        line_total: amount,
+      },
+    ];
+
+    try {
+      await invoicesService.create(user.id, invoicePayload, linesPayload);
+      await loadInvoices();
+      alert('Factura creada exitosamente');
+      setShowInvoiceModal(false);
+    } catch (error: any) {
+      // eslint-disable-next-line no-console
+      console.error('[Invoices] Error al crear factura', error);
+      alert(`Error al crear la factura: ${error?.message || 'revisa la consola para más detalles'}`);
+    }
   };
 
-  const handleSavePayment = (e: React.FormEvent) => {
+  const handleSavePayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert('Pago registrado exitosamente');
-    setShowPaymentModal(false);
-    setSelectedInvoice(null);
+
+    if (!user?.id) {
+      alert('Debes iniciar sesión para registrar pagos');
+      return;
+    }
+
+    const formData = new FormData(e.currentTarget);
+
+    // Si se abrió desde una fila, usamos esa factura; si no, tomamos la del select
+    const invoiceId = selectedInvoice
+      ? selectedInvoice.id
+      : String(formData.get('invoice_id') || '');
+
+    const amountToPay = Number(formData.get('amount_to_pay') || 0);
+
+    if (!invoiceId) {
+      alert('Debes seleccionar una factura');
+      return;
+    }
+
+    if (!amountToPay || amountToPay <= 0) {
+      alert('El monto a pagar debe ser mayor que 0');
+      return;
+    }
+
+    const currentInvoice = invoices.find((inv) => inv.id === invoiceId);
+    if (!currentInvoice) {
+      alert('La factura seleccionada no es válida');
+      return;
+    }
+
+    if (amountToPay > currentInvoice.balance) {
+      alert('El monto a pagar no puede ser mayor que el saldo de la factura');
+      return;
+    }
+
+    const newPaid = currentInvoice.paidAmount + amountToPay;
+    const newBalance = currentInvoice.amount - newPaid;
+    const newStatus: Invoice['status'] = newBalance > 0 ? 'partial' : 'paid';
+
+    try {
+      await invoicesService.updatePayment(invoiceId, newPaid, newStatus);
+      await loadInvoices();
+      alert('Pago registrado exitosamente');
+      setShowPaymentModal(false);
+      setSelectedInvoice(null);
+    } catch (error: any) {
+      // eslint-disable-next-line no-console
+      console.error('[Invoices] Error al registrar pago', error);
+      alert(`Error al registrar el pago: ${error?.message || 'revisa la consola para más detalles'}`);
+    }
   };
 
   return (
@@ -340,6 +425,9 @@ export default function InvoicesPage() {
 
         {/* Invoices Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          {(loadingCustomers || loadingInvoices) && (
+            <div className="px-6 pt-3 text-sm text-gray-500">Cargando datos...</div>
+          )}
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -461,6 +549,7 @@ export default function InvoicesPage() {
                     </label>
                     <select 
                       required
+                      name="customer_id"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar cliente</option>
@@ -479,6 +568,7 @@ export default function InvoicesPage() {
                     <input
                       type="date"
                       required
+                      name="due_date"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -490,6 +580,7 @@ export default function InvoicesPage() {
                   </label>
                   <textarea
                     rows={3}
+                    name="description"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Descripción de los productos o servicios..."
                   />
@@ -503,6 +594,7 @@ export default function InvoicesPage() {
                     type="number"
                     step="0.01"
                     required
+                    name="amount"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="0.00"
                   />
@@ -561,6 +653,7 @@ export default function InvoicesPage() {
                     </label>
                     <select 
                       required
+                      name="invoice_id"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar factura</option>
@@ -581,6 +674,7 @@ export default function InvoicesPage() {
                     type="number"
                     step="0.01"
                     required
+                    name="amount_to_pay"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="0.00"
                     max={selectedInvoice?.balance || undefined}
@@ -593,6 +687,7 @@ export default function InvoicesPage() {
                   </label>
                   <select 
                     required
+                    name="payment_method"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="cash">Efectivo</option>
@@ -608,6 +703,7 @@ export default function InvoicesPage() {
                   </label>
                   <input
                     type="text"
+                    name="reference"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Número de referencia"
                   />

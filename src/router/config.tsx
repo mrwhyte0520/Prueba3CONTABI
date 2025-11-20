@@ -59,6 +59,7 @@ const TaxesPage = lazy(() => import('../pages/taxes/page'));
 const PlansPage = lazy(() => import('../pages/plans/page'));
 const StudentVerifyPage = lazy(() => import('../pages/plans/student-verify'));
 const ProfilePage = lazy(() => import('../pages/profile/page'));
+const ReferralsPage = lazy(() => import('../pages/referrals/page'));
 const LoginPage = lazy(() => import('../pages/auth/login'));
 const RegisterPage = lazy(() => import('../pages/auth/register'));
 const ResetPasswordPage = lazy(() => import('../pages/auth/reset-password'));
@@ -112,6 +113,10 @@ const routes: RouteObject[] = [
   {
     path: '/',
     element: <HomePage />
+  },
+  {
+    path: '/referrals',
+    element: <ProtectedRoute><ReferralsPage /></ProtectedRoute>
   },
   {
     path: '/dashboard',

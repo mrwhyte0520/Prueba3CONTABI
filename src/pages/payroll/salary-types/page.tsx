@@ -1,6 +1,7 @@
-
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { salaryTypesService } from '../../../services/database';
 
 interface SalaryType {
   id: string;
@@ -17,6 +18,7 @@ interface SalaryType {
 }
 
 export default function SalaryTypesPage() {
+  const { user } = useAuth();
   const [salaryTypes, setSalaryTypes] = useState<SalaryType[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterMethod, setFilterMethod] = useState<string>('all');
@@ -34,6 +36,33 @@ export default function SalaryTypesPage() {
     holiday_rate: 2.0
   });
 
+  useEffect(() => {
+    const loadTypes = async () => {
+      if (!user) return;
+      try {
+        const data = await salaryTypesService.getAll(user.id);
+        const mapped: SalaryType[] = (data || []).map((t: any) => ({
+          id: t.id,
+          name: t.name || '',
+          description: t.description || '',
+          calculation_method: (t.calculation_method as SalaryType['calculation_method']) || 'fixed',
+          base_amount: Number(t.base_amount) || 0,
+          commission_rate: t.commission_rate != null ? Number(t.commission_rate) : undefined,
+          overtime_rate: Number(t.overtime_rate) || 1.5,
+          night_shift_rate: Number(t.night_shift_rate) || 1.15,
+          holiday_rate: Number(t.holiday_rate) || 2.0,
+          is_active: t.is_active !== false,
+          created_at: (t.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+        }));
+        setSalaryTypes(mapped);
+      } catch (error) {
+        console.error('Error loading salary types:', error);
+      }
+    };
+
+    loadTypes();
+  }, [user]);
+
   const filteredTypes = salaryTypes.filter(type => {
     const matchesSearch = type.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          type.description.toLowerCase().includes(searchTerm.toLowerCase());
@@ -41,26 +70,68 @@ export default function SalaryTypesPage() {
     return matchesSearch && matchesMethod;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (editingType) {
-      setSalaryTypes(prev => prev.map(type => 
-        type.id === editingType.id 
-          ? { ...type, ...formData }
-          : type
-      ));
-    } else {
-      const newType: SalaryType = {
-        id: Date.now().toString(),
-        ...formData,
-        is_active: true,
-        created_at: new Date().toISOString().split('T')[0]
-      };
-      setSalaryTypes(prev => [...prev, newType]);
+
+    if (!user) {
+      alert('Debe iniciar sesión para gestionar tipos de salarios.');
+      return;
     }
-    
-    resetForm();
+
+    const payload = {
+      name: formData.name,
+      description: formData.description,
+      calculation_method: formData.calculation_method,
+      base_amount: formData.base_amount,
+      commission_rate: formData.commission_rate || null,
+      overtime_rate: formData.overtime_rate,
+      night_shift_rate: formData.night_shift_rate,
+      holiday_rate: formData.holiday_rate,
+    };
+
+    try {
+      if (editingType) {
+        const updated = await salaryTypesService.update(editingType.id, payload);
+        setSalaryTypes(prev => prev.map(type =>
+          type.id === editingType.id
+            ? {
+                id: updated.id,
+                name: updated.name || '',
+                description: updated.description || '',
+                calculation_method: (updated.calculation_method as SalaryType['calculation_method']) || 'fixed',
+                base_amount: Number(updated.base_amount) || 0,
+                commission_rate: updated.commission_rate != null ? Number(updated.commission_rate) : undefined,
+                overtime_rate: Number(updated.overtime_rate) || 1.5,
+                night_shift_rate: Number(updated.night_shift_rate) || 1.15,
+                holiday_rate: Number(updated.holiday_rate) || 2.0,
+                is_active: updated.is_active !== false,
+                created_at: (updated.created_at || '').split('T')[0] || editingType.created_at,
+              }
+            : type
+        ));
+      } else {
+        const created = await salaryTypesService.create(user.id, payload);
+        const newType: SalaryType = {
+          id: created.id,
+          name: created.name || '',
+          description: created.description || '',
+          calculation_method: (created.calculation_method as SalaryType['calculation_method']) || 'fixed',
+          base_amount: Number(created.base_amount) || 0,
+          commission_rate: created.commission_rate != null ? Number(created.commission_rate) : undefined,
+          overtime_rate: Number(created.overtime_rate) || 1.5,
+          night_shift_rate: Number(created.night_shift_rate) || 1.15,
+          holiday_rate: Number(created.holiday_rate) || 2.0,
+          is_active: created.is_active !== false,
+          created_at: (created.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+        };
+        setSalaryTypes(prev => [...prev, newType]);
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error('Error saving salary type:', error);
+      alert('Error al guardar el tipo de salario');
+    }
   };
 
   const resetForm = () => {
@@ -93,10 +164,20 @@ export default function SalaryTypesPage() {
     setShowForm(true);
   };
 
-  const toggleStatus = (id: string) => {
-    setSalaryTypes(prev => prev.map(type => 
-      type.id === id ? { ...type, is_active: !type.is_active } : type
-    ));
+  const toggleStatus = async (id: string) => {
+    const current = salaryTypes.find(t => t.id === id);
+    if (!current) return;
+    const newStatus = !current.is_active;
+
+    try {
+      await salaryTypesService.update(id, { is_active: newStatus });
+      setSalaryTypes(prev => prev.map(type =>
+        type.id === id ? { ...type, is_active: newStatus } : type
+      ));
+    } catch (error) {
+      console.error('Error toggling salary type status:', error);
+      alert('Error al cambiar el estado del tipo de salario');
+    }
   };
 
   const exportToExcel = () => {

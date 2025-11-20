@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { settingsService } from '../../../services/database';
+import { settingsService, chartAccountsService } from '../../../services/database';
+import { useAuth } from '../../../hooks/useAuth';
 
 interface AccountingSettings {
   id?: string;
@@ -13,9 +14,21 @@ interface AccountingSettings {
   auto_backup: boolean;
   backup_frequency: string;
   retention_period: number;
+  ar_account_id?: string | null;
+  sales_account_id?: string | null;
+  sales_tax_account_id?: string | null;
+  ap_account_id?: string | null;
+  ap_bank_account_id?: string | null;
+}
+
+interface AccountOption {
+  id: string;
+  code: string;
+  name: string;
 }
 
 export default function AccountingSettingsPage() {
+  const { user } = useAuth();
   const [settings, setSettings] = useState<AccountingSettings>({
     fiscal_year_start: '2024-01-01',
     fiscal_year_end: '2024-12-31',
@@ -25,17 +38,49 @@ export default function AccountingSettingsPage() {
     number_format: '1,234.56',
     auto_backup: true,
     backup_frequency: 'daily',
-    retention_period: 30
+    retention_period: 30,
+    ar_account_id: null,
+    sales_account_id: null,
+    sales_tax_account_id: null,
+    ap_account_id: null,
+    ap_bank_account_id: null,
   });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
 
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    const loadAccounts = async () => {
+      if (!user) return;
+      setLoadingAccounts(true);
+      try {
+        const data = await chartAccountsService.getAll(user.id);
+        const options: AccountOption[] = (data || [])
+          .filter((acc: any) => acc.allow_posting !== false)
+          .map((acc: any) => ({
+            id: acc.id,
+            code: acc.code,
+            name: acc.name,
+          }));
+        setAccounts(options);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading chart of accounts:', error);
+      } finally {
+        setLoadingAccounts(false);
+      }
+    };
+
+    loadAccounts();
+  }, [user]);
 
   const loadSettings = async () => {
     try {
@@ -217,6 +262,104 @@ export default function AccountingSettingsPage() {
                 />
               </div>
             </div>
+          </div>
+
+          {/* Default Accounts Settings */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Cuentas Contables por Defecto</h2>
+            {loadingAccounts ? (
+              <p className="text-gray-500 text-sm">Cargando plan de cuentas...</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de Cuentas por Cobrar (Clientes)
+                  </label>
+                  <select
+                    value={settings.ar_account_id || ''}
+                    onChange={(e) => handleInputChange('ar_account_id', e.target.value || null)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de Ventas
+                  </label>
+                  <select
+                    value={settings.sales_account_id || ''}
+                    onChange={(e) => handleInputChange('sales_account_id', e.target.value || null)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de ITBIS por Pagar
+                  </label>
+                  <select
+                    value={settings.sales_tax_account_id || ''}
+                    onChange={(e) => handleInputChange('sales_tax_account_id', e.target.value || null)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de Cuentas por Pagar (Proveedores)
+                  </label>
+                  <select
+                    value={settings.ap_account_id || ''}
+                    onChange={(e) => handleInputChange('ap_account_id', e.target.value || null)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de Banco por Defecto para Pagos a Proveedores
+                  </label>
+                  <select
+                    value={settings.ap_bank_account_id || ''}
+                    onChange={(e) => handleInputChange('ap_bank_account_id', e.target.value || null)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Currency and Format Settings */}

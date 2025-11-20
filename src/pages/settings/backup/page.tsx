@@ -1,13 +1,70 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { settingsService, auditLogsService } from '../../../services/database';
+
+interface BackupRecord {
+  id: string;
+  backup_type: string;
+  backup_name: string;
+  backup_date: string;
+  file_size: number | null;
+  status: string;
+  created_at?: string;
+}
 
 export default function BackupSettingsPage() {
   const [autoBackup, setAutoBackup] = useState(true);
   const [backupFrequency, setBackupFrequency] = useState('daily');
   const [retentionDays, setRetentionDays] = useState(30);
   const [encryptBackups, setEncryptBackups] = useState(true);
+  const [auditLogEnabled, setAuditLogEnabled] = useState(true);
+  const [autoLogoutEnabled, setAutoLogoutEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [accountingSettings, setAccountingSettings] = useState<any | null>(null);
+  const [history, setHistory] = useState<BackupRecord[]>([]);
+
+  const handleDownloadAuditLog = async () => {
+    try {
+      const logs = await auditLogsService.exportLogs();
+      const blob = new Blob([JSON.stringify(logs, null, 2)], {
+        type: 'application/json;charset=utf-8',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audit-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading audit log:', error);
+      setMessage({ type: 'error', text: 'Error al descargar el log de auditoría' });
+    }
+  };
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [acc, backups] = await Promise.all([
+          settingsService.getAccountingSettings(),
+          settingsService.getBackups(),
+        ]);
+        if (acc) {
+          setAccountingSettings(acc);
+          setAutoBackup(acc.auto_backup ?? true);
+          setBackupFrequency(acc.backup_frequency || 'daily');
+          setRetentionDays(acc.retention_period ?? 30);
+          setAuditLogEnabled(acc.audit_log_enabled ?? true);
+          setAutoLogoutEnabled(acc.auto_logout_enabled ?? true);
+        }
+        setHistory(backups as BackupRecord[]);
+      } catch (error) {
+        console.error('Error loading backup settings:', error);
+      }
+    };
+
+    load();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -15,8 +72,16 @@ export default function BackupSettingsPage() {
     setMessage(null);
 
     try {
-      // Simular guardado de configuración
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const payload = {
+        ...(accountingSettings || {}),
+        auto_backup: autoBackup,
+        backup_frequency: backupFrequency,
+        retention_period: retentionDays,
+        audit_log_enabled: auditLogEnabled,
+        auto_logout_enabled: autoLogoutEnabled,
+      };
+      await settingsService.saveAccountingSettings(payload);
+      setAccountingSettings(payload);
       setMessage({ type: 'success', text: 'Configuración de respaldos guardada exitosamente' });
     } catch (error) {
       setMessage({ type: 'error', text: 'Error al guardar la configuración' });
@@ -30,8 +95,12 @@ export default function BackupSettingsPage() {
     setMessage(null);
 
     try {
-      // Simular proceso de respaldo
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const backup = await settingsService.createBackup({
+        backup_type: 'manual',
+        backup_name: `Respaldo manual - ${new Date().toLocaleString()}`,
+        retention_days: retentionDays,
+      });
+      setHistory((prev) => [backup as BackupRecord, ...prev]);
       setMessage({ type: 'success', text: 'Respaldo creado exitosamente' });
     } catch (error) {
       setMessage({ type: 'error', text: 'Error al crear el respaldo' });
@@ -40,13 +109,33 @@ export default function BackupSettingsPage() {
     }
   };
 
-  const backupHistory = [
-    { id: 1, date: '2024-01-15 03:00:00', size: '45.2 MB', status: 'Completado' },
-    { id: 2, date: '2024-01-14 03:00:00', size: '44.8 MB', status: 'Completado' },
-    { id: 3, date: '2024-01-13 03:00:00', size: '44.5 MB', status: 'Completado' },
-    { id: 4, date: '2024-01-12 03:00:00', size: '44.1 MB', status: 'Completado' },
-    { id: 5, date: '2024-01-11 03:00:00', size: '43.9 MB', status: 'Completado' }
-  ];
+  const handleDownload = (backup: BackupRecord) => {
+    try {
+      const blob = new Blob([JSON.stringify(backup, null, 2)], {
+        type: 'application/json;charset=utf-8',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${backup.backup_name || 'backup'}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading backup:', error);
+    }
+  };
+
+  const handleDelete = async (backup: BackupRecord) => {
+    if (!window.confirm('¿Eliminar este respaldo de forma permanente?')) return;
+    try {
+      await settingsService.deleteBackup(backup.id);
+      setHistory((prev) => prev.filter((b) => b.id !== backup.id));
+      setMessage({ type: 'success', text: 'Respaldo eliminado correctamente' });
+    } catch (error) {
+      console.error('Error deleting backup:', error);
+      setMessage({ type: 'error', text: 'Error al eliminar el respaldo' });
+    }
+  };
 
   return (
     <DashboardLayout>
@@ -162,41 +251,42 @@ export default function BackupSettingsPage() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                   <div>
-                    <h3 className="text-sm font-medium text-gray-900">Autenticación de Dos Factores</h3>
-                    <p className="text-xs text-gray-500">Protege tu cuenta con 2FA</p>
-                  </div>
-                  <button className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700">
-                    Configurar
-                  </button>
-                </div>
-                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                  <div>
-                    <h3 className="text-sm font-medium text-gray-900">Políticas de Contraseña</h3>
-                    <p className="text-xs text-gray-500">Configurar requisitos de contraseña</p>
-                  </div>
-                  <button className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700">
-                    Configurar
-                  </button>
-                </div>
-              </div>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                  <div>
                     <h3 className="text-sm font-medium text-gray-900">Registro de Auditoría</h3>
                     <p className="text-xs text-gray-500">Habilitar logs de actividad</p>
                   </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" defaultChecked />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                  </label>
+                  <div className="flex items-center space-x-3">
+                    <button
+                      type="button"
+                      onClick={handleDownloadAuditLog}
+                      className="px-3 py-1 text-xs rounded bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300"
+                    >
+                      Descargar log (JSON)
+                    </button>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={auditLogEnabled}
+                        onChange={(e) => setAuditLogEnabled(e.target.checked)}
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
                 </div>
+              </div>
+              <div className="space-y-4">
                 <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                   <div>
                     <h3 className="text-sm font-medium text-gray-900">Sesiones Automáticas</h3>
                     <p className="text-xs text-gray-500">Cerrar sesión automáticamente</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" defaultChecked />
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={autoLogoutEnabled}
+                      onChange={(e) => setAutoLogoutEnabled(e.target.checked)}
+                    />
                     <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                   </label>
                 </div>
@@ -246,28 +336,41 @@ export default function BackupSettingsPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {backupHistory.map((backup) => (
+                {history.map((backup) => (
                   <tr key={backup.id}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {new Date(backup.date).toLocaleString()}
+                      {new Date(backup.backup_date || backup.created_at || '').toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {backup.size}
+                      {backup.file_size ? `${(backup.file_size / (1024 * 1024)).toFixed(2)} MB` : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
-                        {backup.status}
+                        {backup.status || 'Completado'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center space-x-2">
-                        <button className="text-blue-600 hover:text-blue-900">
+                        <button
+                          type="button"
+                          onClick={() => handleDownload(backup)}
+                          className="text-blue-600 hover:text-blue-900"
+                        >
                           <i className="ri-download-line"></i>
                         </button>
-                        <button className="text-green-600 hover:text-green-900">
+                        <button
+                          type="button"
+                          className="text-green-400 cursor-not-allowed"
+                          title="Restaurar (próximamente)"
+                          disabled
+                        >
                           <i className="ri-refresh-line"></i>
                         </button>
-                        <button className="text-red-600 hover:text-red-900">
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(backup)}
+                          className="text-red-600 hover:text-red-900"
+                        >
                           <i className="ri-delete-bin-line"></i>
                         </button>
                       </div>

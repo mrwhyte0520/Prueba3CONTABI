@@ -1,37 +1,191 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { customersService, invoicesService, receiptsService, creditDebitNotesService, customerAdvancesService } from '../../../services/database';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
+interface ReportCustomer {
+  id: string;
+  name: string;
+  currentBalance: number;
+  creditLimit: number;
+  status: 'Activo' | 'Inactivo' | 'Bloqueado';
+}
+
+interface ReportInvoice {
+  id: string;
+  customerId: string;
+  customerName: string;
+  invoiceNumber: string;
+  amount: number;
+  balance: number;
+  daysOverdue: number;
+  dueDate: string;
+}
+
+interface ReportPayment {
+  id: string;
+  customerName: string;
+  amount: number;
+  paymentMethod: string;
+  date: string;
+}
+
+interface ReportNote {
+  id: string;
+  customerId: string;
+  customerName: string;
+  type: 'credit' | 'debit';
+  noteNumber: string;
+  date: string;
+  amount: number;
+  appliedAmount: number;
+  balance: number;
+}
+
+interface ReportAdvance {
+  id: string;
+  customerId: string;
+  customerName: string;
+  advanceNumber: string;
+  date: string;
+  amount: number;
+  appliedAmount: number;
+  balance: number;
+}
+
 export default function ReportsPage() {
+  const { user } = useAuth();
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [customers, setCustomers] = useState<ReportCustomer[]>([]);
+  const [invoices, setInvoices] = useState<ReportInvoice[]>([]);
+  const [payments, setPayments] = useState<ReportPayment[]>([]);
+   const [creditNotes, setCreditNotes] = useState<ReportNote[]>([]);
+   const [debitNotes, setDebitNotes] = useState<ReportNote[]>([]);
+   const [advances, setAdvances] = useState<ReportAdvance[]>([]);
 
-  // Mock data for reports
-  const customers = [
-    { id: '1', name: 'Empresa ABC S.R.L.', currentBalance: 125000, creditLimit: 200000, status: 'Activo' },
-    { id: '2', name: 'Comercial XYZ', currentBalance: 85000, creditLimit: 150000, status: 'Activo' },
-    { id: '3', name: 'Distribuidora DEF', currentBalance: 45000, creditLimit: 100000, status: 'Activo' },
-    { id: '4', name: 'Servicios GHI', currentBalance: 0, creditLimit: 50000, status: 'Inactivo' },
-    { id: '5', name: 'Importadora JKL', currentBalance: 180000, creditLimit: 250000, status: 'Activo' }
-  ];
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user?.id) return;
+      try {
+        const [customerRows, invoiceRows, receiptRows, creditRows, debitRows, advanceRows] = await Promise.all([
+          customersService.getAll(user.id),
+          invoicesService.getAll(user.id),
+          receiptsService.getAll(user.id),
+          creditDebitNotesService.getAll(user.id, 'credit'),
+          creditDebitNotesService.getAll(user.id, 'debit'),
+          customerAdvancesService.getAll(user.id),
+        ]);
 
-  const invoices = [
-    { id: '1', customerId: '1', customerName: 'Empresa ABC S.R.L.', invoiceNumber: 'FAC-001', amount: 100000, balance: 50000, daysOverdue: 0, dueDate: '2024-02-15' },
-    { id: '2', customerId: '1', customerName: 'Empresa ABC S.R.L.', invoiceNumber: 'FAC-002', amount: 75000, balance: 75000, daysOverdue: 15, dueDate: '2024-01-20' },
-    { id: '3', customerId: '2', customerName: 'Comercial XYZ', invoiceNumber: 'FAC-003', amount: 85000, balance: 85000, daysOverdue: 0, dueDate: '2024-02-20' },
-    { id: '4', customerId: '3', customerName: 'Distribuidora DEF', invoiceNumber: 'FAC-004', amount: 45000, balance: 45000, daysOverdue: 0, dueDate: '2024-02-25' },
-    { id: '5', customerId: '5', customerName: 'Importadora JKL', invoiceNumber: 'FAC-005', amount: 120000, balance: 120000, daysOverdue: 30, dueDate: '2024-01-05' },
-    { id: '6', customerId: '2', customerName: 'Comercial XYZ', invoiceNumber: 'FAC-006', amount: 65000, balance: 65000, daysOverdue: 45, dueDate: '2023-12-20' }
-  ];
+        const mappedCustomers: ReportCustomer[] = (customerRows || []).map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          currentBalance: Number(c.currentBalance ?? c.current_balance ?? 0),
+          creditLimit: Number(c.creditLimit ?? c.credit_limit ?? 0),
+          status: (c.status === 'inactive'
+            ? 'Inactivo'
+            : c.status === 'blocked'
+              ? 'Bloqueado'
+              : 'Activo') as ReportCustomer['status'],
+        }));
 
-  const payments = [
-    { id: '1', customerName: 'Empresa ABC S.R.L.', amount: 50000, paymentMethod: 'transfer', date: '2024-01-15', invoiceNumber: 'FAC-001' },
-    { id: '2', customerName: 'Comercial XYZ', amount: 120000, paymentMethod: 'check', date: '2024-01-20', invoiceNumber: 'FAC-007' },
-    { id: '3', customerName: 'Empresa ABC S.R.L.', amount: 25000, paymentMethod: 'cash', date: '2024-01-25', invoiceNumber: 'FAC-008' },
-    { id: '4', customerName: 'Distribuidora DEF', amount: 35000, paymentMethod: 'transfer', date: '2024-01-30', invoiceNumber: 'FAC-009' },
-    { id: '5', customerName: 'Importadora JKL', amount: 80000, paymentMethod: 'card', date: '2024-02-01', invoiceNumber: 'FAC-010' }
-  ];
+        const mappedInvoices: ReportInvoice[] = (invoiceRows || []).map((inv: any) => {
+          const total = Number(inv.total_amount) || 0;
+          const paid = Number(inv.paid_amount) || 0;
+          const balance = total - paid;
+          const today = new Date();
+          const due = inv.due_date ? new Date(inv.due_date) : null;
+          let daysOverdue = 0;
+          if (due && balance > 0) {
+            const diff = Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+            daysOverdue = diff > 0 ? diff : 0;
+          }
+          return {
+            id: String(inv.id),
+            customerId: String(inv.customer_id),
+            customerName: (inv.customers as any)?.name || 'Cliente',
+            invoiceNumber: inv.invoice_number as string,
+            amount: total,
+            balance,
+            daysOverdue,
+            dueDate: (inv.due_date as string) || '',
+          };
+        });
+
+        const mappedPayments: ReportPayment[] = (receiptRows || []).map((r: any) => ({
+          id: String(r.id),
+          customerName: (r.customers as any)?.name || 'Cliente',
+          amount: Number(r.amount) || 0,
+          paymentMethod: String(r.payment_method || 'cash'),
+          date: (r.receipt_date as string) || '',
+        }));
+
+        const mapNoteRows = (rows: any[], type: 'credit' | 'debit'): ReportNote[] => {
+          return (rows || []).map((n: any) => {
+            const amount = Number(n.total_amount) || 0;
+            const dbApplied = Number((n as any).applied_amount) || 0;
+            const dbBalance = Number((n as any).balance_amount);
+            let appliedAmount = dbApplied;
+            let balance = Number.isFinite(dbBalance) ? dbBalance : amount - appliedAmount;
+            if (n.status === 'cancelled') {
+              appliedAmount = 0;
+              balance = 0;
+            }
+            return {
+              id: String(n.id),
+              customerId: String(n.customer_id),
+              customerName: (n.customers as any)?.name || 'Cliente',
+              type,
+              noteNumber: n.note_number as string,
+              date: n.note_date as string,
+              amount,
+              appliedAmount,
+              balance,
+            };
+          });
+        };
+
+        const mappedCreditNotes = mapNoteRows(creditRows as any[], 'credit');
+        const mappedDebitNotes = mapNoteRows(debitRows as any[], 'debit');
+
+        const mappedAdvances: ReportAdvance[] = (advanceRows || []).map((a: any) => {
+          const amount = Number(a.amount) || 0;
+          const applied = Number(a.applied_amount) || 0;
+          const balance = Number(a.balance_amount);
+          return {
+            id: String(a.id),
+            customerId: String(a.customer_id),
+            customerName: (a.customers as any)?.name || 'Cliente',
+            advanceNumber: a.advance_number as string,
+            date: a.advance_date as string,
+            amount,
+            appliedAmount: applied,
+            balance: Number.isFinite(balance) ? balance : amount - applied,
+          };
+        });
+
+        setCustomers(mappedCustomers);
+        setInvoices(mappedInvoices);
+        setPayments(mappedPayments);
+        setCreditNotes(mappedCreditNotes);
+        setDebitNotes(mappedDebitNotes);
+        setAdvances(mappedAdvances);
+      } catch (error) {
+        // Si hay error, dejar arrays vacíos; los reportes simplemente saldrán en blanco
+        console.error('Error loading AR reports data:', error);
+        setCustomers([]);
+        setInvoices([]);
+        setPayments([]);
+        setCreditNotes([]);
+        setDebitNotes([]);
+        setAdvances([]);
+      }
+    };
+
+    loadData();
+  }, [user?.id]);
 
   const handleGenerateAgingReport = () => {
     const doc = new jsPDF();
@@ -97,6 +251,9 @@ export default function ReportsPage() {
       
       const customerInvoices = invoices.filter(inv => inv.customerId === customer.id);
       const customerPayments = payments.filter(pay => pay.customerName === customer.name);
+      const customerCreditNotes = creditNotes.filter(n => n.customerId === customer.id && n.balance > 0);
+      const customerDebitNotes = debitNotes.filter(n => n.customerId === customer.id && n.balance > 0);
+      const customerAdvances = advances.filter(a => a.customerId === customer.id && a.balance > 0);
       
       // Facturas
       if (customerInvoices.length > 0) {
@@ -140,6 +297,78 @@ export default function ReportsPage() {
           startY: currentY,
           head: [['Fecha', 'Monto', 'Método']],
           body: paymentData,
+          theme: 'grid',
+          styles: { fontSize: 9 }
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 20;
+      }
+
+      // Notas de Crédito
+      if (customerCreditNotes.length > 0) {
+        doc.setFontSize(14);
+        doc.text('Notas de Crédito:', 20, currentY);
+        currentY += 10;
+
+        const creditData = customerCreditNotes.map(n => [
+          n.noteNumber,
+          `RD$ ${n.amount.toLocaleString()}`,
+          `RD$ ${n.appliedAmount.toLocaleString()}`,
+          `RD$ ${n.balance.toLocaleString()}`,
+        ]);
+
+        (doc as any).autoTable({
+          startY: currentY,
+          head: [['Nota', 'Monto', 'Aplicado', 'Saldo']],
+          body: creditData,
+          theme: 'grid',
+          styles: { fontSize: 9 }
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 20;
+      }
+
+      // Notas de Débito
+      if (customerDebitNotes.length > 0) {
+        doc.setFontSize(14);
+        doc.text('Notas de Débito:', 20, currentY);
+        currentY += 10;
+
+        const debitData = customerDebitNotes.map(n => [
+          n.noteNumber,
+          `RD$ ${n.amount.toLocaleString()}`,
+          `RD$ ${n.appliedAmount.toLocaleString()}`,
+          `RD$ ${n.balance.toLocaleString()}`,
+        ]);
+
+        (doc as any).autoTable({
+          startY: currentY,
+          head: [['Nota', 'Monto', 'Aplicado', 'Saldo']],
+          body: debitData,
+          theme: 'grid',
+          styles: { fontSize: 9 }
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 20;
+      }
+
+      // Anticipos
+      if (customerAdvances.length > 0) {
+        doc.setFontSize(14);
+        doc.text('Anticipos de Cliente:', 20, currentY);
+        currentY += 10;
+
+        const advanceData = customerAdvances.map(a => [
+          a.advanceNumber,
+          `RD$ ${a.amount.toLocaleString()}`,
+          `RD$ ${a.appliedAmount.toLocaleString()}`,
+          `RD$ ${a.balance.toLocaleString()}`,
+        ]);
+
+        (doc as any).autoTable({
+          startY: currentY,
+          head: [['Anticipo', 'Monto', 'Aplicado', 'Saldo']],
+          body: advanceData,
           theme: 'grid',
           styles: { fontSize: 9 }
         });
@@ -222,32 +451,44 @@ export default function ReportsPage() {
       acc[payment.paymentMethod] = (acc[payment.paymentMethod] || 0) + payment.amount;
       return acc;
     }, {} as Record<string, number>);
-    
-    const csvContent = [
+
+    const fmt = (value: number) => value.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    const rows: (string | number)[][] = [
       ['Reporte de Cobranza'],
       [`Fecha de generación: ${new Date().toLocaleDateString()}`],
       dateFrom && dateTo ? [`Período: ${dateFrom} al ${dateTo}`] : [],
       [''],
       ['RESUMEN DE COBRANZA'],
-      ['Total Cobrado', `RD$ ${totalPayments.toLocaleString()}`],
+      ['Total Cobrado', `RD$ ${fmt(totalPayments)}`],
       ['Número de Pagos', payments.length.toString()],
-      ['Efectivo', `RD$ ${(paymentsByMethod.cash || 0).toLocaleString()}`],
-      ['Transferencias', `RD$ ${(paymentsByMethod.transfer || 0).toLocaleString()}`],
-      ['Cheques', `RD$ ${(paymentsByMethod.check || 0).toLocaleString()}`],
-      ['Tarjetas', `RD$ ${(paymentsByMethod.card || 0).toLocaleString()}`],
+      ['Efectivo', `RD$ ${fmt(paymentsByMethod.cash || 0)}`],
+      ['Transferencias', `RD$ ${fmt(paymentsByMethod.transfer || 0)}`],
+      ['Cheques', `RD$ ${fmt(paymentsByMethod.check || 0)}`],
+      ['Tarjetas', `RD$ ${fmt(paymentsByMethod.card || 0)}`],
       [''],
       ['DETALLE DE PAGOS'],
       ['Fecha', 'Cliente', 'Monto', 'Método'],
       ...payments.map(payment => [
         payment.date,
         payment.customerName,
-        payment.amount,
+        `RD$ ${fmt(payment.amount)}`,
         payment.paymentMethod === 'transfer' ? 'Transferencia' :
         payment.paymentMethod === 'check' ? 'Cheque' :
         payment.paymentMethod === 'cash' ? 'Efectivo' : 'Tarjeta'
       ])
-    ].filter(row => row.length > 0).map(row => row.join(',')).join('\n');
-    
+    ].filter(row => row.length > 0);
+
+    // CSV amigable para Excel (UTF-8 BOM + saltos de línea Windows)
+    const csvBody = rows
+      .map(row => row.map(col => {
+        const str = String(col ?? '');
+        return /[",;\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+      }).join(','))
+      .join('\r\n');
+
+    const csvContent = '\uFEFF' + csvBody;
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);

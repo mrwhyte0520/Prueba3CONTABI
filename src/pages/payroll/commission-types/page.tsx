@@ -1,6 +1,8 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { commissionTypesService } from '../../../services/database';
 
 interface CommissionType {
   id: string;
@@ -18,6 +20,7 @@ interface CommissionType {
 }
 
 export default function CommissionTypesPage() {
+  const { user } = useAuth();
   const [commissionTypes, setCommissionTypes] = useState<CommissionType[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'inactive'>('all');
@@ -37,6 +40,36 @@ export default function CommissionTypesPage() {
     applicablePositions: [] as string[]
   });
 
+  useEffect(() => {
+    const loadTypes = async () => {
+      if (!user) return;
+      try {
+        const data = await commissionTypesService.getAll(user.id);
+        const mapped: CommissionType[] = (data || []).map((t: any) => ({
+          id: t.id,
+          name: t.name || '',
+          description: t.description || '',
+          calculationType: (t.calculation_type as CommissionType['calculationType']) || 'percentage',
+          rate: Number(t.rate) || 0,
+          minAmount: t.min_amount !== null && t.min_amount !== undefined ? Number(t.min_amount) : undefined,
+          maxAmount: t.max_amount !== null && t.max_amount !== undefined ? Number(t.max_amount) : undefined,
+          basedOn: (t.based_on as CommissionType['basedOn']) || 'sales',
+          paymentFrequency: (t.payment_frequency as CommissionType['paymentFrequency']) || 'monthly',
+          isActive: t.is_active ?? true,
+          applicablePositions: Array.isArray(t.applicable_positions)
+            ? t.applicable_positions
+            : [],
+          createdAt: (t.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+        }));
+        setCommissionTypes(mapped);
+      } catch (error) {
+        console.error('Error loading commission types:', error);
+      }
+    };
+
+    loadTypes();
+  }, [user]);
+
   const filteredTypes = commissionTypes.filter(type => {
     const matchesSearch = type.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          type.description.toLowerCase().includes(searchTerm.toLowerCase());
@@ -48,27 +81,76 @@ export default function CommissionTypesPage() {
     return matchesSearch && matchesStatus && matchesFrequency;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const newType: CommissionType = {
-      id: editingType?.id || Date.now().toString(),
-      ...formData,
-      minAmount: formData.minAmount ? parseFloat(formData.minAmount) : undefined,
-      maxAmount: formData.maxAmount ? parseFloat(formData.maxAmount) : undefined,
-      isActive: true,
-      createdAt: editingType?.createdAt || new Date().toISOString().split('T')[0]
-    };
 
-    if (editingType) {
-      setCommissionTypes(prev => prev.map(type => 
-        type.id === editingType.id ? newType : type
-      ));
-    } else {
-      setCommissionTypes(prev => [...prev, newType]);
+    if (!user) {
+      alert('Debe iniciar sesión para gestionar tipos de comisiones.');
+      return;
     }
 
-    resetForm();
+    const payload: any = {
+      name: formData.name,
+      description: formData.description,
+      calculation_type: formData.calculationType,
+      rate: formData.rate,
+      min_amount: formData.minAmount ? parseFloat(formData.minAmount) : null,
+      max_amount: formData.maxAmount ? parseFloat(formData.maxAmount) : null,
+      based_on: formData.basedOn,
+      payment_frequency: formData.paymentFrequency,
+      is_active: editingType ? editingType.isActive : true,
+      applicable_positions: formData.applicablePositions,
+    };
+
+    try {
+      if (editingType) {
+        const updated = await commissionTypesService.update(editingType.id, payload);
+        setCommissionTypes(prev => prev.map(type =>
+          type.id === editingType.id
+            ? {
+                id: updated.id,
+                name: updated.name || '',
+                description: updated.description || '',
+                calculationType: (updated.calculation_type as CommissionType['calculationType']) || 'percentage',
+                rate: Number(updated.rate) || 0,
+                minAmount: updated.min_amount !== null && updated.min_amount !== undefined ? Number(updated.min_amount) : undefined,
+                maxAmount: updated.max_amount !== null && updated.max_amount !== undefined ? Number(updated.max_amount) : undefined,
+                basedOn: (updated.based_on as CommissionType['basedOn']) || 'sales',
+                paymentFrequency: (updated.payment_frequency as CommissionType['paymentFrequency']) || 'monthly',
+                isActive: updated.is_active ?? true,
+                applicablePositions: Array.isArray(updated.applicable_positions)
+                  ? updated.applicable_positions
+                  : [],
+                createdAt: (updated.created_at || '').split('T')[0] || editingType.createdAt,
+              }
+            : type
+        ));
+      } else {
+        const created = await commissionTypesService.create(user.id, payload);
+        const newType: CommissionType = {
+          id: created.id,
+          name: created.name || '',
+          description: created.description || '',
+          calculationType: (created.calculation_type as CommissionType['calculationType']) || 'percentage',
+          rate: Number(created.rate) || 0,
+          minAmount: created.min_amount !== null && created.min_amount !== undefined ? Number(created.min_amount) : undefined,
+          maxAmount: created.max_amount !== null && created.max_amount !== undefined ? Number(created.max_amount) : undefined,
+          basedOn: (created.based_on as CommissionType['basedOn']) || 'sales',
+          paymentFrequency: (created.payment_frequency as CommissionType['paymentFrequency']) || 'monthly',
+          isActive: created.is_active ?? true,
+          applicablePositions: Array.isArray(created.applicable_positions)
+            ? created.applicable_positions
+            : [],
+          createdAt: (created.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+        };
+        setCommissionTypes(prev => [...prev, newType]);
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error('Error saving commission type:', error);
+      alert('Error al guardar el tipo de comisión');
+    }
   };
 
   const resetForm = () => {
@@ -103,10 +185,20 @@ export default function CommissionTypesPage() {
     setShowForm(true);
   };
 
-  const toggleStatus = (id: string) => {
-    setCommissionTypes(prev => prev.map(type =>
-      type.id === id ? { ...type, isActive: !type.isActive } : type
-    ));
+  const toggleStatus = async (id: string) => {
+    const current = commissionTypes.find(t => t.id === id);
+    if (!current) return;
+    const newStatus = !current.isActive;
+
+    try {
+      await commissionTypesService.update(id, { is_active: newStatus });
+      setCommissionTypes(prev => prev.map(type =>
+        type.id === id ? { ...type, isActive: newStatus } : type
+      ));
+    } catch (error) {
+      console.error('Error toggling commission type status:', error);
+      alert('Error al cambiar el estado del tipo de comisión');
+    }
   };
 
   const exportToCSV = () => {

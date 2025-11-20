@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { fixedAssetsService, assetTypesService } from '../../../services/database';
 
 interface Asset {
   id: string;
@@ -21,102 +23,53 @@ interface Asset {
 
 export default function AssetRegisterPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
 
-  const [assets] = useState<Asset[]>([
-    {
-      id: '1',
-      code: 'ACT-001',
-      name: 'Edificio Principal',
-      category: 'Edificios y Construcciones',
-      location: 'Sede Central',
-      acquisitionDate: '2020-01-15',
-      acquisitionCost: 4200000,
-      usefulLife: 50,
-      depreciationMethod: 'Línea Recta',
-      currentValue: 3780000,
-      accumulatedDepreciation: 420000,
-      status: 'Activo',
-      supplier: 'Constructora ABC',
-      description: 'Edificio principal de oficinas administrativas'
-    },
-    {
-      id: '2',
-      code: 'ACT-045',
-      name: 'Maquinaria Industrial A',
-      category: 'Maquinaria y Equipo',
-      location: 'Planta de Producción',
-      acquisitionDate: '2021-03-10',
-      acquisitionCost: 280000,
-      usefulLife: 10,
-      depreciationMethod: 'Línea Recta',
-      currentValue: 210000,
-      accumulatedDepreciation: 70000,
-      status: 'Activo',
-      supplier: 'Equipos Industriales SA',
-      description: 'Maquinaria para proceso de producción principal'
-    },
-    {
-      id: '3',
-      code: 'ACT-123',
-      name: 'Vehículo Toyota Hilux',
-      category: 'Vehículos',
-      location: 'Flota Empresarial',
-      acquisitionDate: '2022-06-20',
-      acquisitionCost: 85000,
-      usefulLife: 5,
-      depreciationMethod: 'Línea Recta',
-      currentValue: 68000,
-      accumulatedDepreciation: 17000,
-      status: 'Activo',
-      supplier: 'Toyota Dominicana',
-      description: 'Vehículo para transporte ejecutivo'
-    },
-    {
-      id: '4',
-      code: 'ACT-089',
-      name: 'Servidor Dell PowerEdge',
-      category: 'Equipo de Computación',
-      location: 'Centro de Datos',
-      acquisitionDate: '2023-01-15',
-      acquisitionCost: 45000,
-      usefulLife: 4,
-      depreciationMethod: 'Línea Recta',
-      currentValue: 33750,
-      accumulatedDepreciation: 11250,
-      status: 'Activo',
-      supplier: 'Dell Technologies',
-      description: 'Servidor principal para aplicaciones empresariales'
-    },
-    {
-      id: '5',
-      code: 'ACT-156',
-      name: 'Mobiliario de Oficina',
-      category: 'Mobiliario y Equipo de Oficina',
-      location: 'Oficinas Administrativas',
-      acquisitionDate: '2023-08-10',
-      acquisitionCost: 25000,
-      usefulLife: 10,
-      depreciationMethod: 'Línea Recta',
-      currentValue: 23750,
-      accumulatedDepreciation: 1250,
-      status: 'Activo',
-      supplier: 'Muebles Modernos',
-      description: 'Conjunto de escritorios y sillas ejecutivas'
-    }
-  ]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
 
-  const categories = [
-    'Edificios y Construcciones',
-    'Maquinaria y Equipo',
-    'Vehículos',
-    'Mobiliario y Equipo de Oficina',
-    'Equipo de Computación'
-  ];
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user) return;
+      try {
+        const [assetsData, typesData] = await Promise.all([
+          fixedAssetsService.getAll(user.id),
+          assetTypesService.getAll(user.id),
+        ]);
+
+        const mappedAssets: Asset[] = (assetsData || []).map((a: any) => ({
+          id: a.id,
+          code: a.code,
+          name: a.name,
+          category: a.category,
+          location: a.location || '',
+          acquisitionDate: a.purchase_date,
+          acquisitionCost: Number(a.purchase_cost) || 0,
+          usefulLife: a.useful_life,
+          depreciationMethod: a.depreciation_method,
+          currentValue: Number(a.current_value) || 0,
+          accumulatedDepreciation: Number(a.accumulated_depreciation) || 0,
+          status: a.status,
+          supplier: a.supplier || '',
+          description: a.description || '',
+        }));
+        setAssets(mappedAssets);
+
+        const activeTypes = (typesData || []).filter((t: any) => t.is_active !== false);
+        const mappedCategories = activeTypes.map((t: any) => String(t.name || '')).filter(Boolean);
+        setCategories(mappedCategories);
+      } catch (error) {
+        console.error('Error loading fixed assets data:', error);
+      }
+    };
+
+    loadData();
+  }, [user]);
 
   const depreciationMethods = [
     'Línea Recta',
@@ -144,16 +97,85 @@ export default function AssetRegisterPage() {
     setShowModal(true);
   };
 
-  const handleDeleteAsset = (assetId: string) => {
-    if (confirm('¿Está seguro de que desea eliminar este activo?')) {
-      alert('Activo eliminado correctamente');
+  const handleDeleteAsset = async (assetId: string) => {
+    if (!confirm('¿Está seguro de que desea eliminar este activo?')) return;
+    try {
+      await fixedAssetsService.delete(assetId);
+      setAssets(prev => prev.filter(asset => asset.id !== assetId));
+    } catch (error) {
+      console.error('Error deleting asset:', error);
+      alert('Error al eliminar el activo');
     }
   };
 
-  const handleSaveAsset = (e: React.FormEvent) => {
+  const handleSaveAsset = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert(editingAsset ? 'Activo actualizado correctamente' : 'Activo registrado correctamente');
-    setShowModal(false);
+    if (!user) return;
+
+    const formData = new FormData(e.currentTarget);
+    const payload: any = {
+      code: String(formData.get('code') || '').trim(),
+      name: String(formData.get('name') || '').trim(),
+      category: String(formData.get('category') || '').trim(),
+      location: String(formData.get('location') || '').trim() || null,
+      purchase_date: String(formData.get('acquisitionDate') || ''),
+      purchase_cost: Number(formData.get('acquisitionCost') || 0) || 0,
+      useful_life: Number(formData.get('usefulLife') || 0) || 0,
+      depreciation_method: String(formData.get('depreciationMethod') || '').trim(),
+      current_value: Number(formData.get('currentValue') || 0) || 0,
+      accumulated_depreciation: Number(formData.get('accumulatedDepreciation') || 0) || 0,
+      status: String(formData.get('status') || 'Activo'),
+      supplier: String(formData.get('supplier') || '').trim() || null,
+      description: String(formData.get('description') || '').trim() || null,
+    };
+
+    try {
+      if (editingAsset) {
+        const updated = await fixedAssetsService.update(editingAsset.id, payload);
+        const mapped: Asset = {
+          id: updated.id,
+          code: updated.code,
+          name: updated.name,
+          category: updated.category,
+          location: updated.location || '',
+          acquisitionDate: updated.purchase_date,
+          acquisitionCost: Number(updated.purchase_cost) || 0,
+          usefulLife: updated.useful_life,
+          depreciationMethod: updated.depreciation_method,
+          currentValue: Number(updated.current_value) || 0,
+          accumulatedDepreciation: Number(updated.accumulated_depreciation) || 0,
+          status: updated.status,
+          supplier: updated.supplier || '',
+          description: updated.description || '',
+        };
+        setAssets(prev => prev.map(asset => asset.id === editingAsset.id ? mapped : asset));
+      } else {
+        const created = await fixedAssetsService.create(user.id, payload);
+        const mapped: Asset = {
+          id: created.id,
+          code: created.code,
+          name: created.name,
+          category: created.category,
+          location: created.location || '',
+          acquisitionDate: created.purchase_date,
+          acquisitionCost: Number(created.purchase_cost) || 0,
+          usefulLife: created.useful_life,
+          depreciationMethod: created.depreciation_method,
+          currentValue: Number(created.current_value) || 0,
+          accumulatedDepreciation: Number(created.accumulated_depreciation) || 0,
+          status: created.status,
+          supplier: created.supplier || '',
+          description: created.description || '',
+        };
+        setAssets(prev => [...prev, mapped]);
+      }
+
+      setShowModal(false);
+      setEditingAsset(null);
+    } catch (error) {
+      console.error('Error saving asset:', error);
+      alert('Error al guardar el activo');
+    }
   };
 
   const exportToPDF = () => {
@@ -509,12 +531,24 @@ export default function AssetRegisterPage() {
                       {formatCurrency(asset.currentValue)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        asset.status === 'Activo' ? 'bg-green-100 text-green-800' :
-                        asset.status === 'Inactivo' ? 'bg-red-100 text-red-800' :
-                        'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {asset.status}
+                      <span
+                        className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          asset.status === 'active' || asset.status === 'Activo'
+                            ? 'bg-green-100 text-green-800'
+                            : asset.status === 'disposed' || asset.status === 'Dado de Baja'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : asset.status === 'sold' || asset.status === 'Vendido'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        {asset.status === 'active' || asset.status === 'Activo'
+                          ? 'Activo'
+                          : asset.status === 'disposed' || asset.status === 'Dado de Baja'
+                          ? 'Retirado'
+                          : asset.status === 'sold' || asset.status === 'Vendido'
+                          ? 'Vendido'
+                          : asset.status}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -565,6 +599,7 @@ export default function AssetRegisterPage() {
                     <input
                       type="text"
                       required
+                      name="code"
                       defaultValue={editingAsset?.code || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="ACT-001"
@@ -577,6 +612,7 @@ export default function AssetRegisterPage() {
                     <input
                       type="text"
                       required
+                      name="name"
                       defaultValue={editingAsset?.name || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Nombre del activo"
@@ -588,6 +624,7 @@ export default function AssetRegisterPage() {
                     </label>
                     <select
                       required
+                      name="category"
                       defaultValue={editingAsset?.category || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
@@ -603,6 +640,7 @@ export default function AssetRegisterPage() {
                     </label>
                     <input
                       type="text"
+                      name="location"
                       defaultValue={editingAsset?.location || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Ubicación del activo"
@@ -615,6 +653,7 @@ export default function AssetRegisterPage() {
                     <input
                       type="date"
                       required
+                      name="acquisitionDate"
                       defaultValue={editingAsset?.acquisitionDate || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
@@ -627,6 +666,7 @@ export default function AssetRegisterPage() {
                       type="number"
                       required
                       step="0.01"
+                      name="acquisitionCost"
                       defaultValue={editingAsset?.acquisitionCost || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
@@ -639,6 +679,7 @@ export default function AssetRegisterPage() {
                     <input
                       type="number"
                       required
+                      name="usefulLife"
                       defaultValue={editingAsset?.usefulLife || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="10"
@@ -650,6 +691,7 @@ export default function AssetRegisterPage() {
                     </label>
                     <select
                       required
+                      name="depreciationMethod"
                       defaultValue={editingAsset?.depreciationMethod || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
@@ -665,6 +707,7 @@ export default function AssetRegisterPage() {
                     </label>
                     <input
                       type="text"
+                      name="supplier"
                       defaultValue={editingAsset?.supplier || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Nombre del proveedor"
@@ -675,13 +718,13 @@ export default function AssetRegisterPage() {
                       Estado
                     </label>
                     <select
-                      defaultValue={editingAsset?.status || 'Activo'}
+                      name="status"
+                      defaultValue={editingAsset?.status || 'active'}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
-                      <option value="Activo">Activo</option>
-                      <option value="Inactivo">Inactivo</option>
-                      <option value="En Mantenimiento">En Mantenimiento</option>
-                      <option value="Dado de Baja">Dado de Baja</option>
+                      <option value="active">Activo</option>
+                      <option value="disposed">Retirado</option>
+                      <option value="sold">Vendido</option>
                     </select>
                   </div>
                 </div>
@@ -691,6 +734,7 @@ export default function AssetRegisterPage() {
                   </label>
                   <textarea
                     rows={3}
+                    name="description"
                     defaultValue={editingAsset?.description || ''}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Descripción detallada del activo"

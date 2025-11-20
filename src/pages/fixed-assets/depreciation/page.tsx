@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { fixedAssetsService, assetDepreciationService } from '../../../services/database';
 
 interface DepreciationEntry {
   id: string;
@@ -19,86 +21,55 @@ interface DepreciationEntry {
 
 export default function DepreciationPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [showCalculateModal, setShowCalculateModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterPeriod, setFilterPeriod] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
 
-  const [depreciations] = useState<DepreciationEntry[]>([
-    {
-      id: '1',
-      assetCode: 'ACT-001',
-      assetName: 'Edificio Principal',
-      category: 'Edificios y Construcciones',
-      acquisitionCost: 4200000,
-      accumulatedDepreciation: 420000,
-      monthlyDepreciation: 7000,
-      remainingValue: 3780000,
-      depreciationDate: '2024-01-01',
-      period: '2024-01',
-      status: 'Calculado',
-      method: 'Línea Recta'
-    },
-    {
-      id: '2',
-      assetCode: 'ACT-045',
-      assetName: 'Maquinaria Industrial A',
-      category: 'Maquinaria y Equipo',
-      acquisitionCost: 280000,
-      accumulatedDepreciation: 140000,
-      monthlyDepreciation: 2333,
-      remainingValue: 140000,
-      depreciationDate: '2024-01-01',
-      period: '2024-01',
-      status: 'Calculado',
-      method: 'Línea Recta'
-    },
-    {
-      id: '3',
-      assetCode: 'ACT-123',
-      assetName: 'Vehículo Toyota Hilux',
-      category: 'Vehículos',
-      acquisitionCost: 85000,
-      accumulatedDepreciation: 85000,
-      monthlyDepreciation: 1417,
-      remainingValue: 68000,
-      depreciationDate: '2024-01-01',
-      period: '2024-01',
-      status: 'Calculado',
-      method: 'Línea Recta'
-    },
-    {
-      id: '4',
-      assetCode: 'ACT-089',
-      assetName: 'Servidor Dell PowerEdge',
-      category: 'Equipo de Computación',
-      acquisitionCost: 45000,
-      accumulatedDepreciation: 11250,
-      monthlyDepreciation: 938,
-      remainingValue: 33750,
-      depreciationDate: '2024-01-01',
-      period: '2024-01',
-      status: 'Calculado',
-      method: 'Línea Recta'
-    },
-    {
-      id: '5',
-      assetCode: 'ACT-156',
-      assetName: 'Mobiliario de Oficina',
-      category: 'Mobiliario y Equipo de Oficina',
-      acquisitionCost: 25000,
-      accumulatedDepreciation: 1250,
-      monthlyDepreciation: 208,
-      remainingValue: 23750,
-      depreciationDate: '2024-01-01',
-      period: '2024-01',
-      status: 'Pendiente',
-      method: 'Línea Recta'
-    }
-  ]);
+  const [depreciations, setDepreciations] = useState<DepreciationEntry[]>([]);
+  const [periods, setPeriods] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedDepreciation, setSelectedDepreciation] = useState<DepreciationEntry | null>(null);
 
-  const periods = ['2024-01', '2023-12', '2023-11', '2023-10'];
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user) return;
+      try {
+        const [deprData, assetsData] = await Promise.all([
+          assetDepreciationService.getAll(user.id),
+          fixedAssetsService.getAll(user.id),
+        ]);
+
+        const mappedDepr: DepreciationEntry[] = (deprData || []).map((d: any) => ({
+          id: d.id,
+          assetCode: d.asset_code,
+          assetName: d.asset_name,
+          category: d.category,
+          acquisitionCost: Number(d.acquisition_cost) || 0,
+          accumulatedDepreciation: Number(d.accumulated_depreciation) || 0,
+          monthlyDepreciation: Number(d.monthly_depreciation) || 0,
+          remainingValue: Number(d.remaining_value) || 0,
+          depreciationDate: d.depreciation_date,
+          period: d.period,
+          status: d.status,
+          method: d.method,
+        }));
+        setDepreciations(mappedDepr);
+
+        const periodSet = Array.from(new Set(mappedDepr.map(d => d.period))).sort().reverse();
+        setPeriods(periodSet);
+
+        const categorySet = Array.from(new Set((assetsData || []).map((a: any) => a.category).filter(Boolean)));
+        setSelectedCategories(categorySet);
+      } catch (error) {
+        console.error('Error loading depreciation data:', error);
+      }
+    };
+
+    loadData();
+  }, [user]);
 
   const filteredDepreciations = depreciations.filter(dep => {
     const matchesSearch = dep.assetName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -117,19 +88,107 @@ export default function DepreciationPage() {
     setShowCalculateModal(true);
   };
 
-  const handleProcessDepreciation = (e: React.FormEvent) => {
+  const handleProcessDepreciation = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert('Depreciación calculada y registrada correctamente');
-    setShowCalculateModal(false);
+    if (!user) return;
+
+    const formData = new FormData(e.currentTarget);
+    const period = String(formData.get('period') || '').trim();
+    const processDate = String(formData.get('processDate') || '').trim() || new Date().toISOString().split('T')[0];
+    if (!period) {
+      alert('Debe seleccionar un período de depreciación');
+      return;
+    }
+
+    try {
+      const assets = await fixedAssetsService.getAll(user.id);
+      const assetsToDepreciate = (assets || []).filter((a: any) => selectedCategories.length === 0 || selectedCategories.includes(a.category));
+
+      const records = assetsToDepreciate.map((a: any) => {
+        const cost = Number(a.purchase_cost) || 0;
+        const lifeYears = Number(a.useful_life) || 0;
+        const method = a.depreciation_method || 'Línea Recta';
+        const monthly = lifeYears > 0 ? cost / (lifeYears * 12) : 0;
+
+        return {
+          asset_id: a.id,
+          asset_code: a.code,
+          asset_name: a.name,
+          category: a.category,
+          acquisition_cost: cost,
+          monthly_depreciation: monthly,
+          accumulated_depreciation: monthly, // para demo simple; podría acumularse por período
+          remaining_value: cost - monthly,
+          depreciation_date: processDate,
+          period,
+          method,
+          status: 'Calculado',
+        };
+      });
+
+      const created = await assetDepreciationService.createMany(user.id, records);
+      const mappedCreated: DepreciationEntry[] = (created || []).map((d: any) => ({
+        id: d.id,
+        assetCode: d.asset_code,
+        assetName: d.asset_name,
+        category: d.category,
+        acquisitionCost: Number(d.acquisition_cost) || 0,
+        accumulatedDepreciation: Number(d.accumulated_depreciation) || 0,
+        monthlyDepreciation: Number(d.monthly_depreciation) || 0,
+        remainingValue: Number(d.remaining_value) || 0,
+        depreciationDate: d.depreciation_date,
+        period: d.period,
+        status: d.status,
+        method: d.method,
+      }));
+
+      setDepreciations(prev => [...mappedCreated, ...prev]);
+      setShowCalculateModal(false);
+    } catch (error) {
+      console.error('Error calculating depreciation:', error);
+      alert('Error al calcular y registrar la depreciación');
+    }
   };
 
   const handleViewDetails = (depreciationId: string) => {
-    alert(`Mostrando detalles de la depreciación ${depreciationId}`);
+    const dep = depreciations.find(d => d.id === depreciationId);
+    if (!dep) return;
+    setSelectedDepreciation(dep);
+    setShowModal(true);
   };
 
-  const handleReverseDepreciation = (depreciationId: string) => {
-    if (confirm('¿Está seguro de que desea reversar esta depreciación?')) {
-      alert('Depreciación reversada correctamente');
+  const handleReverseDepreciation = async (depreciationId: string) => {
+    if (!user) return;
+
+    const dep = depreciations.find(d => d.id === depreciationId);
+    if (!dep) return;
+
+    const newStatus = dep.status === 'Reversado' ? 'Calculado' : 'Reversado';
+    if (!confirm(`¿Está seguro de que desea marcar esta depreciación como "${newStatus}"?`)) return;
+
+    try {
+      const payload: any = {
+        asset_code: dep.assetCode,
+        asset_name: dep.assetName,
+        category: dep.category,
+        acquisition_cost: dep.acquisitionCost,
+        monthly_depreciation: dep.monthlyDepreciation,
+        accumulated_depreciation: dep.accumulatedDepreciation,
+        remaining_value: dep.remainingValue,
+        depreciation_date: dep.depreciationDate,
+        period: dep.period,
+        method: dep.method,
+        status: newStatus,
+      };
+
+      const updated = await assetDepreciationService.update(depreciationId, payload);
+      setDepreciations(prev => prev.map(d => d.id === depreciationId ? {
+        ...d,
+        status: updated.status || newStatus,
+      } : d));
+    } catch (error) {
+      console.error('Error updating depreciation status:', error);
+      alert('Error al actualizar el estado de la depreciación');
     }
   };
 
@@ -549,11 +608,11 @@ export default function DepreciationPage() {
                         >
                           <i className="ri-eye-line"></i>
                         </button>
-                        {depreciation.status === 'Calculado' && (
+                        {(depreciation.status === 'Calculado' || depreciation.status === 'Reversado') && (
                           <button
                             onClick={() => handleReverseDepreciation(depreciation.id)}
                             className="text-red-600 hover:text-red-900"
-                            title="Reversar depreciación"
+                            title={depreciation.status === 'Reversado' ? 'Marcar como calculado' : 'Reversar depreciación'}
                           >
                             <i className="ri-arrow-go-back-line"></i>
                           </button>
@@ -566,6 +625,86 @@ export default function DepreciationPage() {
             </table>
           </div>
         </div>
+
+        {selectedDepreciation && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-2xl">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Detalle de Depreciación
+                </h3>
+                <button
+                  onClick={() => setSelectedDepreciation(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <i className="ri-close-line text-xl"></i>
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Activo
+                    </label>
+                    <p className="text-sm text-gray-900">{selectedDepreciation.assetName}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Código
+                    </label>
+                    <p className="text-sm text-gray-900">{selectedDepreciation.assetCode}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Costo Adquisición
+                    </label>
+                    <p className="text-sm text-gray-900">{formatCurrency(selectedDepreciation.acquisitionCost)}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Depreciación Mensual
+                    </label>
+                    <p className="text-sm text-gray-900">{formatCurrency(selectedDepreciation.monthlyDepreciation)}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Depreciación Acumulada
+                    </label>
+                    <p className="text-sm text-gray-900">{formatCurrency(selectedDepreciation.accumulatedDepreciation)}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Valor Remanente
+                    </label>
+                    <p className="text-sm text-gray-900">{formatCurrency(selectedDepreciation.remainingValue)}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Período
+                    </label>
+                    <p className="text-sm text-gray-900">{selectedDepreciation.period}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Estado
+                    </label>
+                    <p className="text-sm text-gray-900">{selectedDepreciation.status}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Calculate Depreciation Modal */}
         {showCalculateModal && (
@@ -592,7 +731,8 @@ export default function DepreciationPage() {
                     <input
                       type="month"
                       required
-                      defaultValue="2024-01"
+                      name="period"
+                      defaultValue={new Date().toISOString().slice(0, 7)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -603,6 +743,7 @@ export default function DepreciationPage() {
                     <input
                       type="date"
                       required
+                      name="processDate"
                       defaultValue={new Date().toISOString().split('T')[0]}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
@@ -614,26 +755,23 @@ export default function DepreciationPage() {
                     Categorías a Incluir
                   </label>
                   <div className="space-y-2">
-                    <label className="flex items-center">
-                      <input type="checkbox" defaultChecked className="mr-2" />
-                      <span className="text-sm">Edificios y Construcciones</span>
-                    </label>
-                    <label className="flex items-center">
-                      <input type="checkbox" defaultChecked className="mr-2" />
-                      <span className="text-sm">Maquinaria y Equipo</span>
-                    </label>
-                    <label className="flex items-center">
-                      <input type="checkbox" defaultChecked className="mr-2" />
-                      <span className="text-sm">Vehículos</span>
-                    </label>
-                    <label className="flex items-center">
-                      <input type="checkbox" defaultChecked className="mr-2" />
-                      <span className="text-sm">Mobiliario y Equipo de Oficina</span>
-                    </label>
-                    <label className="flex items-center">
-                      <input type="checkbox" defaultChecked className="mr-2" />
-                      <span className="text-sm">Equipo de Computación</span>
-                    </label>
+                    {selectedCategories.map(category => (
+                      <label key={category} className="flex items-center">
+                        <input
+                          type="checkbox"
+                          className="mr-2"
+                          checked={selectedCategories.includes(category)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedCategories(prev => Array.from(new Set([...prev, category])));
+                            } else {
+                              setSelectedCategories(prev => prev.filter(c => c !== category));
+                            }
+                          }}
+                        />
+                        <span className="text-sm">{category}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
 

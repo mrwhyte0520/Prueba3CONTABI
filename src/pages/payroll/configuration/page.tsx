@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
- 
+
 import { exportToExcelStyled } from '../../../utils/exportImportUtils';
+import { settingsService } from '../../../services/database';
 
 interface PayrollConfig {
-  id: string;
+  id?: string;
   company_name: string;
   tax_id: string;
   social_security_rate: number;
@@ -38,30 +39,112 @@ export default function PayrollConfigurationPage() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const [showModal, setShowModal] = useState(false);
-  
+
   const [formData, setFormData] = useState<any>({});
 
   useEffect(() => {
     loadConfiguration();
   }, []);
 
-  const loadConfiguration = () => {
-    setConfig(null);
-    setTaxBrackets([]);
+  const loadConfiguration = async () => {
+    setLoading(true);
+    try {
+      const data = await settingsService.getPayrollSettings();
+      if (data) {
+        const normalized: PayrollConfig = {
+          id: data.id,
+          company_name: data.company_name || '',
+          tax_id: data.tax_id || '',
+          social_security_rate: Number(data.social_security_rate) || 0,
+          income_tax_rate: Number(data.income_tax_rate) || 0,
+          christmas_bonus_rate: Number(data.christmas_bonus_rate) || 0,
+          vacation_days: Number(data.vacation_days) || 14,
+          sick_days: Number(data.sick_days) || 10,
+          overtime_rate: Number(data.overtime_rate) || 1.5,
+          night_shift_rate: Number(data.night_shift_rate) || 1.2,
+          sunday_rate: Number(data.sunday_rate) || 1.5,
+          holiday_rate: Number(data.holiday_rate) || 2.0,
+          min_wage: Number(data.min_wage) || 0,
+          currency: data.currency || 'DOP',
+          pay_frequency: (data.pay_frequency as PayrollConfig['pay_frequency']) || 'monthly',
+          fiscal_year_start: data.fiscal_year_start || '',
+          backup_frequency: (data.backup_frequency as PayrollConfig['backup_frequency']) || 'weekly',
+          auto_calculate_taxes: data.auto_calculate_taxes ?? true,
+          auto_generate_reports: data.auto_generate_reports ?? true,
+        };
+        setConfig(normalized);
+      } else {
+        setConfig({
+          company_name: '',
+          tax_id: '',
+          social_security_rate: 0,
+          income_tax_rate: 0,
+          christmas_bonus_rate: 0,
+          vacation_days: 14,
+          sick_days: 10,
+          overtime_rate: 1.5,
+          night_shift_rate: 1.2,
+          sunday_rate: 1.5,
+          holiday_rate: 2.0,
+          min_wage: 0,
+          currency: 'DOP',
+          pay_frequency: 'monthly',
+          fiscal_year_start: '',
+          backup_frequency: 'weekly',
+          auto_calculate_taxes: true,
+          auto_generate_reports: true,
+        });
+      }
+      // Load tax brackets from Supabase
+      const bracketsData = await settingsService.getPayrollTaxBrackets();
+      const normalizedBrackets: TaxBracket[] = (bracketsData || []).map((b: any) => ({
+        id: b.id,
+        min_amount: Number(b.min_amount) || 0,
+        max_amount: b.max_amount === null || typeof b.max_amount === 'undefined'
+          ? Infinity
+          : Number(b.max_amount),
+        rate: Number(b.rate) || 0,
+        fixed_amount: Number(b.fixed_amount) || 0,
+      }));
+      setTaxBrackets(normalizedBrackets);
+    } catch (error) {
+      console.error('Error loading payroll configuration:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!config) return;
     setLoading(true);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      if (config) {
-        setConfig({ ...config, ...formData });
-      }
-      
+      const payload = {
+        id: config.id,
+        company_name: config.company_name,
+        tax_id: config.tax_id,
+        social_security_rate: config.social_security_rate,
+        income_tax_rate: config.income_tax_rate,
+        christmas_bonus_rate: config.christmas_bonus_rate,
+        vacation_days: config.vacation_days,
+        sick_days: config.sick_days,
+        overtime_rate: config.overtime_rate,
+        night_shift_rate: config.night_shift_rate,
+        sunday_rate: config.sunday_rate,
+        holiday_rate: config.holiday_rate,
+        min_wage: config.min_wage,
+        currency: config.currency,
+        pay_frequency: config.pay_frequency,
+        fiscal_year_start: config.fiscal_year_start || null,
+        backup_frequency: config.backup_frequency,
+        auto_calculate_taxes: config.auto_calculate_taxes,
+        auto_generate_reports: config.auto_generate_reports,
+      };
+
+      const saved = await settingsService.savePayrollSettings(payload);
+      setConfig(prev => prev ? { ...prev, id: saved.id } : prev);
+
       alert('Configuración guardada exitosamente');
     } catch (error) {
       console.error('Error saving configuration:', error);
@@ -81,35 +164,78 @@ export default function PayrollConfigurationPage() {
     setShowModal(true);
   };
 
-  const handleSaveTaxBracket = (e: React.FormEvent) => {
+  const handleSaveTaxBracket = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (formData.id) {
-      setTaxBrackets(prev => prev.map(bracket => 
-        bracket.id === formData.id ? { ...bracket, ...formData } : bracket
-      ));
-    } else {
-      const newBracket: TaxBracket = {
-        ...formData,
-        id: Date.now().toString()
-      };
-      setTaxBrackets(prev => [...prev, newBracket]);
+
+    const payload = {
+      min_amount: Number(formData.min_amount) || 0,
+      max_amount:
+        formData.max_amount === '' || formData.max_amount === undefined || formData.max_amount === null || formData.max_amount === Infinity
+          ? null
+          : Number(formData.max_amount),
+      rate: Number(formData.rate) || 0,
+      fixed_amount: Number(formData.fixed_amount) || 0,
+    };
+
+    try {
+      setLoading(true);
+      if (formData.id) {
+        const updated = await settingsService.updatePayrollTaxBracket(formData.id, payload);
+        setTaxBrackets(prev => prev.map(bracket =>
+          bracket.id === formData.id
+            ? {
+                id: updated.id,
+                min_amount: Number(updated.min_amount) || 0,
+                max_amount: updated.max_amount === null || typeof updated.max_amount === 'undefined'
+                  ? Infinity
+                  : Number(updated.max_amount),
+                rate: Number(updated.rate) || 0,
+                fixed_amount: Number(updated.fixed_amount) || 0,
+              }
+            : bracket
+        ));
+      } else {
+        const created = await settingsService.createPayrollTaxBracket(payload);
+        const newBracket: TaxBracket = {
+          id: created.id,
+          min_amount: Number(created.min_amount) || 0,
+          max_amount: created.max_amount === null || typeof created.max_amount === 'undefined'
+            ? Infinity
+            : Number(created.max_amount),
+          rate: Number(created.rate) || 0,
+          fixed_amount: Number(created.fixed_amount) || 0,
+        };
+        setTaxBrackets(prev => [...prev, newBracket]);
+      }
+
+      setShowModal(false);
+      setFormData({});
+    } catch (error) {
+      console.error('Error saving tax bracket:', error);
+      alert('Error al guardar el tramo fiscal');
+    } finally {
+      setLoading(false);
     }
-    
-    setShowModal(false);
-    setFormData({});
   };
 
-  const handleDeleteTaxBracket = (id: string) => {
-    if (confirm('¿Está seguro de que desea eliminar este tramo fiscal?')) {
+  const handleDeleteTaxBracket = async (id: string) => {
+    if (!confirm('¿Está seguro de que desea eliminar este tramo fiscal?')) return;
+
+    try {
+      setLoading(true);
+      await settingsService.deletePayrollTaxBracket(id);
       setTaxBrackets(prev => prev.filter(bracket => bracket.id !== id));
+    } catch (error) {
+      console.error('Error deleting tax bracket:', error);
+      alert('Error al eliminar el tramo fiscal');
+    } finally {
+      setLoading(false);
     }
   };
 
   const exportConfiguration = async () => {
     try {
       const today = new Date().toISOString().split('T')[0];
-      
 
       const rows: any[] = [];
       // General configuration rows

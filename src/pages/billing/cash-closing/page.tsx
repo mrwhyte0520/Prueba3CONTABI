@@ -1,5 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { toast } from 'sonner';
+import { useAuth } from '../../../hooks/useAuth';
+import { cashClosingService, invoicesService, receiptsService } from '../../../services/database';
 
 // Importación dinámica de jsPDF para evitar errores de compilación
 const loadJsPDF = async () => {
@@ -9,106 +12,36 @@ const loadJsPDF = async () => {
 };
 
 export default function CashClosingPage() {
+  const { user } = useAuth();
   const [showNewClosingModal, setShowNewClosingModal] = useState(false);
+  const [showViewClosingModal, setShowViewClosingModal] = useState(false);
+  const [viewClosing, setViewClosing] = useState<any | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCashier, setSelectedCashier] = useState('María González');
-  const [selectedShift, setSelectedShift] = useState('Mañana (8:00 AM - 4:00 PM)');
+  const [cashClosings, setCashClosings] = useState<any[]>([]);
+  const [dailyInvoices, setDailyInvoices] = useState<any[]>([]);
+  const [dailyReceipts, setDailyReceipts] = useState<any[]>([]);
 
-  const cashClosings = [
-    {
-      id: 'CC-2024-015',
-      date: '2024-01-15',
-      cashier: 'María González',
-      shift: 'Mañana (8:00 AM - 4:00 PM)',
-      openingBalance: 5000,
-      totalSales: 185450,
-      cashSales: 75200,
-      cardSales: 65150,
-      transferSales: 35100,
-      otherSales: 10000,
-      totalExpenses: 2500,
-      expectedBalance: 77700,
-      actualBalance: 77500,
-      difference: -200,
-      status: 'closed',
-      notes: 'Diferencia menor por cambio no registrado'
-    },
-    {
-      id: 'CC-2024-014',
-      date: '2024-01-15',
-      cashier: 'Carlos Rodríguez',
-      shift: 'Tarde (4:00 PM - 12:00 AM)',
-      openingBalance: 3000,
-      totalSales: 125300,
-      cashSales: 45800,
-      cardSales: 52500,
-      transferSales: 22000,
-      otherSales: 5000,
-      totalExpenses: 1200,
-      expectedBalance: 47600,
-      actualBalance: 47600,
-      difference: 0,
-      status: 'closed',
-      notes: 'Cierre perfecto'
-    },
-    {
-      id: 'CC-2024-013',
-      date: '2024-01-14',
-      cashier: 'Ana Martínez',
-      shift: 'Completo (8:00 AM - 8:00 PM)',
-      openingBalance: 4000,
-      totalSales: 245600,
-      cashSales: 98400,
-      cardSales: 89200,
-      transferSales: 45000,
-      otherSales: 13000,
-      totalExpenses: 3200,
-      expectedBalance: 99200,
-      actualBalance: 99500,
-      difference: 300,
-      status: 'closed',
-      notes: 'Sobrante por propina no registrada'
-    },
-    {
-      id: 'CC-2024-012',
-      date: '2024-01-14',
-      cashier: 'Luis Pérez',
-      shift: 'Noche (8:00 PM - 2:00 AM)',
-      openingBalance: 2500,
-      totalSales: 89750,
-      cashSales: 32500,
-      cardSales: 38250,
-      transferSales: 15000,
-      otherSales: 4000,
-      totalExpenses: 800,
-      expectedBalance: 34200,
-      actualBalance: 34000,
-      difference: -200,
-      status: 'pending_review',
-      notes: 'Pendiente de revisión por diferencia'
-    }
-  ];
-
-  const currentShift = {
-    cashier: 'María González',
+  // Datos del turno actual (por ahora manuales, más adelante se pueden conectar a ventas reales)
+  const [currentShift, setCurrentShift] = useState({
+    cashier: 'Cajero principal',
     shift: 'Mañana (8:00 AM - 4:00 PM)',
     startTime: '08:00',
-    openingBalance: 5000,
-    currentSales: 45600,
-    cashSales: 18200,
-    cardSales: 16400,
-    transferSales: 8500,
-    otherSales: 2500,
-    expenses: 500
-  };
+    openingBalance: 0,
+    currentSales: 0,
+    cashSales: 0,
+    cardSales: 0,
+    transferSales: 0,
+    otherSales: 0,
+    expenses: 0,
+  });
 
-  const paymentMethods = [
+  const paymentMethods = useMemo(() => ([
     { name: 'Efectivo', amount: currentShift.cashSales, icon: 'ri-money-dollar-circle-line', color: 'green' },
     { name: 'Tarjeta', amount: currentShift.cardSales, icon: 'ri-bank-card-line', color: 'blue' },
     { name: 'Transferencia', amount: currentShift.transferSales, icon: 'ri-exchange-line', color: 'purple' },
     { name: 'Otros', amount: currentShift.otherSales, icon: 'ri-more-line', color: 'orange' }
-  ];
+  ]), [currentShift]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -134,9 +67,11 @@ export default function CashClosingPage() {
     return 'text-red-600';
   };
 
-  const filteredClosings = cashClosings.filter(closing => {
-    const matchesSearch = closing.cashier.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         closing.id.toLowerCase().includes(searchTerm.toLowerCase());
+  const filteredClosings = cashClosings.filter((closing) => {
+    const cashierName = (closing.cashier_name || closing.cashier || '').toLowerCase();
+    const idStr = String(closing.id || '').toLowerCase();
+    const term = searchTerm.toLowerCase();
+    const matchesSearch = cashierName.includes(term) || idStr.includes(term);
     return matchesSearch;
   });
 
@@ -145,22 +80,129 @@ export default function CashClosingPage() {
   };
 
   const handleViewClosing = (closingId: string) => {
-    alert(`Visualizando cierre: ${closingId}`);
+    const closing = cashClosings.find(c => c.id === closingId);
+    if (!closing) return;
+    setViewClosing(closing);
+    setShowViewClosingModal(true);
   };
 
   const handlePrintClosing = (closingId: string) => {
-    alert(`Imprimiendo cierre: ${closingId}`);
+    // Por ahora, usar el PDF general de turno actual; más adelante se puede cargar los datos del cierre seleccionado
+    toast.info('Generando PDF del cierre...');
+    exportToPDF();
   };
 
-  const handleReviewClosing = (closingId: string) => {
-    alert(`Revisando cierre: ${closingId}`);
+  const handleReviewClosing = async (closingId: string) => {
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para revisar cierres');
+      return;
+    }
+    const closing = cashClosings.find(c => c.id === closingId);
+    if (!closing) return;
+    if (!confirm(`¿Marcar como revisado el cierre ${closingId}?`)) return;
+    try {
+      await cashClosingService.update(closingId, { status: 'closed' });
+      await loadClosings();
+      toast.success('Cierre marcado como revisado');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error reviewing cash closing:', error);
+      toast.error('Error al revisar el cierre');
+    }
   };
 
-  const handleExportClosings = (format: string) => {
-    alert(`Exportando cierres en formato ${format.toUpperCase()}`);
+  const expectedCashBalance = useMemo(
+    () => currentShift.openingBalance + currentShift.cashSales - currentShift.expenses,
+    [currentShift]
+  );
+
+  const loadClosings = async () => {
+    if (!user?.id) return;
+    try {
+      const list = await cashClosingService.getAll(user.id);
+      setCashClosings(list || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading cash closings:', error);
+      toast.error('Error al cargar los cierres de caja');
+    }
   };
 
-  const expectedCashBalance = currentShift.openingBalance + currentShift.cashSales - currentShift.expenses;
+  useEffect(() => {
+    if (user?.id) {
+      loadClosings();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Cargar facturas reales del usuario y filtrar por la fecha seleccionada
+  useEffect(() => {
+    const loadInvoices = async () => {
+      if (!user?.id) return;
+      try {
+        const all = await invoicesService.getAll(user.id);
+        const invoicesForDay = (all || []).filter((inv: any) => {
+          const invDate = (inv.invoice_date || inv.created_at || '').slice(0, 10);
+          return invDate === selectedDate;
+        });
+
+        setDailyInvoices(invoicesForDay);
+
+        const totalSales = invoicesForDay.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+
+        setCurrentShift(prev => ({
+          ...prev,
+          currentSales: totalSales,
+        }));
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading invoices for cash closing:', error);
+        toast.error('Error al cargar las ventas del día para el cierre de caja');
+      }
+    };
+
+    loadInvoices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, selectedDate]);
+
+  // Cargar recibos (cobros) para desglosar métodos de pago
+  useEffect(() => {
+    const loadReceipts = async () => {
+      if (!user?.id) return;
+      try {
+        const all = await receiptsService.getAll(user.id);
+        const receiptsForDay = (all || []).filter((rec: any) => {
+          const recDate = (rec.receipt_date || rec.created_at || '').slice(0, 10);
+          return recDate === selectedDate && rec.status !== 'void';
+        });
+
+        setDailyReceipts(receiptsForDay);
+
+        const sumByMethod = (method: string) =>
+          receiptsForDay
+            .filter((r: any) => (r.payment_method || '').toLowerCase() === method)
+            .reduce((sum: number, r: any) => sum + (Number(r.amount) || 0), 0);
+
+        const cashSales = sumByMethod('cash');
+        const cardSales = sumByMethod('card');
+        const transferSales = sumByMethod('transfer');
+
+        setCurrentShift(prev => ({
+          ...prev,
+          cashSales,
+          cardSales,
+          transferSales,
+        }));
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading receipts for cash closing:', error);
+        toast.error('Error al cargar los cobros del día para el cierre de caja');
+      }
+    };
+
+    loadReceipts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, selectedDate]);
 
   const exportToPDF = async () => {
     try {
@@ -444,26 +486,26 @@ export default function CashClosingPage() {
                       <div className="text-sm font-medium text-gray-900">{closing.id}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {new Date(closing.date).toLocaleDateString('es-DO')}
+                      {new Date(closing.closing_date || closing.date).toLocaleDateString('es-DO')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{closing.cashier}</div>
+                      <div className="text-sm text-gray-900">{closing.cashier_name || closing.cashier}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{closing.shift}</div>
+                      <div className="text-sm text-gray-900">{closing.shift_name || closing.shift}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD$ {closing.totalSales.toLocaleString()}
+                      RD$ {Number(closing.total_sales ?? closing.totalSales ?? 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {closing.expectedBalance.toLocaleString()}
+                      RD$ {Number(closing.expected_cash_balance ?? closing.expectedBalance ?? 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {closing.actualBalance.toLocaleString()}
+                      RD$ {Number(closing.actual_cash_balance ?? closing.actualBalance ?? 0).toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`text-sm font-medium ${getDifferenceColor(closing.difference)}`}>
-                        {closing.difference >= 0 ? '+' : ''}RD$ {closing.difference.toLocaleString()}
+                      <span className={`text-sm font-medium ${getDifferenceColor(Number(closing.difference || 0))}`}>
+                        {Number(closing.difference || 0) >= 0 ? '+' : ''}RD$ {Number(closing.difference || 0).toLocaleString()}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -479,13 +521,6 @@ export default function CashClosingPage() {
                           title="Ver cierre"
                         >
                           <i className="ri-eye-line"></i>
-                        </button>
-                        <button
-                          onClick={() => handlePrintClosing(closing.id)}
-                          className="text-gray-600 hover:text-gray-900 p-1"
-                          title="Imprimir cierre"
-                        >
-                          <i className="ri-printer-line"></i>
                         </button>
                         {closing.status === 'pending_review' && (
                           <button
@@ -563,6 +598,7 @@ export default function CashClosingPage() {
                     <input
                       type="number"
                       value={currentShift.expenses}
+                      onChange={(e) => setCurrentShift(prev => ({ ...prev, expenses: Number(e.target.value) || 0 }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                     />
                   </div>
@@ -580,6 +616,10 @@ export default function CashClosingPage() {
                     <input
                       type="number"
                       placeholder="Ingrese el efectivo contado físicamente"
+                      onChange={(e) => {
+                        const actual = Number(e.target.value) || 0;
+                        setCurrentShift(prev => ({ ...prev, actualCash: actual } as any));
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                     />
                   </div>
@@ -602,13 +642,212 @@ export default function CashClosingPage() {
                   Cancelar
                 </button>
                 <button
-                  onClick={() => {
-                    alert('Procesando cierre de caja...');
-                    setShowNewClosingModal(false);
+                  onClick={async () => {
+                    if (!user?.id) {
+                      toast.error('Debes iniciar sesión para procesar cierres');
+                      return;
+                    }
+
+                    const actualCash = (currentShift as any).actualCash || 0;
+                    const difference = actualCash - expectedCashBalance;
+
+                    try {
+                      await cashClosingService.create(user.id, {
+                        closing_date: selectedDate,
+                        cashier_name: currentShift.cashier,
+                        shift_name: currentShift.shift,
+                        opening_balance: currentShift.openingBalance,
+                        total_sales: currentShift.currentSales,
+                        cash_sales: currentShift.cashSales,
+                        card_sales: currentShift.cardSales,
+                        transfer_sales: currentShift.transferSales,
+                        other_sales: currentShift.otherSales,
+                        total_expenses: currentShift.expenses,
+                        expected_cash_balance: expectedCashBalance,
+                        actual_cash_balance: actualCash,
+                        difference,
+                        status: difference === 0 ? 'closed' : 'pending_review',
+                      });
+
+                      await loadClosings();
+                      setShowNewClosingModal(false);
+                      toast.success('Cierre de caja procesado correctamente');
+                    } catch (error) {
+                      // eslint-disable-next-line no-console
+                      console.error('Error processing cash closing:', error);
+                      toast.error('Error al procesar el cierre de caja');
+                    }
                   }}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                 >
                   Procesar Cierre
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* View Closing Modal (read-only) */}
+        {showViewClosingModal && viewClosing && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="p-6 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-gray-900">Detalle del Cierre de Caja</h3>
+                  <button
+                    onClick={() => setShowViewClosingModal(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <i className="ri-close-line text-xl"></i>
+                  </button>
+                </div>
+              </div>
+              <div className="p-6 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Fecha</label>
+                    <input
+                      type="date"
+                      value={(viewClosing.closing_date || viewClosing.date || '').slice(0, 10)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Estado</label>
+                    <input
+                      type="text"
+                      value={getStatusText(viewClosing.status)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Cajero</label>
+                    <input
+                      type="text"
+                      value={viewClosing.cashier_name || viewClosing.cashier || ''}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Turno</label>
+                    <input
+                      type="text"
+                      value={viewClosing.shift_name || viewClosing.shift || ''}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Saldo Inicial</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.opening_balance || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Ventas Totales</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.total_sales || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Ventas en Efectivo</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.cash_sales || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Ventas con Tarjeta</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.card_sales || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Ventas por Transferencia</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.transfer_sales || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Otros Métodos</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.other_sales || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Gastos</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.total_expenses || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Efectivo Esperado</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.expected_cash_balance || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Efectivo Real</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.actual_cash_balance || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Diferencia</label>
+                    <input
+                      type="number"
+                      value={Number(viewClosing.difference || 0)}
+                      readOnly
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm font-semibold"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Notas del Cierre</label>
+                  <textarea
+                    rows={4}
+                    value={viewClosing.notes || ''}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                  ></textarea>
+                </div>
+              </div>
+              <div className="p-6 border-t border-gray-200 flex justify-end">
+                <button
+                  onClick={() => setShowViewClosingModal(false)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                >
+                  Cerrar
                 </button>
               </div>
             </div>

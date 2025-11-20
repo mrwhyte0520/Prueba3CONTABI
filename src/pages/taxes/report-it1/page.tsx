@@ -62,7 +62,8 @@ export default function ReportIT1Page() {
 
   const loadHistoricalData = async () => {
     try {
-      setHistoricalData([]);
+      const data = await taxService.getReportIT1History(selectedYear || undefined);
+      setHistoricalData(data || []);
     } catch (error) {
       console.error('Error loading historical data:', error);
     }

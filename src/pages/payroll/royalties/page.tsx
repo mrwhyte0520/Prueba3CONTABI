@@ -1,6 +1,8 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { employeesService, royaltiesService } from '../../../services/database';
 
 interface Royalty {
   id: string;
@@ -24,7 +26,10 @@ interface Royalty {
 }
 
 export default function PayrollRoyaltiesPage() {
+  const { user } = useAuth();
   const [royalties, setRoyalties] = useState<Royalty[]>([]);
+  const [employees, setEmployees] = useState<Array<{ id: string; code: string; name: string; department: string; position: string }>>([]);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingRoyalty, setEditingRoyalty] = useState<Royalty | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -49,7 +54,7 @@ export default function PayrollRoyaltiesPage() {
     description: ''
   });
 
-  const departments = ['Ventas', 'Producción', 'Administración', 'Recursos Humanos', 'Finanzas', 'Marketing'];
+  const departments = Array.from(new Set(employees.map(e => e.department).filter(Boolean)));
   const royaltyTypes = [
     { value: 'percentage', label: 'Porcentaje' },
     { value: 'fixed', label: 'Monto Fijo' },
@@ -60,6 +65,58 @@ export default function PayrollRoyaltiesPage() {
     { value: 'quarterly', label: 'Trimestral' },
     { value: 'annual', label: 'Anual' }
   ];
+
+  useEffect(() => {
+    const loadEmployees = async () => {
+      if (!user) return;
+      try {
+        const data = await employeesService.getAll(user.id);
+        const mapped = (data || []).map((e: any) => ({
+          id: e.id,
+          code: e.employee_code || e.identification || '',
+          name: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
+          department: e.departments?.name || '',
+          position: e.positions?.title || '',
+        }));
+        setEmployees(mapped);
+      } catch (error) {
+        console.error('Error loading employees for royalties:', error);
+      }
+    };
+
+    const loadRoyalties = async () => {
+      if (!user) return;
+      try {
+        const data = await royaltiesService.getAll(user.id);
+        const mapped: Royalty[] = (data || []).map((r: any) => ({
+          id: r.id,
+          employeeId: r.employee_id,
+          employeeName: r.employee_name,
+          department: r.department,
+          position: r.position,
+          royaltyType: r.royalty_type,
+          baseAmount: Number(r.base_amount) || 0,
+          percentage: r.percentage ?? undefined,
+          fixedAmount: r.fixed_amount ?? undefined,
+          formula: r.formula || '',
+          period: r.period,
+          startDate: r.start_date,
+          endDate: r.end_date || '',
+          isActive: !!r.is_active,
+          description: r.description || '',
+          calculatedAmount: Number(r.calculated_amount) || 0,
+          lastCalculation: r.last_calculation || new Date().toISOString().split('T')[0],
+          createdAt: r.created_at || new Date().toISOString(),
+        }));
+        setRoyalties(mapped);
+      } catch (error) {
+        console.error('Error loading royalties:', error);
+      }
+    };
+
+    loadEmployees();
+    loadRoyalties();
+  }, [user]);
 
   const filteredRoyalties = royalties.filter(royalty => {
     const matchesSearch = royalty.employeeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -96,51 +153,105 @@ export default function PayrollRoyaltiesPage() {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    if (!user) return;
+
     const calculatedAmount = calculateRoyalty(formData);
-    
-    if (editingRoyalty) {
-      setRoyalties(prev => prev.map(royalty => 
-        royalty.id === editingRoyalty.id 
-          ? { 
-              ...royalty, 
-              ...formData, 
-              calculatedAmount,
-              lastCalculation: new Date().toISOString().split('T')[0]
-            }
-          : royalty
-      ));
-    } else {
-      const newRoyalty: Royalty = {
-        id: Date.now().toString(),
-        ...formData,
-        calculatedAmount,
-        lastCalculation: new Date().toISOString().split('T')[0],
-        createdAt: new Date().toISOString().split('T')[0]
-      };
-      setRoyalties(prev => [...prev, newRoyalty]);
+
+    const payload: any = {
+      employee_id: formData.employeeId,
+      employee_name: formData.employeeName,
+      department: formData.department,
+      position: formData.position,
+      royalty_type: formData.royaltyType,
+      base_amount: formData.royaltyType === 'fixed' ? 0 : formData.baseAmount,
+      percentage: formData.royaltyType === 'percentage' ? formData.percentage : null,
+      fixed_amount: formData.royaltyType === 'fixed' ? formData.fixedAmount : null,
+      formula: formData.royaltyType === 'formula' ? formData.formula : null,
+      period: formData.period,
+      start_date: formData.startDate,
+      end_date: formData.endDate || null,
+      is_active: formData.isActive,
+      description: formData.description,
+      calculated_amount: calculatedAmount,
+      last_calculation: new Date().toISOString().split('T')[0],
+    };
+
+    try {
+      if (editingRoyalty) {
+        const updated = await royaltiesService.update(editingRoyalty.id, payload);
+        const mapped: Royalty = {
+          id: updated.id,
+          employeeId: updated.employee_id,
+          employeeName: updated.employee_name,
+          department: updated.department,
+          position: updated.position,
+          royaltyType: updated.royalty_type,
+          baseAmount: Number(updated.base_amount) || 0,
+          percentage: updated.percentage ?? undefined,
+          fixedAmount: updated.fixed_amount ?? undefined,
+          formula: updated.formula || '',
+          period: updated.period,
+          startDate: updated.start_date,
+          endDate: updated.end_date || '',
+          isActive: !!updated.is_active,
+          description: updated.description || '',
+          calculatedAmount: Number(updated.calculated_amount) || 0,
+          lastCalculation: updated.last_calculation || new Date().toISOString().split('T')[0],
+          createdAt: updated.created_at || new Date().toISOString(),
+        };
+        setRoyalties(prev => prev.map(royalty => 
+          royalty.id === editingRoyalty.id ? mapped : royalty
+        ));
+      } else {
+        const created = await royaltiesService.create(user.id, payload);
+        const mapped: Royalty = {
+          id: created.id,
+          employeeId: created.employee_id,
+          employeeName: created.employee_name,
+          department: created.department,
+          position: created.position,
+          royaltyType: created.royalty_type,
+          baseAmount: Number(created.base_amount) || 0,
+          percentage: created.percentage ?? undefined,
+          fixedAmount: created.fixed_amount ?? undefined,
+          formula: created.formula || '',
+          period: created.period,
+          startDate: created.start_date,
+          endDate: created.end_date || '',
+          isActive: !!created.is_active,
+          description: created.description || '',
+          calculatedAmount: Number(created.calculated_amount) || 0,
+          lastCalculation: created.last_calculation || new Date().toISOString().split('T')[0],
+          createdAt: created.created_at || new Date().toISOString(),
+        };
+        setRoyalties(prev => [...prev, mapped]);
+      }
+
+      setShowForm(false);
+      setEditingRoyalty(null);
+      setSelectedEmployeeId('');
+      setFormData({
+        employeeId: '',
+        employeeName: '',
+        department: '',
+        position: '',
+        royaltyType: 'percentage',
+        baseAmount: 0,
+        percentage: 0,
+        fixedAmount: 0,
+        formula: '',
+        period: 'monthly',
+        startDate: '',
+        endDate: '',
+        isActive: true,
+        description: ''
+      });
+    } catch (error) {
+      console.error('Error saving royalty:', error);
+      alert('Error al guardar la regalía');
     }
-    
-    setShowForm(false);
-    setEditingRoyalty(null);
-    setFormData({
-      employeeId: '',
-      employeeName: '',
-      department: '',
-      position: '',
-      royaltyType: 'percentage',
-      baseAmount: 0,
-      percentage: 0,
-      fixedAmount: 0,
-      formula: '',
-      period: 'monthly',
-      startDate: '',
-      endDate: '',
-      isActive: true,
-      description: ''
-    });
   };
 
   const handleEdit = (royalty: Royalty) => {
@@ -164,9 +275,14 @@ export default function PayrollRoyaltiesPage() {
     setShowForm(true);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('¿Está seguro de eliminar esta regalía?')) {
+  const handleDelete = async (id: string) => {
+    if (!confirm('¿Está seguro de eliminar esta regalía?')) return;
+    try {
+      await royaltiesService.delete(id);
       setRoyalties(prev => prev.filter(royalty => royalty.id !== id));
+    } catch (error) {
+      console.error('Error deleting royalty:', error);
+      alert('Error al eliminar la regalía');
     }
   };
 
@@ -467,57 +583,71 @@ export default function PayrollRoyaltiesPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        ID Empleado *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={formData.employeeId}
-                        onChange={(e) => setFormData(prev => ({ ...prev, employeeId: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Nombre Empleado *
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={formData.employeeName}
-                        onChange={(e) => setFormData(prev => ({ ...prev, employeeName: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Departamento *
+                        Empleado *
                       </label>
                       <select
                         required
-                        value={formData.department}
-                        onChange={(e) => setFormData(prev => ({ ...prev, department: e.target.value }))}
+                        value={selectedEmployeeId}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setSelectedEmployeeId(value);
+                          const emp = employees.find(emp => emp.id === value);
+                          if (emp) {
+                            setFormData(prev => ({
+                              ...prev,
+                              employeeId: emp.code,
+                              employeeName: emp.name,
+                              department: emp.department,
+                              position: emp.position,
+                            }));
+                          }
+                        }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                       >
-                        <option value="">Seleccionar departamento</option>
-                        {departments.map(dept => (
-                          <option key={dept} value={dept}>{dept}</option>
+                        <option value="">Seleccionar empleado...</option>
+                        {employees.map(emp => (
+                          <option key={emp.id} value={emp.id}>
+                            {emp.code ? `${emp.code} - ${emp.name}` : emp.name}
+                            {emp.department ? ` - ${emp.department}` : ''}
+                            {emp.position ? ` / ${emp.position}` : ''}
+                          </option>
                         ))}
                       </select>
                     </div>
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Posición *
+                        ID Empleado
                       </label>
                       <input
                         type="text"
-                        required
+                        value={formData.employeeId}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Departamento
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.department}
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Posición
+                      </label>
+                      <input
+                        type="text"
                         value={formData.position}
-                        onChange={(e) => setFormData(prev => ({ ...prev, position: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                        readOnly
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
                       />
                     </div>
 

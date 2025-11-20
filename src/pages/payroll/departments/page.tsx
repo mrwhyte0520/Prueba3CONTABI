@@ -1,7 +1,8 @@
-
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { exportToExcelStyled } from '../../../utils/exportImportUtils';
+import { useAuth } from '../../../hooks/useAuth';
+import { departmentsService } from '../../../services/database';
 
 interface Department {
   id: string;
@@ -16,74 +17,9 @@ interface Department {
 }
 
 export default function DepartmentsPage() {
-  const [departments, setDepartments] = useState<Department[]>([
-    {
-      id: '1',
-      name: 'Recursos Humanos',
-      description: 'Gestión del talento humano y desarrollo organizacional',
-      manager: 'María González',
-      employeeCount: 8,
-      budget: 450000,
-      location: 'Piso 2, Oficina 201',
-      status: 'active',
-      createdAt: '2024-01-15'
-    },
-    {
-      id: '2',
-      name: 'Contabilidad',
-      description: 'Gestión financiera y contable de la empresa',
-      manager: 'Carlos Rodríguez',
-      employeeCount: 12,
-      budget: 680000,
-      location: 'Piso 3, Oficina 301',
-      status: 'active',
-      createdAt: '2024-01-20'
-    },
-    {
-      id: '3',
-      name: 'Tecnología',
-      description: 'Desarrollo y mantenimiento de sistemas informáticos',
-      manager: 'Ana Martínez',
-      employeeCount: 15,
-      budget: 850000,
-      location: 'Piso 4, Oficina 401',
-      status: 'active',
-      createdAt: '2024-02-01'
-    },
-    {
-      id: '4',
-      name: 'Ventas',
-      description: 'Comercialización y atención al cliente',
-      manager: 'Luis Pérez',
-      employeeCount: 20,
-      budget: 750000,
-      location: 'Piso 1, Oficina 101',
-      status: 'active',
-      createdAt: '2024-02-10'
-    },
-    {
-      id: '5',
-      name: 'Marketing',
-      description: 'Estrategias de mercadeo y comunicación',
-      manager: 'Carmen Silva',
-      employeeCount: 6,
-      budget: 320000,
-      location: 'Piso 2, Oficina 205',
-      status: 'active',
-      createdAt: '2024-02-15'
-    },
-    {
-      id: '6',
-      name: 'Operaciones',
-      description: 'Gestión de procesos operativos y logística',
-      manager: 'Roberto Jiménez',
-      employeeCount: 25,
-      budget: 920000,
-      location: 'Almacén Principal',
-      status: 'active',
-      createdAt: '2024-03-01'
-    }
-  ]);
+  const { user } = useAuth();
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [showForm, setShowForm] = useState(false);
   const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
@@ -99,6 +35,37 @@ export default function DepartmentsPage() {
     status: 'active' as 'active' | 'inactive'
   });
 
+  const loadDepartments = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const data = await departmentsService.getAll(user.id);
+      const mapped: Department[] = (data || []).map((d: any) => ({
+        id: d.id as string,
+        name: d.name || '',
+        description: d.description || '',
+        manager: d.manager || '',
+        employeeCount: 0,
+        budget: Number(d.budget) || 0,
+        location: d.location || '',
+        status: (d.status as 'active' | 'inactive') || 'active',
+        createdAt: d.created_at || new Date().toISOString().split('T')[0],
+      }));
+      setDepartments(mapped);
+    } catch (error) {
+      console.error('Error loading departments:', error);
+      alert('Error al cargar departamentos');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (user) {
+      loadDepartments();
+    }
+  }, [user]);
+
   const filteredDepartments = departments.filter(dept => {
     const matchesSearch = dept.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          dept.manager.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -107,26 +74,37 @@ export default function DepartmentsPage() {
     return matchesSearch && matchesStatus;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (editingDepartment) {
-      setDepartments(prev => prev.map(dept => 
-        dept.id === editingDepartment.id 
-          ? { ...dept, ...formData, employeeCount: dept.employeeCount }
-          : dept
-      ));
-    } else {
-      const newDepartment: Department = {
-        id: Date.now().toString(),
-        ...formData,
-        employeeCount: 0,
-        createdAt: new Date().toISOString().split('T')[0]
-      };
-      setDepartments(prev => [...prev, newDepartment]);
+    if (!user) return;
+
+    try {
+      if (editingDepartment) {
+        await departmentsService.update(editingDepartment.id, {
+          name: formData.name,
+          description: formData.description,
+          manager: formData.manager,
+          budget: formData.budget,
+          location: formData.location,
+          status: formData.status,
+        });
+      } else {
+        await departmentsService.create(user.id, {
+          name: formData.name,
+          description: formData.description,
+          manager: formData.manager,
+          budget: formData.budget,
+          location: formData.location,
+          status: formData.status,
+        });
+      }
+
+      await loadDepartments();
+      resetForm();
+    } catch (error) {
+      console.error('Error saving department:', error);
+      alert('Error al guardar el departamento');
     }
-    
-    resetForm();
   };
 
   const resetForm = () => {
@@ -155,18 +133,28 @@ export default function DepartmentsPage() {
     setShowForm(true);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('¿Está seguro de eliminar este departamento?')) {
-      setDepartments(prev => prev.filter(dept => dept.id !== id));
+  const handleDelete = async (id: string) => {
+    if (!confirm('¿Está seguro de eliminar este departamento?')) return;
+    try {
+      await departmentsService.delete(id);
+      await loadDepartments();
+    } catch (error) {
+      console.error('Error deleting department:', error);
+      alert('Error al eliminar el departamento');
     }
   };
 
-  const toggleStatus = (id: string) => {
-    setDepartments(prev => prev.map(dept => 
-      dept.id === id 
-        ? { ...dept, status: dept.status === 'active' ? 'inactive' : 'active' }
-        : dept
-    ));
+  const toggleStatus = async (id: string) => {
+    const dept = departments.find(d => d.id === id);
+    if (!dept) return;
+    const newStatus = dept.status === 'active' ? 'inactive' : 'active';
+    try {
+      await departmentsService.setStatus(id, newStatus);
+      await loadDepartments();
+    } catch (error) {
+      console.error('Error updating department status:', error);
+      alert('Error al actualizar el estado');
+    }
   };
 
   const downloadExcel = async () => {
@@ -205,6 +193,7 @@ export default function DepartmentsPage() {
 
   const totalEmployees = departments.reduce((sum, dept) => sum + dept.employeeCount, 0);
   const totalBudget = departments.reduce((sum, dept) => sum + dept.budget, 0);
+  const avgEmployees = departments.length > 0 ? Math.round(totalEmployees / departments.length) : 0;
 
   return (
     <DashboardLayout>
@@ -320,7 +309,7 @@ export default function DepartmentsPage() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Promedio Empleados</p>
                 <p className="text-2xl font-bold text-orange-600">
-                  {Math.round(totalEmployees / departments.length)}
+                  {avgEmployees}
                 </p>
               </div>
               <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
+import * as XLSX from 'xlsx';
 
 interface Report607Data {
   rnc_cedula: string;
@@ -104,6 +105,53 @@ export default function Report607Page() {
     document.body.removeChild(link);
   };
 
+  const exportToExcel = () => {
+    if (reportData.length === 0) return;
+
+    const excelData = reportData.map(row => ({
+      'RNC/Cédula': row.rnc_cedula,
+      'Tipo Identificación': row.tipo_identificacion,
+      'NCF': row.numero_comprobante_fiscal,
+      'Fecha Comprobante': row.fecha_comprobante,
+      'Monto Facturado': row.monto_facturado,
+      'ITBIS Facturado': row.itbis_facturado,
+      'ITBIS Retenido': row.itbis_retenido,
+      'Propina Legal': row.monto_propina_legal,
+      'ITBIS Ret. Propina': row.itbis_retenido_propina,
+      'ITBIS Percibido Ventas': row.itbis_percibido_ventas,
+      'Retención Renta Terceros': row.retencion_renta_terceros,
+      'ISR Percibido Ventas': row.isr_percibido_ventas,
+      'Impuesto Selectivo Consumo': row.impuesto_selectivo_consumo,
+      'Otros Impuestos/Tasas': row.otros_impuestos_tasas,
+      'Propina Legal 2': row.monto_propina_legal_2,
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(excelData);
+
+    const colWidths = [
+      { wch: 15 }, // RNC/Cédula
+      { wch: 16 }, // Tipo Identificación
+      { wch: 18 }, // NCF
+      { wch: 16 }, // Fecha
+      { wch: 18 }, // Monto Facturado
+      { wch: 18 }, // ITBIS Facturado
+      { wch: 18 }, // ITBIS Retenido
+      { wch: 16 }, // Propina Legal
+      { wch: 18 }, // ITBIS Ret. Propina
+      { wch: 20 }, // ITBIS Percibido Ventas
+      { wch: 24 }, // Retención Renta Terceros
+      { wch: 20 }, // ISR Percibido Ventas
+      { wch: 24 }, // Impuesto Selectivo Consumo
+      { wch: 22 }, // Otros Impuestos/Tasas
+      { wch: 18 }, // Propina Legal 2
+    ];
+    (ws as any)['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Reporte 607');
+    XLSX.writeFile(wb, `reporte_607_${selectedPeriod}.xlsx`);
+  };
+
   const getTotals = () => {
     return reportData.reduce((totals, row) => ({
       monto_facturado: totals.monto_facturado + row.monto_facturado,
@@ -174,13 +222,22 @@ export default function Report607Page() {
               </div>
             </div>
             {reportData.length > 0 && (
-              <button
-                onClick={exportToCSV}
-                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
-              >
-                <i className="ri-download-line mr-2"></i>
-                Exportar CSV
-              </button>
+              <div className="flex gap-3 mt-6 md:mt-8">
+                <button
+                  onClick={exportToCSV}
+                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-text-line mr-2"></i>
+                  Exportar CSV
+                </button>
+                <button
+                  onClick={exportToExcel}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-excel-line mr-2"></i>
+                  Exportar Excel
+                </button>
+              </div>
             )}
           </div>
         </div>

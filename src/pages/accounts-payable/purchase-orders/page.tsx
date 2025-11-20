@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { purchaseOrdersService, purchaseOrderItemsService, suppliersService, inventoryService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -8,74 +10,136 @@ declare module 'jspdf' {
 }
 
 export default function PurchaseOrdersPage() {
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [editingOrder, setEditingOrder] = useState<any>(null);
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterSupplier, setFilterSupplier] = useState('all');
 
-  const [orders, setOrders] = useState([
-    {
-      id: 1,
-      number: 'PO-2024-001',
-      date: '2024-01-15',
-      supplier: 'Proveedor Industrial SA',
-      products: [
-        { name: 'Tornillos M8x40', quantity: 100, price: 25, total: 2500 },
-        { name: 'Arandelas Planas', quantity: 200, price: 5, total: 1000 }
-      ],
-      subtotal: 3500,
-      itbis: 630,
-      total: 4130,
-      deliveryDate: '2024-01-25',
-      status: 'Pendiente',
-      notes: 'Entrega urgente requerida'
-    },
-    {
-      id: 2,
-      number: 'PO-2024-002',
-      date: '2024-01-14',
-      supplier: 'Distribuidora Nacional SRL',
-      products: [
-        { name: 'Cables Eléctricos 12AWG', quantity: 50, price: 120, total: 6000 },
-        { name: 'Interruptores', quantity: 25, price: 85, total: 2125 }
-      ],
-      subtotal: 8125,
-      itbis: 1462.5,
-      total: 9587.5,
-      deliveryDate: '2024-01-28',
-      status: 'Aprobada',
-      notes: 'Material para proyecto eléctrico'
-    },
-    {
-      id: 3,
-      number: 'PO-2024-003',
-      date: '2024-01-13',
-      supplier: 'Servicios Técnicos EIRL',
-      products: [
-        { name: 'Servicio de Instalación', quantity: 1, price: 15000, total: 15000 }
-      ],
-      subtotal: 15000,
-      itbis: 2700,
-      total: 17700,
-      deliveryDate: '2024-01-30',
-      status: 'Recibida',
-      notes: 'Servicio completado satisfactoriamente'
-    }
-  ]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
-    supplier: '',
+    supplierId: '',
     deliveryDate: '',
     notes: '',
-    products: [{ name: '', quantity: 1, price: 0 }]
+    products: [{ itemId: null as string | null, name: '', quantity: 1, price: 0 }]
   });
 
-  const suppliers = [
-    'Proveedor Industrial SA',
-    'Distribuidora Nacional SRL',
-    'Servicios Técnicos EIRL',
-    'Materiales Construcción SA'
-  ];
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+
+  const mapDbStatusToUi = (status: string | null | undefined): string => {
+    switch (status) {
+      case 'draft':
+      case 'sent':
+        return 'Pendiente';
+      case 'approved':
+        return 'Aprobada';
+      case 'received':
+        return 'Recibida';
+      case 'cancelled':
+        return 'Cancelada';
+      default:
+        return 'Pendiente';
+    }
+  };
+
+  const loadInventoryItems = async () => {
+    if (!user?.id) {
+      setInventoryItems([]);
+      return;
+    }
+    try {
+      const data = await inventoryService.getItems(user.id);
+      setInventoryItems(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading inventory items for purchase orders', error);
+      setInventoryItems([]);
+    }
+  };
+
+  const mapUiStatusToDb = (status: string): string => {
+    switch (status) {
+      case 'Pendiente':
+        return 'draft';
+      case 'Aprobada':
+        return 'approved';
+      case 'Recibida':
+        return 'received';
+      case 'Cancelada':
+        return 'cancelled';
+      default:
+        return 'pending';
+    }
+  };
+
+  const loadSuppliers = async () => {
+    if (!user?.id) {
+      setSuppliers([]);
+      return;
+    }
+    try {
+      const data = await suppliersService.getAll(user.id);
+      setSuppliers(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading suppliers for purchase orders', error);
+      setSuppliers([]);
+    }
+  };
+
+  const loadOrders = async () => {
+    if (!user?.id) {
+      setOrders([]);
+      return;
+    }
+    try {
+      const [orderRows, itemRows] = await Promise.all([
+        purchaseOrdersService.getAll(user.id),
+        purchaseOrderItemsService.getAllByUser(user.id),
+      ]);
+
+      const itemsByOrder: Record<string, any[]> = {};
+      (itemRows || []).forEach((it: any) => {
+        const key = String(it.purchase_order_id);
+        if (!itemsByOrder[key]) itemsByOrder[key] = [];
+        itemsByOrder[key].push(it);
+      });
+
+      const mapped = (orderRows || []).map((po: any) => ({
+        id: po.id,
+        number: po.po_number,
+        date: po.order_date,
+        supplier: (po.suppliers as any)?.name || 'Proveedor',
+        supplierId: po.supplier_id,
+        products: (itemsByOrder[String(po.id)] || []).map((it: any) => ({
+          itemId: it.inventory_item_id as string | null,
+          name: it.description as string,
+          quantity: Number(it.quantity) || 0,
+          price: Number(it.unit_cost) || 0,
+        })),
+        subtotal: Number(po.subtotal) || 0,
+        itbis: Number(po.tax_amount) || 0,
+        total: Number(po.total_amount) || 0,
+        deliveryDate: po.expected_date,
+        status: mapDbStatusToUi(po.status),
+        notes: po.notes || '',
+      }));
+      setOrders(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading purchase orders', error);
+      setOrders([]);
+    }
+  };
+
+  useEffect(() => {
+    loadSuppliers();
+    loadOrders();
+    loadInventoryItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const filteredOrders = orders.filter(order => {
     const matchesStatus = filterStatus === 'all' || order.status === filterStatus;
@@ -95,60 +159,72 @@ export default function PurchaseOrdersPage() {
     return calculateSubtotal() + calculateItbis();
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!user?.id) {
+      alert('Debes iniciar sesión para registrar órdenes de compra');
+      return;
+    }
+
+    if (!formData.supplierId) {
+      alert('Debes seleccionar un proveedor');
+      return;
+    }
     
     const subtotal = calculateSubtotal();
     const itbis = calculateItbis();
     const total = calculateTotal();
 
-    const productsWithTotals = formData.products.map(product => ({
-      ...product,
-      total: product.quantity * product.price
-    }));
+    const today = new Date().toISOString().split('T')[0];
+    const delivery = formData.deliveryDate || today;
+    const orderDate = editingOrder?.date || today;
+    const poNumber = editingOrder?.number
+      ? editingOrder.number
+      : `PO-${new Date().getFullYear()}-${String(orders.length + 1).padStart(3, '0')}`;
 
-    if (editingOrder) {
-      setOrders(orders.map(order => 
-        order.id === editingOrder.id 
-          ? { 
-              ...order, 
-              supplier: formData.supplier,
-              deliveryDate: formData.deliveryDate,
-              notes: formData.notes,
-              products: productsWithTotals,
-              subtotal,
-              itbis,
-              total
-            }
-          : order
-      ));
-    } else {
-      const newOrder = {
-        id: orders.length + 1,
-        number: `PO-2024-${String(orders.length + 1).padStart(3, '0')}`,
-        date: new Date().toISOString().split('T')[0],
-        supplier: formData.supplier,
-        products: productsWithTotals,
-        subtotal,
-        itbis,
-        total,
-        deliveryDate: formData.deliveryDate,
-        status: 'Pendiente',
-        notes: formData.notes
-      };
-      setOrders([...orders, newOrder]);
+    const payload = {
+      supplier_id: formData.supplierId,
+      po_number: poNumber,
+      // Para no violar el constraint esperado (expected_date >= order_date),
+      // usamos como fecha de entrega al menos la misma fecha de la orden.
+      order_date: orderDate,
+      expected_date: delivery < orderDate ? orderDate : delivery,
+      subtotal,
+      tax_amount: itbis,
+      total_amount: total,
+      status: mapUiStatusToDb(editingOrder?.status || 'Pendiente'),
+      notes: formData.notes,
+    };
+
+    try {
+      let orderId: string;
+      if (editingOrder?.id) {
+        const updated = await purchaseOrdersService.update(editingOrder.id as string, payload);
+        orderId = String(updated.id);
+        await purchaseOrderItemsService.deleteByOrder(orderId);
+      } else {
+        const created = await purchaseOrdersService.create(user.id, payload);
+        orderId = String(created.id);
+      }
+
+      await purchaseOrderItemsService.createMany(user.id, orderId, formData.products);
+      await loadOrders();
+      resetForm();
+      alert(editingOrder ? 'Orden de compra actualizada exitosamente' : 'Orden de compra creada exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error saving purchase order', error);
+      alert('Error al guardar la orden de compra');
     }
-    
-    resetForm();
-    alert(editingOrder ? 'Orden de compra actualizada exitosamente' : 'Orden de compra creada exitosamente');
   };
 
   const resetForm = () => {
     setFormData({
-      supplier: '',
+      supplierId: '',
       deliveryDate: '',
       notes: '',
-      products: [{ name: '', quantity: 1, price: 0 }]
+      products: [{ itemId: null, name: '', quantity: 1, price: 0 }]
     });
     setEditingOrder(null);
     setShowModal(false);
@@ -157,7 +233,7 @@ export default function PurchaseOrdersPage() {
   const handleEdit = (order: any) => {
     setEditingOrder(order);
     setFormData({
-      supplier: order.supplier,
+      supplierId: order.supplierId || '',
       deliveryDate: order.deliveryDate,
       notes: order.notes,
       products: order.products
@@ -165,37 +241,87 @@ export default function PurchaseOrdersPage() {
     setShowModal(true);
   };
 
-  const handleApprove = (id: number) => {
-    if (confirm('¿Aprobar esta orden de compra?')) {
-      setOrders(orders.map(order => 
-        order.id === id ? { ...order, status: 'Aprobada' } : order
-      ));
+  const handleApprove = async (id: string | number) => {
+    if (!confirm('¿Aprobar esta orden de compra?')) return;
+    try {
+      await purchaseOrdersService.updateStatus(String(id), mapUiStatusToDb('Aprobada'));
+      await loadOrders();
       alert('Orden de compra aprobada exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error approving purchase order', error);
+      alert('No se pudo aprobar la orden');
     }
   };
 
-  const handleReceive = (id: number) => {
-    if (confirm('¿Marcar esta orden como recibida?')) {
-      setOrders(orders.map(order => 
-        order.id === id ? { ...order, status: 'Recibida' } : order
-      ));
-      alert('Orden marcada como recibida');
+  const handleReceive = async (id: string | number) => {
+    if (!user?.id) {
+      alert('Debes iniciar sesión para registrar movimientos de inventario');
+      return;
+    }
+    if (!confirm('¿Marcar esta orden como recibida y actualizar inventario?')) return;
+
+    try {
+      const orderId = String(id);
+
+      // Cargar detalle de la orden directamente desde la BD
+      const orderItems = await purchaseOrderItemsService.getByOrder(orderId);
+
+      // Actualizar existencias y crear movimientos de entrada por cada ítem
+      const today = new Date().toISOString().split('T')[0];
+
+      for (const it of orderItems) {
+        const quantity = Number(it.quantity) || 0;
+        const unitCost = Number(it.unit_cost) || 0;
+        if (quantity <= 0) continue;
+
+        // Si la línea está asociada a un producto de inventario, actualizamos su stock
+        if (it.inventory_item_id) {
+          await inventoryService.updateItem(String(it.inventory_item_id), {
+            current_stock: (it.current_stock || 0) + quantity,
+          });
+        }
+
+        // Registrar siempre un movimiento de entrada (aunque no haya producto vinculado)
+        await inventoryService.createMovement(user.id, {
+          item_id: it.inventory_item_id ? String(it.inventory_item_id) : null,
+          movement_type: 'entry',
+          quantity,
+          unit_cost: unitCost,
+          total_cost: quantity * unitCost,
+          movement_date: today,
+          reference: `PO ${orderId}`,
+          notes: it.description || null,
+        });
+      }
+
+      await purchaseOrdersService.updateStatus(orderId, mapUiStatusToDb('Recibida'));
+      await loadOrders();
+      alert('Orden marcada como recibida y entrada de inventario registrada');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error marking purchase order as received', error);
+      alert('No se pudo marcar la orden como recibida');
     }
   };
 
-  const handleCancel = (id: number) => {
-    if (confirm('¿Cancelar esta orden de compra?')) {
-      setOrders(orders.map(order => 
-        order.id === id ? { ...order, status: 'Cancelada' } : order
-      ));
+  const handleCancel = async (id: string | number) => {
+    if (!confirm('¿Cancelar esta orden de compra?')) return;
+    try {
+      await purchaseOrdersService.updateStatus(String(id), mapUiStatusToDb('Cancelada'));
+      await loadOrders();
       alert('Orden de compra cancelada');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error cancelling purchase order', error);
+      alert('No se pudo cancelar la orden');
     }
   };
 
   const addProduct = () => {
     setFormData({
       ...formData,
-      products: [...formData.products, { name: '', quantity: 1, price: 0 }]
+      products: [...formData.products, { itemId: null, name: '', quantity: 1, price: 0 }]
     });
   };
 
@@ -209,10 +335,15 @@ export default function PurchaseOrdersPage() {
   };
 
   const updateProduct = (index: number, field: string, value: any) => {
-    const updatedProducts = formData.products.map((product, i) =>
-      i === index ? { ...product, [field]: value } : product
-    );
-    setFormData({ ...formData, products: updatedProducts });
+    setFormData(prev => {
+      const updatedProducts = prev.products.map((product, i) =>
+        i === index ? { ...product, [field]: value } : product
+      );
+      return {
+        ...prev,
+        products: updatedProducts,
+      };
+    });
   };
 
   const exportToPDF = async () => {
@@ -432,8 +563,8 @@ export default function PurchaseOrdersPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="all">Todos los Proveedores</option>
-                {suppliers.map(s => (
-                  <option key={s} value={s}>{s}</option>
+                {suppliers.map((s: any) => (
+                  <option key={s.id} value={s.name}>{s.name}</option>
                 ))}
               </select>
             </div>
@@ -548,13 +679,13 @@ export default function PurchaseOrdersPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Proveedor *</label>
                     <select 
                       required
-                      value={formData.supplier}
-                      onChange={(e) => setFormData({...formData, supplier: e.target.value})}
+                      value={formData.supplierId}
+                      onChange={(e) => setFormData({...formData, supplierId: e.target.value})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Seleccionar proveedor</option>
-                      {suppliers.map(supplier => (
-                        <option key={supplier} value={supplier}>{supplier}</option>
+                      {suppliers.map((s: any) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
                   </div>
@@ -587,13 +718,23 @@ export default function PurchaseOrdersPage() {
                     {formData.products.map((item, index) => (
                       <div key={index} className="grid grid-cols-1 md:grid-cols-5 gap-3 p-3 border border-gray-200 rounded-lg">
                         <div className="md:col-span-2">
-                          <input 
-                            type="text"
-                            placeholder="Nombre del producto"
-                            value={item.name}
-                            onChange={(e) => updateProduct(index, 'name', e.target.value)}
+                          <select
+                            value={item.itemId || ''}
+                            onChange={(e) => {
+                              const selectedId = e.target.value || null;
+                              const selectedItem = inventoryItems.find((inv: any) => String(inv.id) === selectedId);
+                              updateProduct(index, 'itemId', selectedId);
+                              updateProduct(index, 'name', selectedItem ? selectedItem.name : '');
+                            }}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                          />
+                          >
+                            <option value="">Seleccionar producto</option>
+                            {inventoryItems.map((inv: any) => (
+                              <option key={inv.id} value={inv.id}>
+                                {inv.name} {inv.sku ? `(${inv.sku})` : ''}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                         <div>
                           <input 

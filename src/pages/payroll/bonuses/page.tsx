@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useAuth } from '../../../hooks/useAuth';
+import { bonusesService } from '../../../services/database';
 
 interface Bonus {
   id: string;
@@ -19,6 +21,7 @@ interface Bonus {
 }
 
 export default function PayrollBonusesPage() {
+  const { user } = useAuth();
   const [bonuses, setBonuses] = useState<Bonus[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('todos');
@@ -41,6 +44,37 @@ export default function PayrollBonusesPage() {
     conditions: ''
   });
 
+  useEffect(() => {
+    const loadBonuses = async () => {
+      if (!user) return;
+      try {
+        const data = await bonusesService.getAll(user.id);
+        const mapped: Bonus[] = (data || []).map((b: any) => ({
+          id: b.id,
+          name: b.name,
+          type: b.type,
+          amount: Number(b.amount) || 0,
+          percentage: b.percentage ?? undefined,
+          formula: b.formula || '',
+          frequency: b.frequency,
+          category: b.category,
+          isActive: !!b.is_active,
+          isTaxable: !!b.is_taxable,
+          affectsISR: !!b.affects_isr,
+          affectsSocialSecurity: !!b.affects_social_security,
+          description: b.description || '',
+          conditions: b.conditions || '',
+          createdAt: b.created_at || new Date().toISOString(),
+        }));
+        setBonuses(mapped);
+      } catch (error) {
+        console.error('Error loading bonuses:', error);
+      }
+    };
+
+    loadBonuses();
+  }, [user]);
+
   const filteredBonuses = bonuses.filter(bonus => {
     const matchesSearch = bonus.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          bonus.description.toLowerCase().includes(searchTerm.toLowerCase());
@@ -50,26 +84,74 @@ export default function PayrollBonusesPage() {
     return matchesSearch && matchesCategory && matchesType;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (editingBonus) {
-      setBonuses(bonuses.map(bonus => 
-        bonus.id === editingBonus.id 
-          ? { ...bonus, ...formData, isActive: true }
-          : bonus
-      ));
-    } else {
-      const newBonus: Bonus = {
-        id: Date.now().toString(),
-        ...formData,
-        isActive: true,
-        createdAt: new Date().toISOString()
-      };
-      setBonuses([...bonuses, newBonus]);
+    if (!user) return;
+
+    const payload: any = {
+      name: formData.name,
+      type: formData.type,
+      amount: formData.type === 'fijo' ? formData.amount : 0,
+      percentage: formData.type === 'porcentaje' ? formData.percentage : null,
+      formula: formData.type === 'formula' ? formData.formula : null,
+      frequency: formData.frequency,
+      category: formData.category,
+      is_taxable: formData.isTaxable,
+      affects_isr: formData.affectsISR,
+      affects_social_security: formData.affectsSocialSecurity,
+      description: formData.description,
+      conditions: formData.conditions,
+      is_active: true,
+    };
+
+    try {
+      if (editingBonus) {
+        const updated = await bonusesService.update(editingBonus.id, payload);
+        const mapped: Bonus = {
+          id: updated.id,
+          name: updated.name,
+          type: updated.type,
+          amount: Number(updated.amount) || 0,
+          percentage: updated.percentage ?? undefined,
+          formula: updated.formula || '',
+          frequency: updated.frequency,
+          category: updated.category,
+          isActive: !!updated.is_active,
+          isTaxable: !!updated.is_taxable,
+          affectsISR: !!updated.affects_isr,
+          affectsSocialSecurity: !!updated.affects_social_security,
+          description: updated.description || '',
+          conditions: updated.conditions || '',
+          createdAt: updated.created_at || new Date().toISOString(),
+        };
+        setBonuses(prev => prev.map(bonus => bonus.id === editingBonus.id ? mapped : bonus));
+      } else {
+        const created = await bonusesService.create(user.id, payload);
+        const mapped: Bonus = {
+          id: created.id,
+          name: created.name,
+          type: created.type,
+          amount: Number(created.amount) || 0,
+          percentage: created.percentage ?? undefined,
+          formula: created.formula || '',
+          frequency: created.frequency,
+          category: created.category,
+          isActive: !!created.is_active,
+          isTaxable: !!created.is_taxable,
+          affectsISR: !!created.affects_isr,
+          affectsSocialSecurity: !!created.affects_social_security,
+          description: created.description || '',
+          conditions: created.conditions || '',
+          createdAt: created.created_at || new Date().toISOString(),
+        };
+        setBonuses(prev => [...prev, mapped]);
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error('Error saving bonus:', error);
+      alert('Error al guardar la bonificación');
     }
-    
-    resetForm();
   };
 
   const resetForm = () => {
@@ -110,18 +192,45 @@ export default function PayrollBonusesPage() {
     setShowForm(true);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('¿Está seguro de que desea eliminar esta bonificación?')) {
+  const handleDelete = async (id: string) => {
+    if (!confirm('¿Está seguro de que desea eliminar esta bonificación?')) return;
+    try {
+      await bonusesService.delete(id);
       setBonuses(bonuses.filter(bonus => bonus.id !== id));
+    } catch (error) {
+      console.error('Error deleting bonus:', error);
+      alert('Error al eliminar la bonificación');
     }
   };
 
-  const toggleStatus = (id: string) => {
-    setBonuses(bonuses.map(bonus => 
-      bonus.id === id 
-        ? { ...bonus, isActive: !bonus.isActive }
-        : bonus
-    ));
+  const toggleStatus = async (id: string) => {
+    const bonus = bonuses.find(b => b.id === id);
+    if (!bonus) return;
+    try {
+      const payload: any = {
+        name: bonus.name,
+        type: bonus.type,
+        amount: bonus.amount,
+        percentage: bonus.percentage ?? null,
+        formula: bonus.formula || null,
+        frequency: bonus.frequency,
+        category: bonus.category,
+        is_taxable: bonus.isTaxable,
+        affects_isr: bonus.affectsISR,
+        affects_social_security: bonus.affectsSocialSecurity,
+        description: bonus.description,
+        conditions: bonus.conditions,
+        is_active: !bonus.isActive,
+      };
+      const updated = await bonusesService.update(id, payload);
+      setBonuses(prev => prev.map(b => b.id === id ? {
+        ...b,
+        isActive: !!updated.is_active,
+      } : b));
+    } catch (error) {
+      console.error('Error toggling bonus status:', error);
+      alert('Error al cambiar el estado de la bonificación');
+    }
   };
 
   const exportToCSV = () => {

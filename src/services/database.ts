@@ -8,20 +8,189 @@ const handleDatabaseError = (error: any, fallbackData: any = []) => {
 };
 
 /* ==========================================================
-   Quotes (Sales Quotations) Service
+   Referrals Service
 ========================================================== */
-export const quotesService = {
+export const referralsService = {
+  async getOrCreateCode(userId: string) {
+    try {
+      // Try get existing code
+      const { data: existing, error: getErr } = await supabase
+        .from('referral_codes')
+        .select('*')
+        .eq('user_id', userId)
+        .limit(1)
+        .maybeSingle();
+      if (!getErr && existing) return existing;
+
+      const code = Math.random().toString(36).slice(2, 8) + userId.slice(0, 4);
+      const { data, error } = await supabase
+        .from('referral_codes')
+        .insert({ user_id: userId, code })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (e) {
+      console.error('referralsService.getOrCreateCode error', e);
+      throw e;
+    }
+  },
+
+  async recordVisit(refCode: string) {
+    try {
+      const payload:any = { ref_code: refCode };
+      if (typeof window !== 'undefined') {
+        payload.user_agent = navigator.userAgent;
+        // Basic fingerprint: day + UA
+        payload.fingerprint = `${new Date().toISOString().slice(0,10)}_${navigator.userAgent.slice(0,64)}`;
+      }
+      await supabase.from('referral_visits').insert(payload);
+    } catch (e) {
+      console.warn('referralsService.recordVisit warn', e);
+    }
+  },
+
+  async getStats(userId: string) {
+    try {
+      // Get code
+      const { data: codeRow } = await supabase
+        .from('referral_codes')
+        .select('code')
+        .eq('user_id', userId)
+        .maybeSingle();
+      const code = codeRow?.code || '';
+      if (!code) return { code: '', visits: 0, purchases: 0, pending: 0, paid: 0 };
+
+      const [{ data: visitRows }, { data: commissions }] = await Promise.all([
+        supabase
+          .from('referral_visits')
+          .select('id,fingerprint')
+          .eq('ref_code', code),
+        supabase.from('referral_commissions').select('amount,status').eq('ref_code', code)
+      ]);
+
+      // Contar visitas únicas por fingerprint (o id si no hay fingerprint)
+      const uniqueVisitKeys = new Set(
+        (visitRows || []).map((v: any) => v.fingerprint || v.id)
+      );
+      const visits = uniqueVisitKeys.size;
+
+      let pending = 0, paid = 0, purchases = 0;
+      (commissions || []).forEach((c: any) => {
+        if (c.status === 'pending') { pending += Number(c.amount)||0; purchases++; }
+        if (c.status === 'paid') { paid += Number(c.amount)||0; purchases++; }
+      });
+      return { code, visits, purchases, pending, paid };
+    } catch (e) {
+      console.error('referralsService.getStats error', e);
+      return { code: '', visits: 0, purchases: 0, pending: 0, paid: 0 };
+    }
+  },
+
+  async requestPayout(userId: string, paypalEmail: string, amount: number, currency = 'USD') {
+    try {
+      const { data, error } = await supabase
+        .from('referral_payouts')
+        .insert({ user_id: userId, paypal_email: paypalEmail, amount, currency, status: 'requested' })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (e) {
+      console.error('referralsService.requestPayout error', e);
+      throw e;
+    }
+  },
+
+  async listCommissions(userId: string) {
+    try {
+      const { data: codeRow } = await supabase
+        .from('referral_codes')
+        .select('code')
+        .eq('user_id', userId)
+        .maybeSingle();
+      const code = codeRow?.code || '';
+      if (!code) return [] as Array<{ id: string; referee_user_id: string | null; plan_id: string | null; amount: number; currency: string; status: string; created_at: string }>;
+
+      const { data, error } = await supabase
+        .from('referral_commissions')
+        .select('id, referee_user_id, plan_id, amount, currency, status, created_at')
+        .eq('ref_code', code)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const rows = data || [];
+      // Enrich with users (no profiles table required)
+      const ids = Array.from(new Set(rows.map((r: any) => r.referee_user_id).filter(Boolean)));
+      if (ids.length > 0) {
+        const { data: users } = await supabase
+          .from('users')
+          .select('id, email, first_name, last_name')
+          .in('id', ids);
+        const byId: Record<string, any> = {};
+        (users || []).forEach((u: any) => { byId[u.id] = u; });
+        return rows.map((r: any) => ({
+          ...r,
+          referee_email: r.referee_user_id ? byId[r.referee_user_id]?.email || null : null,
+          referee_name: r.referee_user_id 
+            ? [byId[r.referee_user_id]?.first_name, byId[r.referee_user_id]?.last_name]
+                .filter(Boolean)
+                .join(' ') || null 
+            : null,
+        }));
+      }
+      return rows;
+    } catch (e) {
+      console.error('referralsService.listCommissions error', e);
+      return [];
+    }
+  }
+  ,
+
+  async getReferrerByCode(code: string): Promise<{ user_id: string; code: string } | null> {
+    try {
+      const { data, error } = await supabase
+        .from('referral_codes')
+        .select('user_id, code')
+        .eq('code', code)
+        .maybeSingle();
+      if (error) throw error;
+      return data || null;
+    } catch (e) {
+      console.error('referralsService.getReferrerByCode error', e);
+      return null;
+    }
+  },
+
+  async createCommission(params: { ref_code: string; referee_user_id: string; plan_id: string; amount: number; currency?: string }) {
+    try {
+      const { ref_code, referee_user_id, plan_id, amount, currency = 'USD' } = params;
+      const { data, error } = await supabase
+        .from('referral_commissions')
+        .insert({ ref_code, referee_user_id, plan_id, amount, currency, status: 'pending' })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (e) {
+      console.error('referralsService.createCommission error', e);
+      throw e;
+    }
+  }
+};
+
+/* ==========================================================
+   Cash Closing Service (Daily Cash Register Closings)
+   Tabla: cash_closings
+========================================================== */
+export const cashClosingService = {
   async getAll(userId: string) {
     try {
       if (!userId) return [];
       const { data, error } = await supabase
-        .from('quotes')
-        .select(`
-          *,
-          quote_lines (*),
-          customers (id, name, email)
-        `)
+        .from('cash_closings')
+        .select('*')
         .eq('user_id', userId)
+        .order('closing_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -30,117 +199,219 @@ export const quotesService = {
     }
   },
 
-  async getById(id: string) {
+  async getByDate(userId: string, closingDate: string) {
     try {
+      if (!userId || !closingDate) return [];
       const { data, error } = await supabase
-        .from('quotes')
-        .select(`
-          *,
-          quote_lines (*)
-        `)
-        .eq('id', id)
-        .single();
-      if (error) throw error;
-      return data;
+        .from('cash_closings')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('closing_date', closingDate)
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
     } catch (error) {
-      console.error('Error getting quote by id:', error);
-      throw error;
+      return handleDatabaseError(error, []);
     }
   },
 
-  async create(userId: string, quote: any, lines: any[]) {
+  async create(userId: string, closing: any) {
     try {
       if (!userId) throw new Error('userId required');
       const now = new Date().toISOString();
-      const quotePayload = {
-        ...quote,
+      const payload = {
+        ...closing,
         user_id: userId,
         created_at: now,
         updated_at: now,
       };
-      const { data: q, error: qErr } = await supabase
-        .from('quotes')
-        .insert(quotePayload)
-        .select()
+      const { data, error } = await supabase
+        .from('cash_closings')
+        .insert(payload)
+        .select('*')
         .single();
-      if (qErr) throw qErr;
-
-      if (lines && lines.length > 0) {
-        const linePayloads = lines.map((l: any) => ({
-          ...l,
-          quote_id: q.id,
-          created_at: now,
-          updated_at: now,
-        }));
-        const { error: lErr } = await supabase
-          .from('quote_lines')
-          .insert(linePayloads);
-        if (lErr) throw lErr;
-      }
-      return q;
+      if (error) throw error;
+      return data;
     } catch (error) {
-      console.error('Error creating quote:', error);
+      console.error('cashClosingService.create error', error);
       throw error;
     }
   },
 
-  async update(id: string, quote: any, lines?: any[]) {
+  async update(id: string, closing: any) {
     try {
       const now = new Date().toISOString();
-      const { data: q, error: qErr } = await supabase
-        .from('quotes')
-        .update({ ...quote, updated_at: now })
+      const { data, error } = await supabase
+        .from('cash_closings')
+        .update({ ...closing, updated_at: now })
         .eq('id', id)
-        .select()
+        .select('*')
         .single();
-      if (qErr) throw qErr;
-
-      if (Array.isArray(lines)) {
-        // Replace strategy: delete existing lines and insert new ones
-        const { error: delErr } = await supabase
-          .from('quote_lines')
-          .delete()
-          .eq('quote_id', id);
-        if (delErr) throw delErr;
-
-        if (lines.length > 0) {
-          const linePayloads = lines.map((l: any) => ({
-            ...l,
-            quote_id: id,
-            created_at: now,
-            updated_at: now,
-          }));
-          const { error: insErr } = await supabase
-            .from('quote_lines')
-            .insert(linePayloads);
-          if (insErr) throw insErr;
-        }
-      }
-      return q;
+      if (error) throw error;
+      return data;
     } catch (error) {
-      console.error('Error updating quote:', error);
+      console.error('cashClosingService.update error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Audit Logs Service
+   (simple helper used by other services)
+========================================================== */
+export const auditLogsService = {
+  async logAction(payload: { action: string; entity?: string; entity_id?: string | null; details?: any }) {
+    try {
+      // Leer configuración para saber si está habilitado
+      const { data: settings, error: settingsError } = await supabase
+        .from('accounting_settings')
+        .select('audit_log_enabled')
+        .limit(1)
+        .maybeSingle();
+
+      if (settingsError && settingsError.code !== 'PGRST116') throw settingsError;
+      if (!settings?.audit_log_enabled) return;
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const logPayload: any = {
+        user_id: user?.id ?? null,
+        action: payload.action,
+        entity: payload.entity ?? null,
+        entity_id: payload.entity_id ?? null,
+        details: payload.details ?? {},
+      };
+
+      const { error } = await supabase
+        .from('audit_logs')
+        .insert(logPayload);
+
+      if (error) throw error;
+    } catch (error) {
+      // No romper el flujo de negocio si falla el log
+      // eslint-disable-next-line no-console
+      console.error('auditLogsService.logAction error', error);
+    }
+  },
+
+  async exportLogs() {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return [];
+
+      const { data, error } = await supabase
+        .from('audit_logs')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('auditLogsService.exportLogs error', error);
+      return [];
+    }
+  },
+};
+
+/* ==========================================================
+   Customers Service (Accounts Receivable)
+========================================================== */
+export const customersService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name');
+      if (error) throw error;
+      return (data || []).map((c: any) => ({
+        id: c.id as string,
+        name: c.name || '',
+        document: c.document || '',
+        phone: c.phone || '',
+        email: c.email || '',
+        address: c.address || '',
+        creditLimit: Number(c.credit_limit) || 0,
+        currentBalance: Number(c.current_balance) || 0,
+        status: (c.status as 'active' | 'inactive' | 'blocked') || 'active',
+      }));
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, customer: { name: string; document: string; phone: string; email: string; address: string; creditLimit: number; status: 'active' | 'inactive' | 'blocked' }) {
+    try {
+      const payload = {
+        user_id: userId,
+        name: customer.name,
+        document: customer.document,
+        phone: customer.phone,
+        email: customer.email,
+        address: customer.address,
+        credit_limit: customer.creditLimit,
+        current_balance: 0,
+        status: customer.status,
+      };
+      const { data, error } = await supabase
+        .from('customers')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      await auditLogsService.logAction({
+        action: 'create_customer',
+        entity: 'customer',
+        entity_id: data.id,
+        details: { name: data.name, document: data.document },
+      });
+      return data;
+    } catch (error) {
+      console.error('customersService.create error', error);
       throw error;
     }
   },
 
-  async delete(id: string) {
+  async update(id: string, customer: { name: string; document: string; phone: string; email: string; address: string; creditLimit: number; status: 'active' | 'inactive' | 'blocked' }) {
     try {
-      // Delete lines first
-      const { error: lErr } = await supabase
-        .from('quote_lines')
-        .delete()
-        .eq('quote_id', id);
-      if (lErr) throw lErr;
-      const { error } = await supabase
-        .from('quotes')
-        .delete()
-        .eq('id', id);
+      const payload = {
+        name: customer.name,
+        document: customer.document,
+        phone: customer.phone,
+        email: customer.email,
+        address: customer.address,
+        credit_limit: customer.creditLimit,
+        status: customer.status,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await supabase
+        .from('customers')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
       if (error) throw error;
+      await auditLogsService.logAction({
+        action: 'update_customer',
+        entity: 'customer',
+        entity_id: data.id,
+        details: { name: data.name, document: data.document },
+      });
+      return data;
     } catch (error) {
-      console.error('Error deleting quote:', error);
+      console.error('customersService.update error', error);
       throw error;
     }
-  }
+  },
 };
 
 /* ==========================================================
@@ -186,12 +457,28 @@ export const chartAccountsService = {
 
   async create(userId: string, account: any) {
     try {
+      const normalizeAccountType = (t: string) => {
+        const v = (t || '').toLowerCase().trim();
+        if (['asset', 'liability', 'equity', 'income', 'expense'].includes(v)) return v;
+        if (['activo', 'activos'].includes(v)) return 'asset';
+        if (['pasivo', 'pasivos'].includes(v)) return 'liability';
+        if (['patrimonio', 'capital'].includes(v)) return 'equity';
+        if (['ingreso', 'ingresos'].includes(v)) return 'income';
+        if (['gasto', 'gastos', 'costos', 'costo'].includes(v)) return 'expense';
+        return 'asset';
+      };
+
       const accountData = {
         ...account,
         user_id: userId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
+
+      accountData.type = normalizeAccountType(accountData.type);
+      if (!accountData.normal_balance) {
+        accountData.normal_balance = ['asset', 'expense'].includes(accountData.type) ? 'debit' : 'credit';
+      }
 
       const { data, error } = await supabase
         .from('chart_accounts')
@@ -251,7 +538,6 @@ export const chartAccountsService = {
         .from('chart_accounts')
         .delete()
         .eq('id', id);
-      
       if (error) throw error;
     } catch (error) {
       console.error('Error deleting account:', error);
@@ -259,7 +545,6 @@ export const chartAccountsService = {
     }
   },
 
-  // Función para generar reportes contables mejorada
   async generateBalanceSheet(userId: string, asOfDate: string) {
     try {
       const { data, error } = await supabase
@@ -272,7 +557,6 @@ export const chartAccountsService = {
 
       if (error) {
         console.error('Error in generateBalanceSheet:', error);
-        // Retornar datos de ejemplo si hay error
         return {
           assets: [],
           liabilities: [],
@@ -280,30 +564,29 @@ export const chartAccountsService = {
           totalAssets: 0,
           totalLiabilities: 0,
           totalEquity: 0,
-          asOfDate
+          asOfDate,
         };
       }
 
-      const assets = data?.filter(account => account.type === 'asset') || [];
-      const liabilities = data?.filter(account => account.type === 'liability') || [];
-      const equity = data?.filter(account => account.type === 'equity') || [];
+      const assets = data?.filter((account: any) => account.type === 'asset') || [];
+      const liabilities = data?.filter((account: any) => account.type === 'liability') || [];
+      const equity = data?.filter((account: any) => account.type === 'equity') || [];
 
-      const totalAssets = assets.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
-      const totalLiabilities = liabilities.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
-      const totalEquity = equity.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
+      const totalAssets = assets.reduce((sum: number, account: any) => sum + Math.abs(account.balance || 0), 0);
+      const totalLiabilities = liabilities.reduce((sum: number, account: any) => sum + Math.abs(account.balance || 0), 0);
+      const totalEquity = equity.reduce((sum: number, account: any) => sum + Math.abs(account.balance || 0), 0);
 
       return {
-        assets: assets.map(acc => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
-        liabilities: liabilities.map(acc => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
-        equity: equity.map(acc => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
+        assets: assets.map((acc: any) => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
+        liabilities: liabilities.map((acc: any) => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
+        equity: equity.map((acc: any) => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
         totalAssets,
         totalLiabilities,
         totalEquity,
-        asOfDate
+        asOfDate,
       };
     } catch (error) {
       console.error('Error generating balance sheet:', error);
-      // Retornar datos de ejemplo en caso de error
       return {
         assets: [],
         liabilities: [],
@@ -311,7 +594,7 @@ export const chartAccountsService = {
         totalAssets: 0,
         totalLiabilities: 0,
         totalEquity: 0,
-        asOfDate
+        asOfDate,
       };
     }
   },
@@ -542,10 +825,343 @@ export const chartAccountsService = {
 };
 
 /* ==========================================================
+   Petty Cash Service
+========================================================== */
+export const pettyCashService = {
+  async getFunds(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('petty_cash_funds')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getExpenses(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('petty_cash_expenses')
+        .select('*')
+        .eq('user_id', userId)
+        .order('expense_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getReimbursements(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('petty_cash_reimbursements')
+        .select('*')
+        .eq('user_id', userId)
+        .order('reimbursement_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async createFund(userId: string, fund: any) {
+    try {
+      const payload = {
+        ...fund,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('petty_cash_funds')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('pettyCashService.createFund error', error);
+      throw error;
+    }
+  },
+
+  async createExpense(userId: string, expense: any) {
+    try {
+      const payload = {
+        ...expense,
+        user_id: userId,
+        status: expense.status || 'pending',
+      };
+      const { data, error } = await supabase
+        .from('petty_cash_expenses')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('pettyCashService.createExpense error', error);
+      throw error;
+    }
+  },
+
+  async approveExpense(userId: string, expenseId: string, approvedBy: string | null) {
+    try {
+      const updatePayload: any = {
+        status: 'approved',
+        approved_by: approvedBy,
+        approved_at: new Date().toISOString(),
+      };
+      const { data, error } = await supabase
+        .from('petty_cash_expenses')
+        .update(updatePayload)
+        .eq('id', expenseId)
+        .eq('user_id', userId)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('pettyCashService.approveExpense error', error);
+      throw error;
+    }
+  },
+
+  async rejectExpense(userId: string, expenseId: string, approvedBy: string | null) {
+    try {
+      const updatePayload: any = {
+        status: 'rejected',
+        approved_by: approvedBy,
+        approved_at: new Date().toISOString(),
+      };
+      const { data, error } = await supabase
+        .from('petty_cash_expenses')
+        .update(updatePayload)
+        .eq('id', expenseId)
+        .eq('user_id', userId)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('pettyCashService.rejectExpense error', error);
+      throw error;
+    }
+  },
+
+  async createReimbursement(userId: string, reimbursement: any) {
+    try {
+      const payload = {
+        ...reimbursement,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('petty_cash_reimbursements')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('pettyCashService.createReimbursement error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Financial Reports Service (Trial Balance / Statements)
+========================================================== */
+export const financialReportsService = {
+  async getTrialBalance(userId: string, fromDate: string, toDate: string) {
+    try {
+      if (!userId) return [];
+
+      const { data, error } = await supabase
+        .from('journal_entry_lines')
+        .select(`
+          account_id,
+          debit_amount,
+          credit_amount,
+          journal_entries (entry_date, user_id),
+          chart_accounts (code, name, type, normal_balance)
+        `)
+        .gte('journal_entries.entry_date', fromDate)
+        .lte('journal_entries.entry_date', toDate);
+
+      if (error) {
+        console.error('financialReportsService.getTrialBalance error', error);
+        return [];
+      }
+
+      const byAccount: Record<string, any> = {};
+
+      (data || []).forEach((line: any) => {
+        const account = line.chart_accounts;
+        if (!account) return;
+
+        const accountId = line.account_id as string;
+        const debit = Number(line.debit_amount) || 0;
+        const credit = Number(line.credit_amount) || 0;
+
+        if (!byAccount[accountId]) {
+          byAccount[accountId] = {
+            account_id: accountId,
+            code: account.code,
+            name: account.name,
+            type: account.type,
+            normal_balance: account.normal_balance,
+            total_debit: 0,
+            total_credit: 0,
+            balance: 0,
+          };
+        }
+
+        byAccount[accountId].total_debit += debit;
+        byAccount[accountId].total_credit += credit;
+      });
+
+      // Calcular saldo según el balance normal de la cuenta
+      Object.values(byAccount).forEach((acc: any) => {
+        if (acc.normal_balance === 'credit') {
+          acc.balance = acc.total_credit - acc.total_debit;
+        } else {
+          acc.balance = acc.total_debit - acc.total_credit;
+        }
+      });
+
+      return Object.values(byAccount);
+    } catch (error) {
+      console.error('financialReportsService.getTrialBalance unexpected error', error);
+      return [];
+    }
+  },
+};
+
+/* ==========================================================
+   Financial Statements Persistence Service
+   (Estados Generados)
+========================================================== */
+export const financialStatementsService = {
+  async getAll(userId: string, period?: string | null) {
+    try {
+      if (!userId) return [];
+
+      let query = supabase
+        .from('financial_statements')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (period) {
+        query = query.eq('period', period);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        console.error('financialStatementsService.getAll error', error);
+        return [];
+      }
+      return data ?? [];
+    } catch (error) {
+      console.error('financialStatementsService.getAll unexpected error', error);
+      return [];
+    }
+  },
+
+  async create(userId: string, params: { type: string; period?: string | null; name?: string | null }) {
+    try {
+      if (!userId) throw new Error('User is required');
+
+      const type = params.type as
+        | 'balance_sheet'
+        | 'income_statement'
+        | 'cash_flow'
+        | 'equity_statement';
+
+      const period = params.period || new Date().toISOString().slice(0, 7); // YYYY-MM
+      const [yearStr, monthStr] = period.split('-');
+      const year = parseInt(yearStr, 10);
+      const month = parseInt(monthStr, 10);
+      if (!year || !month) throw new Error('Invalid period');
+
+      const fromDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
+      const toDate = new Date(year, month, 0).toISOString().slice(0, 10);
+
+      let payload: any = {
+        user_id: userId,
+        type,
+        period,
+        from_date: fromDate,
+        to_date: toDate,
+        status: 'final',
+        name:
+          params.name ||
+          (type === 'balance_sheet'
+            ? `Balance General ${period}`
+            : type === 'income_statement'
+            ? `Estado de Resultados ${period}`
+            : type === 'cash_flow'
+            ? `Flujo de Efectivo ${period}`
+            : `Estado Financiero ${period}`),
+      };
+
+      if (type === 'balance_sheet') {
+        const result: any = await chartAccountsService.generateBalanceSheet(userId, toDate);
+        payload = {
+          ...payload,
+          total_assets: result?.totalAssets ?? 0,
+          total_liabilities: result?.totalLiabilities ?? 0,
+          total_equity: result?.totalEquity ?? 0,
+        };
+      } else if (type === 'income_statement') {
+        const result: any = await chartAccountsService.generateIncomeStatement(userId, fromDate, toDate);
+        payload = {
+          ...payload,
+          total_revenue: result?.totalIncome ?? 0,
+          total_expenses: result?.totalExpenses ?? 0,
+          net_income: result?.netIncome ?? 0,
+        };
+      } else if (type === 'cash_flow') {
+        const result: any = await chartAccountsService.generateCashFlowStatement(userId, fromDate, toDate);
+        payload = {
+          ...payload,
+          operating_cash_flow: result?.operatingCashFlow ?? 0,
+          investing_cash_flow: result?.investingCashFlow ?? 0,
+          financing_cash_flow: result?.financingCashFlow ?? 0,
+          net_cash_flow: result?.netCashFlow ?? 0,
+        };
+      }
+
+      const { data, error } = await supabase
+        .from('financial_statements')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('financialStatementsService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
    Journal Entries Service
 ========================================================== */
 export const journalEntriesService = {
-  async getAll(userId: string) {
+  async getAll(_userId: string) {
     try {
       const { data, error } = await supabase
         .from('journal_entries')
@@ -618,11 +1234,11 @@ export const journalEntriesService = {
 
       if (entryError) throw entryError;
 
-      const linesWithEntry = lines.map((line) => ({
+      const linesWithEntry = lines.map((line, index) => ({
         ...line,
         journal_entry_id: entryData_result.id,
+        line_number: index + 1,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
       }));
 
       const { data: linesData, error: linesError } = await supabase
@@ -752,7 +1368,7 @@ export const journalEntriesService = {
     }
   },
 
-  async getByDateRange(userId: string, fromDate: string, toDate: string) {
+  async getByDateRange(_userId: string, fromDate: string, toDate: string) {
     try {
       const { data, error } = await supabase
         .from('journal_entries')
@@ -771,9 +1387,157 @@ export const journalEntriesService = {
       return data ?? [];
     } catch (error) {
       console.error('Error getting journal entries by date range:', error);
-      return [];
+      throw error;
     }
-  }
+  },
+};
+
+/* ==========================================================
+   Bank Reconciliation Service
+========================================================== */
+export const bankReconciliationService = {
+  async getOrCreateReconciliation(userId: string, bankAccountId: string, reconciliationDate: string) {
+    try {
+      if (!userId || !bankAccountId) throw new Error('User and bank account are required');
+
+      // Try to find an existing reconciliation for this bank and date
+      const { data: existing, error: existingError } = await supabase
+        .from('bank_reconciliations')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('bank_account_id', bankAccountId)
+        .eq('reconciliation_date', reconciliationDate)
+        .maybeSingle();
+
+      if (existingError && existingError.code !== 'PGRST116') {
+        // PGRST116 = no rows found for maybeSingle
+        throw existingError;
+      }
+
+      if (existing) {
+        return existing;
+      }
+
+      // Create a new reconciliation
+      const payload = {
+        user_id: userId,
+        bank_account_id: bankAccountId,
+        reconciliation_date: reconciliationDate,
+        status: 'open',
+        created_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await supabase
+        .from('bank_reconciliations')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('bankReconciliationService.getOrCreateReconciliation error', error);
+      throw error;
+    }
+  },
+
+  async upsertBookItemsFromJournal(reconciliationId: string, userId: string, bankAccountId: string, reconciliationDate: string) {
+    try {
+      if (!reconciliationId || !userId || !bankAccountId) return;
+
+      // Very simple implementation: pull journal entries for the date and bank account
+      const { data: entries, error } = await supabase
+        .from('journal_entries')
+        .select(`
+          id,
+          entry_date,
+          description
+        `)
+        .eq('user_id', userId)
+        .eq('bank_account_id', bankAccountId)
+        .eq('entry_date', reconciliationDate);
+
+      if (error) {
+        console.error('bankReconciliationService.upsertBookItemsFromJournal error', error);
+        return;
+      }
+
+      if (!entries || entries.length === 0) return;
+
+      // For now, just ensure there is at least one corresponding book item per entry
+      for (const entry of entries) {
+        const { error: insertError } = await supabase
+          .from('bank_reconciliation_items')
+          .upsert(
+            {
+              reconciliation_id: reconciliationId,
+              journal_entry_id: entry.id,
+              transaction_type: 'book',
+              transaction_date: entry.entry_date,
+              description: entry.description || 'Movimiento contable',
+            },
+            { onConflict: 'reconciliation_id,journal_entry_id,transaction_type' }
+          );
+
+        if (insertError) {
+          console.error('bankReconciliationService.upsertBookItemsFromJournal upsert error', insertError);
+        }
+      }
+    } catch (error) {
+      console.error('bankReconciliationService.upsertBookItemsFromJournal unexpected error', error);
+    }
+  },
+
+  async getItems(reconciliationId: string) {
+    try {
+      if (!reconciliationId) return [];
+      const { data, error } = await supabase
+        .from('bank_reconciliation_items')
+        .select('*')
+        .eq('reconciliation_id', reconciliationId)
+        .order('transaction_date', { ascending: true });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async setItemsReconciled(itemIds: string[], isReconciled: boolean) {
+    try {
+      if (!itemIds || itemIds.length === 0) return;
+      const { error } = await supabase
+        .from('bank_reconciliation_items')
+        .update({ is_reconciled: isReconciled })
+        .in('id', itemIds);
+      if (error) throw error;
+    } catch (error) {
+      console.error('bankReconciliationService.setItemsReconciled error', error);
+      throw error;
+    }
+  },
+
+  async addBankItem(reconciliationId: string, item: any) {
+    try {
+      const payload = {
+        ...item,
+        reconciliation_id: reconciliationId,
+        transaction_type: 'bank',
+      };
+
+      const { data, error } = await supabase
+        .from('bank_reconciliation_items')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('bankReconciliationService.addBankItem error', error);
+      throw error;
+    }
+  },
 };
 
 /* ==========================================================
@@ -827,6 +1591,21 @@ export const employeesService = {
     }
   },
 
+  async setStatus(id: string, status: 'active' | 'inactive') {
+    try {
+      const { data, error } = await supabase
+        .from('employees')
+        .update({ status })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
   async delete(id: string) {
     try {
       const { error } = await supabase
@@ -838,6 +1617,111 @@ export const employeesService = {
       throw error;
     }
   }
+};
+
+/* ==========================================================
+   Inventory Service
+========================================================== */
+export const inventoryService = {
+  async getItems(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('inventory_items')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name');
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getMovements(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('inventory_movements')
+        .select(`
+          *,
+          inventory_items (name, sku)
+        `)
+        .eq('user_id', userId)
+        .order('movement_date', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async createItem(userId: string, item: any) {
+    try {
+      const payload = {
+        ...item,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('inventory_items')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('inventoryService.createItem error', error);
+      throw error;
+    }
+  },
+
+  async updateItem(id: string, item: any) {
+    try {
+      const { data, error } = await supabase
+        .from('inventory_items')
+        .update(item)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('inventoryService.updateItem error', error);
+      throw error;
+    }
+  },
+
+  async deleteItem(id: string) {
+    try {
+      const { error } = await supabase
+        .from('inventory_items')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('inventoryService.deleteItem error', error);
+      throw error;
+    }
+  },
+
+  async createMovement(userId: string, movement: any) {
+    try {
+      const payload = {
+        ...movement,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('inventory_movements')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('inventoryService.createMovement error', error);
+      throw error;
+    }
+  },
 };
 
 /* ==========================================================
@@ -964,6 +1848,556 @@ export const positionsService = {
 };
 
 /* ==========================================================
+   Employee Types Service
+========================================================== */
+export const employeeTypesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('employee_types')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name');
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, type: any) {
+    try {
+      const payload = {
+        ...type,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('employee_types')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('employeeTypesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, type: any) {
+    try {
+      const { data, error } = await supabase
+        .from('employee_types')
+        .update(type)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('employeeTypesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('employee_types')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('employeeTypesService.delete error', error);
+      throw error;
+    }
+  }
+};
+
+/* ==========================================================
+   Salary Types Service
+========================================================== */
+export const salaryTypesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('salary_types')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name');
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, type: any) {
+    try {
+      const payload = {
+        ...type,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('salary_types')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('salaryTypesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, type: any) {
+    try {
+      const { data, error } = await supabase
+        .from('salary_types')
+        .update(type)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('salaryTypesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('salary_types')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('salaryTypesService.delete error', error);
+      throw error;
+    }
+  }
+};
+
+/* ==========================================================
+   Commission Types Service
+========================================================== */
+export const commissionTypesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('commission_types')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name');
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, type: any) {
+    try {
+      const payload = {
+        ...type,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('commission_types')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('commissionTypesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, type: any) {
+    try {
+      const { data, error } = await supabase
+        .from('commission_types')
+        .update(type)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('commissionTypesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('commission_types')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('commissionTypesService.delete error', error);
+      throw error;
+    }
+  }
+};
+
+/* ==========================================================
+   Vacations Service
+========================================================== */
+export const vacationsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('vacations')
+        .select(`
+          *,
+          employees (first_name, last_name, employee_code)
+        `)
+        .eq('user_id', userId)
+        .order('start_date', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, vacation: any) {
+    try {
+      const payload = {
+        ...vacation,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('vacations')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('vacationsService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, vacation: any) {
+    try {
+      const { data, error } = await supabase
+        .from('vacations')
+        .update(vacation)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('vacationsService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('vacations')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('vacationsService.delete error', error);
+      throw error;
+    }
+  }
+};
+
+/* ==========================================================
+   Holidays Service
+========================================================== */
+export const holidaysService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('holidays')
+        .select('*')
+        .eq('user_id', userId)
+        .order('date', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, holiday: any) {
+    try {
+      const payload = {
+        ...holiday,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('holidays')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('holidaysService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, holiday: any) {
+    try {
+      const { data, error } = await supabase
+        .from('holidays')
+        .update(holiday)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('holidaysService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('holidays')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('holidaysService.delete error', error);
+      throw error;
+    }
+  }
+};
+
+/* ==========================================================
+   Bonuses Service
+========================================================== */
+export const bonusesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bonuses')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, bonus: any) {
+    try {
+      const payload = {
+        ...bonus,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('bonuses')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('bonusesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, bonus: any) {
+    try {
+      const { data, error } = await supabase
+        .from('bonuses')
+        .update(bonus)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('bonusesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('bonuses')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('bonusesService.delete error', error);
+      throw error;
+    }
+  }
+};
+
+/* ==========================================================
+   Royalties Service
+========================================================== */
+export const royaltiesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('royalties')
+        .select('*')
+        .eq('user_id', userId)
+        .order('payment_date', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, royalty: any) {
+    try {
+      const payload = {
+        ...royalty,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('royalties')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('royaltiesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, royalty: any) {
+    try {
+      const { data, error } = await supabase
+        .from('royalties')
+        .update(royalty)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('royaltiesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('royalties')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('royaltiesService.delete error', error);
+      throw error;
+    }
+  }
+};
+
+/* ==========================================================
+   Overtime Service
+========================================================== */
+export const overtimeService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('overtime_records')
+        .select(`
+          *,
+          employees (first_name, last_name, employee_code)
+        `)
+        .eq('user_id', userId)
+        .order('date', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, record: any) {
+    try {
+      const payload = {
+        ...record,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('overtime_records')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('overtimeService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, record: any) {
+    try {
+      const { data, error } = await supabase
+        .from('overtime_records')
+        .update(record)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('overtimeService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('overtime_records')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('overtimeService.delete error', error);
+      throw error;
+    }
+  }
+};
+
+/* ==========================================================
    Payroll Service
 ========================================================== */
 export const payrollService = {
@@ -1011,7 +2445,7 @@ export const payrollService = {
     }
   },
 
-  async processPayroll(periodId: string, entries: any[]) {
+  async processPayroll(_periodId: string, entries: any[]) {
     try {
       const { data, error } = await supabase
         .from('payroll_entries')
@@ -1022,46 +2456,13 @@ export const payrollService = {
     } catch (error) {
       throw error;
     }
-  }
-};
-
-/* ==========================================================
-   Inventory Service
-========================================================== */
-export const inventoryService = {
-  async getItems(userId: string) {
-    try {
-      const { data, error } = await supabase
-        .from('inventory_items')
-        .select('*')
-        .eq('user_id', userId)
-        .order('name');
-      if (error) return handleDatabaseError(error, []);
-      return data ?? [];
-    } catch (error) {
-      return handleDatabaseError(error, []);
-    }
   },
 
-  async createItem(userId: string, item: any) {
+  async update(id: string, po: any) {
     try {
       const { data, error } = await supabase
-        .from('inventory_items')
-        .insert({ ...item, user_id: userId })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      throw error;
-    }
-  },
-
-  async updateItem(id: string, item: any) {
-    try {
-      const { data, error } = await supabase
-        .from('inventory_items')
-        .update(item)
+        .from('purchase_orders')
+        .update(po)
         .eq('id', id)
         .select()
         .single();
@@ -1072,152 +2473,42 @@ export const inventoryService = {
     }
   },
 
-  async deleteItem(id: string) {
+  async updateStatus(id: string, status: string) {
     try {
-      const { error } = await supabase
-        .from('inventory_items')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
-    } catch (error) {
-      throw error;
-    }
-  },
-
-  async getMovements(userId: string) {
-    try {
+      const patch: any = {
+        status,
+        updated_at: new Date().toISOString(),
+      };
       const { data, error } = await supabase
-        .from('inventory_movements')
-        .select(`
-          *,
-          inventory_items (name, sku)
-        `)
-        .eq('user_id', userId)
-        .order('movement_date', { ascending: false });
-      if (error) return handleDatabaseError(error, []);
-      return data ?? [];
-    } catch (error) {
-      return handleDatabaseError(error, []);
-    }
-  },
-
-  async createMovement(userId: string, movement: any) {
-    try {
-      const { data, error } = await supabase
-        .from('inventory_movements')
-        .insert({ ...movement, user_id: userId })
-        .select()
-        .single();
-      if (error) throw error;
+        .from('purchase_orders')
+        .update(patch)
       return data;
     } catch (error) {
+      console.error('payrollService.updateStatus error', error);
       throw error;
     }
-  }
+  },
 };
 
 /* ==========================================================
-   Customers Service
+   Accounting Settings Service
 ========================================================== */
-export const customersService = {
-  async getAll(userId: string) {
+export const accountingSettingsService = {
+  async get(userId?: string) {
     try {
-      // First attempt: order by 'name'
-      let { data, error } = await supabase
-        .from('customers')
+      const { data, error } = await supabase
+        .from('accounting_settings')
         .select('*')
-        .eq('user_id', userId)
-        .order('name');
-      if (error) {
-        console.warn('customersService.getAll(order by name) failed, retrying by customer_name:', error.message);
-        // Retry ordering by 'customer_name'
-        const retry = await supabase
-          .from('customers')
-          .select('*')
-          .eq('user_id', userId)
-          .order('customer_name');
-        if (retry.error) {
-          console.warn('customersService.getAll(order by customer_name) failed, fallback without order:', retry.error.message);
-          const fallback = await supabase
-            .from('customers')
-            .select('*')
-            .eq('user_id', userId);
-          if (fallback.error) return handleDatabaseError(fallback.error, []);
-          return fallback.data ?? [];
-        }
-        return retry.data ?? [];
-      }
-      // If no error but empty, attempt alternative order
-      if (!data || data.length === 0) {
-        const retry = await supabase
-          .from('customers')
-          .select('*')
-          .eq('user_id', userId)
-          .order('customer_name');
-        if (!retry.error && retry.data && retry.data.length > 0) return retry.data;
-      }
+        .limit(1)
+        .maybeSingle();
 
-      // Fallback to 'clients' table if customers is empty or errored previously
-      if (!data || data.length === 0) {
-        let clients = await supabase
-          .from('clients')
-          .select('*')
-          .eq('user_id', userId)
-          .order('name');
-        if (clients.error) {
-          clients = await supabase
-            .from('clients')
-            .select('*')
-            .eq('user_id', userId);
-        }
-        if (!clients.error && clients.data && clients.data.length > 0) return clients.data;
-      }
-      return data ?? [];
+      if (error) throw error;
+      return data ?? null;
     } catch (error) {
-      return handleDatabaseError(error, []);
+      console.error('accountingSettingsService.get error', error);
+      return null;
     }
   },
-
-  async create(userId: string, customer: any) {
-    try {
-      const { data, error } = await supabase
-        .from('customers')
-        .insert({ ...customer, user_id: userId })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      throw error;
-    }
-  },
-
-  async update(id: string, customer: any) {
-    try {
-      const { data, error } = await supabase
-        .from('customers')
-        .update(customer)
-        .eq('id', id)
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      throw error;
-    }
-  },
-
-  async delete(id: string) {
-    try {
-      const { error } = await supabase
-        .from('customers')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
-    } catch (error) {
-      throw error;
-    }
-  }
 };
 
 /* ==========================================================
@@ -1226,11 +2517,12 @@ export const customersService = {
 export const invoicesService = {
   async getAll(userId: string) {
     try {
+      if (!userId) return [];
       const { data, error } = await supabase
         .from('invoices')
         .select(`
           *,
-          customers (name),
+          customers (id, name),
           invoice_lines (
             *,
             inventory_items (name)
@@ -1257,7 +2549,7 @@ export const invoicesService = {
 
       const linesWithInvoice = lines.map((line) => ({
         ...line,
-        invoice_id: invoiceData.id
+        invoice_id: invoiceData.id,
       }));
 
       const { data: linesData, error: linesError } = await supabase
@@ -1267,11 +2559,485 @@ export const invoicesService = {
 
       if (linesError) throw linesError;
 
+      // Intentar registrar asiento contable para la factura (best-effort)
+      try {
+        const settings = await accountingSettingsService.get(userId);
+        const arAccountId = settings?.ar_account_id;
+        const salesAccountId = settings?.sales_account_id;
+        const taxAccountId = settings?.sales_tax_account_id;
+
+        if (arAccountId && salesAccountId) {
+          const subtotal = Number(invoiceData.subtotal) || 0;
+          const taxAmount = Number(invoiceData.tax_amount) || 0;
+          const totalAmount = Number(invoiceData.total_amount) || subtotal + taxAmount;
+
+          const entryLines: any[] = [
+            {
+              account_id: arAccountId,
+              description: 'Cuentas por Cobrar Clientes',
+              debit_amount: totalAmount,
+              credit_amount: 0,
+              line_number: 1,
+            },
+            {
+              account_id: salesAccountId,
+              description: 'Ventas',
+              debit_amount: 0,
+              credit_amount: subtotal,
+              line_number: 2,
+            },
+          ];
+
+          if (taxAmount > 0 && taxAccountId) {
+            entryLines.push({
+              account_id: taxAccountId,
+              description: 'ITBIS por pagar',
+              debit_amount: 0,
+              credit_amount: taxAmount,
+              line_number: entryLines.length + 1,
+            });
+          }
+
+          const entryPayload = {
+            entry_number: invoiceData.invoice_number || null,
+            entry_date: invoiceData.invoice_date,
+            description: `Factura ${invoiceData.invoice_number || ''}`.trim(),
+            reference: invoiceData.id,
+            total_debit: totalAmount,
+            total_credit: totalAmount,
+            status: 'posted',
+          };
+
+          await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
+        }
+
+        // Segundo asiento: Costo de Ventas vs Inventario (best-effort, por producto)
+        try {
+          const { data: costLines, error: costLinesError } = await supabase
+            .from('invoice_lines')
+            .select(`
+              *,
+              inventory_items (cost_price, inventory_account_id, cogs_account_id)
+            `)
+            .eq('invoice_id', invoiceData.id);
+
+          if (!costLinesError && costLines && costLines.length > 0) {
+            const cogsTotals: Record<string, number> = {};
+            const inventoryTotals: Record<string, number> = {};
+
+            let totalCost = 0;
+
+            costLines.forEach((line: any) => {
+              const invItem = line.inventory_items as any | null;
+              const qty = Number(line.quantity) || 0;
+              const unitCost = invItem ? Number(invItem.cost_price) || 0 : 0;
+              const lineCost = qty * unitCost;
+
+              if (!invItem || lineCost <= 0) return;
+
+              const cogsAccountId = invItem.cogs_account_id as string | null;
+              const inventoryAccountId = invItem.inventory_account_id as string | null;
+
+              if (cogsAccountId && inventoryAccountId) {
+                totalCost += lineCost;
+                cogsTotals[cogsAccountId] = (cogsTotals[cogsAccountId] || 0) + lineCost;
+                inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
+              }
+            });
+
+            if (totalCost > 0) {
+              const cogsLines: any[] = [];
+              let lineNumber = 1;
+
+              for (const [accountId, amount] of Object.entries(cogsTotals)) {
+                if (amount > 0) {
+                  cogsLines.push({
+                    account_id: accountId,
+                    description: 'Costo de Ventas',
+                    debit_amount: amount,
+                    credit_amount: 0,
+                    line_number: lineNumber++,
+                  });
+                }
+              }
+
+              for (const [accountId, amount] of Object.entries(inventoryTotals)) {
+                if (amount > 0) {
+                  cogsLines.push({
+                    account_id: accountId,
+                    description: 'Inventario',
+                    debit_amount: 0,
+                    credit_amount: amount,
+                    line_number: lineNumber++,
+                  });
+                }
+              }
+
+              if (cogsLines.length > 0) {
+                const cogsEntryPayload = {
+                  entry_number: invoiceData.invoice_number
+                    ? `${invoiceData.invoice_number}-COGS`
+                    : null,
+                  entry_date: invoiceData.invoice_date,
+                  description: `Costo de ventas factura ${invoiceData.invoice_number || ''}`.trim(),
+                  reference: invoiceData.id,
+                  total_debit: totalCost,
+                  total_credit: totalCost,
+                  status: 'posted',
+                };
+
+                await journalEntriesService.createWithLines(userId, cogsEntryPayload, cogsLines);
+              }
+            }
+          }
+        } catch (cogsError) {
+          console.error('Error posting invoice COGS to ledger:', cogsError);
+        }
+      } catch (error) {
+        console.error('Error posting invoice to ledger:', error);
+      }
+
       return { invoice: invoiceData, lines: linesData };
     } catch (error) {
       throw error;
     }
-  }
+  },
+
+  async updatePayment(id: string, paidAmount: number, status: string) {
+    try {
+      const { data, error } = await supabase
+        .from('invoices')
+        .update({
+          paid_amount: paidAmount,
+          status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('invoicesService.updatePayment error', error);
+      throw error;
+    }
+  },
+
+  async updateTotals(id: string, totalAmount: number, status: string) {
+    try {
+      const { data, error } = await supabase
+        .from('invoices')
+        .update({
+          total_amount: totalAmount,
+          status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('invoicesService.updateTotals error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Receipt Applications Service (Receipts applied to Invoices)
+========================================================== */
+export const receiptApplicationsService = {
+  async create(userId: string, payload: {
+    receipt_id: string;
+    invoice_id: string;
+    amount_applied: number;
+    application_date?: string;
+    notes?: string | null;
+  }) {
+    try {
+      const body = {
+        user_id: userId,
+        receipt_id: payload.receipt_id,
+        invoice_id: payload.invoice_id,
+        amount_applied: payload.amount_applied,
+        application_date: payload.application_date || new Date().toISOString().slice(0, 10),
+        notes: payload.notes ?? null,
+      };
+      const { data, error } = await supabase
+        .from('receipt_applications')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('receiptApplicationsService.create error', error);
+      throw error;
+    }
+  },
+
+  async getByReceipt(userId: string, receiptId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('receipt_applications')
+        .select(`
+          *,
+          invoices (invoice_number)
+        `)
+        .eq('user_id', userId)
+        .eq('receipt_id', receiptId)
+        .order('application_date', { ascending: true });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+};
+
+/* ==========================================================
+   Receipts Service (Accounts Receivable)
+========================================================== */
+export const receiptsService = {
+  async getAll(userId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('receipts')
+        .select(`
+          *,
+          customers (name)
+        `)
+        .eq('user_id', userId)
+        .order('receipt_date', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, receipt: { customer_id: string; receipt_number: string; receipt_date: string; amount: number; payment_method: string; reference?: string | null; concept?: string | null; status?: string }) {
+    try {
+      const payload = {
+        user_id: userId,
+        customer_id: receipt.customer_id,
+        receipt_number: receipt.receipt_number,
+        receipt_date: receipt.receipt_date,
+        amount: receipt.amount,
+        payment_method: receipt.payment_method,
+        reference: receipt.reference ?? null,
+        concept: receipt.concept ?? null,
+        status: receipt.status ?? 'active',
+      };
+      const { data, error } = await supabase
+        .from('receipts')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('receiptsService.create error', error);
+      throw error;
+    }
+  },
+
+  async updateStatus(id: string, status: string) {
+    try {
+      const { data, error } = await supabase
+        .from('receipts')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('receiptsService.updateStatus error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Customer Advances Service (Accounts Receivable)
+========================================================== */
+export const customerAdvancesService = {
+  async getAll(userId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('customer_advances')
+        .select(`
+          *,
+          customers (name)
+        `)
+        .eq('user_id', userId)
+        .order('advance_date', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: {
+    customer_id: string;
+    advance_number: string;
+    advance_date: string;
+    amount: number;
+    payment_method: string;
+    reference?: string | null;
+    concept?: string | null;
+    status?: string;
+    applied_amount?: number;
+    balance_amount?: number;
+  }) {
+    try {
+      const body = {
+        user_id: userId,
+        customer_id: payload.customer_id,
+        advance_number: payload.advance_number,
+        advance_date: payload.advance_date,
+        amount: payload.amount,
+        payment_method: payload.payment_method,
+        reference: payload.reference ?? null,
+        concept: payload.concept ?? null,
+        applied_amount: typeof payload.applied_amount === 'number' ? payload.applied_amount : 0,
+        balance_amount: typeof payload.balance_amount === 'number' ? payload.balance_amount : payload.amount,
+        status: payload.status ?? 'pending',
+      };
+      const { data, error } = await supabase
+        .from('customer_advances')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('customerAdvancesService.create error', error);
+      throw error;
+    }
+  },
+
+  async updateStatus(
+    id: string,
+    status: string,
+    extra?: { appliedAmount?: number; balanceAmount?: number }
+  ) {
+    try {
+      const patch: any = { status, updated_at: new Date().toISOString() };
+      if (typeof extra?.appliedAmount === 'number') {
+        patch.applied_amount = extra.appliedAmount;
+      }
+      if (typeof extra?.balanceAmount === 'number') {
+        patch.balance_amount = extra.balanceAmount;
+      }
+
+      const { data, error } = await supabase
+        .from('customer_advances')
+        .update(patch)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('customerAdvancesService.updateStatus error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Credit/Debit Notes Service (Accounts Receivable)
+========================================================== */
+export const creditDebitNotesService = {
+  async getAll(userId: string, noteType: 'credit' | 'debit') {
+    try {
+      const { data, error } = await supabase
+        .from('credit_debit_notes')
+        .select(`
+          *,
+          customers (name),
+          invoices (invoice_number)
+        `)
+        .eq('user_id', userId)
+        .eq('note_type', noteType)
+        .order('note_date', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: {
+    note_type: 'credit' | 'debit';
+    customer_id: string;
+    invoice_id?: string | null;
+    note_number: string;
+    note_date: string;
+    total_amount: number;
+    reason?: string | null;
+    status?: string;
+    applied_amount?: number;
+    balance_amount?: number;
+  }) {
+    try {
+      const body = {
+        user_id: userId,
+        note_type: payload.note_type,
+        customer_id: payload.customer_id,
+        invoice_id: payload.invoice_id ?? null,
+        note_number: payload.note_number,
+        note_date: payload.note_date,
+        total_amount: payload.total_amount,
+        reason: payload.reason ?? null,
+        applied_amount: typeof payload.applied_amount === 'number' ? payload.applied_amount : 0,
+        balance_amount: typeof payload.balance_amount === 'number' ? payload.balance_amount : payload.total_amount,
+        status: payload.status ?? 'pending',
+      };
+      const { data, error } = await supabase
+        .from('credit_debit_notes')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('creditDebitNotesService.create error', error);
+      throw error;
+    }
+  },
+
+  async updateStatus(
+    id: string,
+    status: string,
+    extra?: { appliedAmount?: number; balanceAmount?: number }
+  ) {
+    try {
+      const patch: any = { status, updated_at: new Date().toISOString() };
+      if (typeof extra?.appliedAmount === 'number') {
+        patch.applied_amount = extra.appliedAmount;
+      }
+      if (typeof extra?.balanceAmount === 'number') {
+        patch.balance_amount = extra.balanceAmount;
+      }
+
+      const { data, error } = await supabase
+        .from('credit_debit_notes')
+        .update(patch)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('creditDebitNotesService.updateStatus error', error);
+      throw error;
+    }
+  },
 };
 
 /* ==========================================================
@@ -1335,6 +3101,245 @@ export const suppliersService = {
 };
 
 /* ==========================================================
+   Sales Quotes Service (Cotizaciones de Ventas - CxC)
+========================================================== */
+export const quotesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('quotes')
+        .select(`
+          *,
+          quote_lines (* )
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, quotePayload: any, linePayloads: Array<any>) {
+    try {
+      const baseQuote = {
+        ...quotePayload,
+        user_id: userId,
+      };
+
+      const { data: quote, error: quoteError } = await supabase
+        .from('quotes')
+        .insert(baseQuote)
+        .select('*')
+        .single();
+
+      if (quoteError) throw quoteError;
+
+      const quoteId = quote.id as string;
+
+      const linesToInsert = (linePayloads || []).map((l) => {
+        const qty = Number(l.quantity ?? l.qty ?? 0) || 0;
+        const unitPrice = Number(l.unit_price ?? l.price ?? 0) || 0;
+        const lineTotal = Number(l.line_total ?? l.total ?? qty * unitPrice) || 0;
+        return {
+          quote_id: quoteId,
+          description: l.description || '',
+          quantity: qty || 1,
+          price: unitPrice,
+          unit_price: unitPrice,
+          total: lineTotal,
+          line_total: lineTotal,
+        };
+      }).filter((l) => l.description && l.quantity > 0);
+
+      let lines = [] as any[];
+      if (linesToInsert.length > 0) {
+        const { data: insertedLines, error: linesError } = await supabase
+          .from('quote_lines')
+          .insert(linesToInsert)
+          .select('*');
+        if (linesError) throw linesError;
+        lines = insertedLines || [];
+      }
+
+      return { ...quote, quote_lines: lines };
+    } catch (error) {
+      console.error('quotesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, patch: any) {
+    try {
+      const { data, error } = await supabase
+        .from('quotes')
+        .update({
+          ...patch,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('quotesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('quotes')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('quotesService.delete error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   AP Quotes Service (Solicitudes de Cotización - CxP)
+========================================================== */
+export const apQuotesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('ap_quotes')
+        .select(`
+          *,
+          ap_quote_suppliers (*)
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, quote: any, supplierNames: string[]) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...quote,
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+      const { data: q, error: qErr } = await supabase
+        .from('ap_quotes')
+        .insert(payload)
+        .select()
+        .single();
+      if (qErr) throw qErr;
+
+      if (supplierNames && supplierNames.length > 0) {
+        const supplierRows = supplierNames
+          .filter((name) => name && name.trim() !== '')
+          .map((name) => ({
+            quote_id: q.id,
+            supplier_name: name,
+            created_at: now,
+          }));
+        if (supplierRows.length > 0) {
+          const { error: sErr } = await supabase
+            .from('ap_quote_suppliers')
+            .insert(supplierRows);
+          if (sErr) throw sErr;
+        }
+      }
+
+      return q;
+    } catch (error) {
+      console.error('apQuotesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, quote: any, supplierNames?: string[]) {
+    try {
+      const now = new Date().toISOString();
+      const { data: q, error: qErr } = await supabase
+        .from('ap_quotes')
+        .update({ ...quote, updated_at: now })
+        .eq('id', id)
+        .select()
+        .single();
+      if (qErr) throw qErr;
+
+      if (Array.isArray(supplierNames)) {
+        const { error: delErr } = await supabase
+          .from('ap_quote_suppliers')
+          .delete()
+          .eq('quote_id', id);
+        if (delErr) throw delErr;
+
+        const supplierRows = supplierNames
+          .filter((name) => name && name.trim() !== '')
+          .map((name) => ({
+            quote_id: id,
+            supplier_name: name,
+            created_at: now,
+          }));
+        if (supplierRows.length > 0) {
+          const { error: insErr } = await supabase
+            .from('ap_quote_suppliers')
+            .insert(supplierRows);
+          if (insErr) throw insErr;
+        }
+      }
+
+      return q;
+    } catch (error) {
+      console.error('apQuotesService.update error', error);
+      throw error;
+    }
+  },
+
+  async updateStatus(id: string, status: string) {
+    try {
+      const { data, error } = await supabase
+        .from('ap_quotes')
+        .update({
+          status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('apQuotesService.updateStatus error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('ap_quotes')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('apQuotesService.delete error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
    Purchase Orders Service
 ========================================================== */
 export const purchaseOrdersService = {
@@ -1382,46 +3387,17 @@ export const purchaseOrdersService = {
     } catch (error) {
       throw error;
     }
-  }
-};
-
-/* ==========================================================
-   Fixed Assets Service
-========================================================== */
-export const fixedAssetsService = {
-  async getAll(userId: string) {
-    try {
-      const { data, error } = await supabase
-        .from('fixed_assets')
-        .select('*')
-        .eq('user_id', userId)
-        .order('name');
-      if (error) return handleDatabaseError(error, []);
-      return data ?? [];
-    } catch (error) {
-      return handleDatabaseError(error, []);
-    }
   },
 
-  async create(userId: string, asset: any) {
+  async updateStatus(id: string, status: string) {
     try {
+      const patch: any = {
+        status,
+        updated_at: new Date().toISOString(),
+      };
       const { data, error } = await supabase
-        .from('fixed_assets')
-        .insert({ ...asset, user_id: userId })
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      throw error;
-    }
-  },
-
-  async update(id: string, asset: any) {
-    try {
-      const { data, error } = await supabase
-        .from('fixed_assets')
-        .update(asset)
+        .from('purchase_orders')
+        .update(patch)
         .eq('id', id)
         .select()
         .single();
@@ -1431,19 +3407,501 @@ export const fixedAssetsService = {
       throw error;
     }
   },
+};
+
+/* ==========================================================
+   Purchase Order Items Service
+========================================================== */
+export const purchaseOrderItemsService = {
+  async getAllByUser(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('purchase_order_items')
+        .select(`
+          *,
+          inventory_items (current_stock, name, sku)
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getByOrder(orderId: string) {
+    try {
+      if (!orderId) return [];
+      const { data, error } = await supabase
+        .from('purchase_order_items')
+        .select(`
+          *,
+          inventory_items (current_stock, name, sku)
+        `)
+        .eq('purchase_order_id', orderId)
+        .order('created_at', { ascending: true });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async deleteByOrder(orderId: string) {
+    try {
+      if (!orderId) return;
+      const { error } = await supabase
+        .from('purchase_order_items')
+        .delete()
+        .eq('purchase_order_id', orderId);
+      if (error) throw error;
+    } catch (error) {
+      console.error('purchaseOrderItemsService.deleteByOrder error', error);
+      throw error;
+    }
+  },
+
+  async createMany(userId: string, orderId: string, items: Array<{ itemId: string | null; name: string; quantity: number; price: number }>) {
+    try {
+      if (!userId || !orderId || !items || items.length === 0) return [];
+
+      const rows = items.map((it, index) => {
+        const quantity = Number(it.quantity) || 0;
+        const unitCost = Number(it.price) || 0;
+        return {
+          user_id: userId,
+          purchase_order_id: orderId,
+          inventory_item_id: it.itemId,
+          description: it.name || '',
+          quantity,
+          unit_cost: unitCost,
+          total_cost: quantity * unitCost,
+        };
+      }).filter(r => r.quantity > 0);
+
+      if (rows.length === 0) return [];
+
+      const { data, error } = await supabase
+        .from('purchase_order_items')
+        .insert(rows)
+        .select('*');
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      console.error('purchaseOrderItemsService.createMany error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Supplier Payments Service (Accounts Payable)
+========================================================== */
+export const supplierPaymentsService = {
+  async getAll(userId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('supplier_payments')
+        .select(`
+          *,
+          suppliers (name)
+        `)
+        .eq('user_id', userId)
+        .order('payment_date', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: {
+    supplier_id: string;
+    payment_date: string;
+    reference: string;
+    method: string;
+    amount: number;
+    status: string;
+    description?: string | null;
+    bank_account?: string | null;
+    bank_account_id?: string | null;
+    invoice_number?: string | null;
+  }) {
+    try {
+      const body = {
+        user_id: userId,
+        supplier_id: payload.supplier_id,
+        payment_date: payload.payment_date,
+        reference: payload.reference,
+        method: payload.method,
+        amount: payload.amount,
+        status: payload.status,
+        description: payload.description ?? null,
+        bank_account_id: payload.bank_account_id ?? null,
+        bank_account: payload.bank_account ?? null,
+        invoice_number: payload.invoice_number ?? null,
+      };
+      const { data, error } = await supabase
+        .from('supplier_payments')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('supplierPaymentsService.create error', error);
+      throw error;
+    }
+  },
+
+  async updateStatus(id: string, status: string) {
+    try {
+      const patch: any = {
+        status,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await supabase
+        .from('supplier_payments')
+        .update(patch)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+
+      // Best-effort: registrar asiento contable solo cuando el pago se completa
+      if (data && status === 'Completado') {
+        try {
+          // Obtener configuración contable global
+          const settings = await accountingSettingsService.get(data.user_id);
+          const apAccountId = settings?.ap_account_id;
+          const defaultApBankAccountId = settings?.ap_bank_account_id;
+
+          const amount = Number(data.amount) || 0;
+
+          // Intentar usar la cuenta contable del banco específico del pago
+          let bankChartAccountId: string | null = null;
+          if (data.bank_account_id) {
+            const { data: bankAccount, error: bankError } = await supabase
+              .from('bank_accounts')
+              .select('chart_account_id')
+              .eq('id', data.bank_account_id)
+              .maybeSingle();
+            if (!bankError && bankAccount?.chart_account_id) {
+              bankChartAccountId = bankAccount.chart_account_id as string;
+            }
+          }
+
+          // Fallback al banco por defecto de CxP si no hay cuenta contable en el banco
+          if (!bankChartAccountId && defaultApBankAccountId) {
+            bankChartAccountId = defaultApBankAccountId as string;
+          }
+
+          if (apAccountId && bankChartAccountId && amount > 0) {
+            const lines: any[] = [
+              {
+                account_id: bankChartAccountId,
+                description: 'Pago a proveedor - Banco',
+                debit_amount: amount,
+                credit_amount: 0,
+                line_number: 1,
+              },
+              {
+                account_id: apAccountId,
+                description: 'Pago a proveedor - Cuentas por Pagar',
+                debit_amount: 0,
+                credit_amount: amount,
+                line_number: 2,
+              },
+            ];
+
+            const entryPayload = {
+              entry_number: data.reference || data.id,
+              entry_date: data.payment_date,
+              description: `Pago a proveedor ${data.invoice_number || ''}`.trim(),
+              reference: data.id,
+              total_debit: amount,
+              total_credit: amount,
+              status: 'posted',
+            };
+
+            await journalEntriesService.createWithLines(data.user_id, entryPayload, lines);
+          }
+        } catch (err) {
+          console.error('Error posting supplier payment to ledger:', err);
+          // No interrumpir el flujo de actualización de estado por errores contables
+        }
+      }
+      return data;
+    } catch (error) {
+      console.error('supplierPaymentsService.updateStatus error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Customer Payments Service (Accounts Receivable)
+========================================================== */
+export const customerPaymentsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('customer_payments')
+        .select(`
+          *,
+          customers (name),
+          invoices (invoice_number),
+          bank_accounts (chart_account_id, bank_name, account_number)
+        `)
+        .eq('user_id', userId)
+        .order('payment_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: any) {
+    try {
+      const body = {
+        ...payload,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('customer_payments')
+        .insert(body)
+        .select(`
+          *,
+          customers (name),
+          invoices (invoice_number),
+          bank_accounts (chart_account_id, bank_name, account_number)
+        `)
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('customerPaymentsService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Recurring Subscriptions Service (Facturación Recurrente)
+========================================================== */
+export const recurringSubscriptionsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('recurring_subscriptions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: any) {
+    try {
+      const body = {
+        ...payload,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('recurring_subscriptions')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('recurringSubscriptionsService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, patch: any) {
+    try {
+      const { data, error } = await supabase
+        .from('recurring_subscriptions')
+        .update({
+          ...patch,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('recurringSubscriptionsService.update error', error);
+      throw error;
+    }
+  },
+
+  async processPending(userId: string) {
+    try {
+      if (!userId) return { processed: 0 };
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+
+      const { data: subs, error } = await supabase
+        .from('recurring_subscriptions')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .lte('next_billing_date', todayStr);
+
+      if (error) throw error;
+      const list = subs ?? [];
+      if (list.length === 0) return { processed: 0 };
+
+      let processed = 0;
+
+      for (const sub of list) {
+        // Respetar fecha de fin si existe
+        if (sub.end_date && sub.end_date < todayStr) {
+          await this.update(sub.id, { status: 'expired' });
+          continue;
+        }
+
+        const amount = Number(sub.amount) || 0;
+        if (!amount || !sub.customer_id) continue;
+
+        const invoicePayload = {
+          customer_id: sub.customer_id as string,
+          invoice_number: `SUB-${Date.now()}-${processed + 1}`,
+          invoice_date: todayStr,
+          due_date: todayStr,
+          currency: 'DOP',
+          subtotal: amount,
+          tax_amount: 0,
+          total_amount: amount,
+          paid_amount: 0,
+          status: 'pending',
+          notes: `Factura recurrente para: ${sub.service_name || 'Suscripción'}`,
+        };
+
+        const linesPayload = [
+          {
+            description: sub.service_name || 'Servicio recurrente',
+            quantity: 1,
+            unit_price: amount,
+            line_total: amount,
+            line_number: 1,
+          },
+        ];
+
+        try {
+          const { invoice } = await invoicesService.create(userId, invoicePayload, linesPayload);
+
+          // Calcular próxima fecha de facturación
+          let nextDate: string | null = null;
+          if (sub.next_billing_date) {
+            const d = new Date(sub.next_billing_date as string);
+            if (sub.frequency === 'weekly') d.setDate(d.getDate() + 7);
+            else if (sub.frequency === 'monthly') d.setMonth(d.getMonth() + 1);
+            else if (sub.frequency === 'quarterly') d.setMonth(d.getMonth() + 3);
+            else if (sub.frequency === 'yearly') d.setFullYear(d.getFullYear() + 1);
+            nextDate = d.toISOString().slice(0, 10);
+          }
+
+          await this.update(sub.id, {
+            last_invoice_id: invoice.id,
+            next_billing_date: nextDate,
+          });
+
+          processed += 1;
+        } catch (e) {
+          // No detener todo el lote por un error individual
+          console.error('recurringSubscriptionsService.processPending item error', e);
+        }
+      }
+
+      return { processed };
+    } catch (error) {
+      console.error('recurringSubscriptionsService.processPending error', error);
+      return { processed: 0 };
+    }
+  },
+};
+
+/* ==========================================================
+   Bank Accounts Service
+========================================================== */
+export const bankAccountsService = {
+  async getAll(userId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('bank_accounts')
+        .select('*')
+        .eq('user_id', userId)
+        .order('bank_name', { ascending: true });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: any) {
+    try {
+      const body = { ...payload, user_id: userId };
+      const { data, error } = await supabase
+        .from('bank_accounts')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('bankAccountsService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: any) {
+    try {
+      const { data, error } = await supabase
+        .from('bank_accounts')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('bankAccountsService.update error', error);
+      throw error;
+    }
+  },
 
   async delete(id: string) {
     try {
       const { error } = await supabase
-        .from('fixed_assets')
+        .from('bank_accounts')
         .delete()
         .eq('id', id);
       if (error) throw error;
     } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('bankAccountsService.delete error', error);
       throw error;
     }
-  }
+  },
 };
+
 
 /* ==========================================================
    Tax Returns Service
@@ -1593,12 +4051,19 @@ export const taxService = {
   // -----------------------------------------------------------------
   async getTaxConfiguration() {
     try {
+      const {
+        data: { user }
+      } = await supabase.auth.getUser();
+
       const { data, error } = await supabase
         .from('tax_configuration')
         .select('*')
-        .single();
+        .eq('user_id', user?.id)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error) throw error;
       return data || null;
     } catch (error) {
       console.error('Error getting tax configuration:', error);
@@ -1628,8 +4093,81 @@ export const taxService = {
   // -----------------------------------------------------------------
   // Report Generation - Reporte 606 (Compras)
   // -----------------------------------------------------------------
+  async buildReport606(period: string) {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return;
+
+      // Calcular primer y último día del mes del período (YYYY-MM)
+      const [yearStr, monthStr] = period.split('-');
+      const year = Number(yearStr);
+      const month = Number(monthStr); // 1-12
+      const startDate = `${period}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      const endDate = `${period}-${String(lastDay).padStart(2, '0')}`;
+
+      // 1) Obtener órdenes de compra del período con proveedor
+      const { data: purchases, error: poErr } = await supabase
+        .from('purchase_orders')
+        .select(
+          `*,
+           suppliers (name, tax_id)`
+        )
+        .eq('user_id', user.id)
+        .gte('order_date', startDate)
+        .lte('order_date', endDate)
+        .neq('status', 'cancelled');
+
+      if (poErr) throw poErr;
+
+      const rows = (purchases || []).map((po: any) => {
+        const supplierName = po.suppliers?.name || 'Proveedor';
+        const supplierRnc = po.suppliers?.tax_id || '';
+        const fecha = po.order_date;
+        const monto = Number(po.total_amount) || 0;
+        const itbis = Number(po.tax_amount) || 0;
+
+        return {
+          period,
+          fecha_comprobante: fecha,
+          tipo_comprobante: 'B01',
+          ncf: po.po_number || po.id,
+          tipo_gasto: 'Compras',
+          rnc_cedula_proveedor: supplierRnc,
+          nombre_proveedor: supplierName,
+          monto_facturado: monto,
+          itbis_facturado: itbis,
+          itbis_retenido: 0,
+          monto_retencion_renta: 0,
+          tipo_pago: 'Credito',
+        };
+      });
+
+      // 2) Limpiar datos anteriores del período y guardar los nuevos
+      const { error: delErr } = await supabase
+        .from('report_606_data')
+        .delete()
+        .eq('period', period);
+      if (delErr) throw delErr;
+
+      if (rows.length > 0) {
+        const { error: insErr } = await supabase
+          .from('report_606_data')
+          .insert(rows);
+        if (insErr) throw insErr;
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error building Report 606 data:', error);
+      throw error;
+    }
+  },
+
   async generateReport606(period: string) {
     try {
+      await this.buildReport606(period);
       const { data, error } = await supabase
         .from('report_606_data')
         .select('*')
@@ -1673,8 +4211,88 @@ export const taxService = {
   // -----------------------------------------------------------------
   // Report Generation - Reporte 607 (Ventas) - CORREGIDO COMPLETAMENTE
   // -----------------------------------------------------------------
+  async buildReport607(period: string) {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return;
+
+      // Calcular rango de fechas del mes
+      const [yearStr, monthStr] = period.split('-');
+      const year = Number(yearStr);
+      const month = Number(monthStr);
+      const startDate = `${period}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      const endDate = `${period}-${String(lastDay).padStart(2, '0')}`;
+
+      // Obtener facturas del período con cliente
+      const { data: invoices, error: invErr } = await supabase
+        .from('invoices')
+        .select(
+          `*,
+           customers (name, tax_id)`
+        )
+        .eq('user_id', user.id)
+        .gte('invoice_date', startDate)
+        .lte('invoice_date', endDate)
+        .neq('status', 'draft');
+
+      if (invErr) throw invErr;
+
+      const rows = (invoices || []).map((inv: any) => {
+        const customerName = inv.customers?.name || inv.customer_name || 'Cliente';
+        const customerRnc = inv.customers?.tax_id || inv.tax_id || '';
+        const fecha = inv.invoice_date;
+        const monto = Number(inv.total_amount ?? inv.subtotal ?? 0);
+        const itbis = Number(inv.tax_amount ?? 0);
+
+        return {
+          period,
+          fecha_factura: fecha,
+          fecha_comprobante: fecha,
+          tipo_comprobante: 'B02',
+          ncf: inv.invoice_number || inv.id,
+          ncf_modificado: null,
+          tipo_ingreso: 'VENTAS',
+          rnc_cedula_cliente: customerRnc,
+          nombre_cliente: customerName,
+          monto_facturado: monto,
+          itbis_facturado: itbis,
+          tipo_pago: 'Otros',
+          itbis_cobrado: itbis,
+          monto_facturado_servicios: 0,
+          monto_facturado_bienes: monto,
+          efectivo: 0,
+          tarjeta: 0,
+          cheque: 0,
+          credito: monto,
+        };
+      });
+
+      // Limpiar datos anteriores del período y guardar nuevos
+      const { error: delErr } = await supabase
+        .from('report_607_data')
+        .delete()
+        .eq('period', period);
+      if (delErr) throw delErr;
+
+      if (rows.length > 0) {
+        const { error: insErr } = await supabase
+          .from('report_607_data')
+          .insert(rows);
+        if (insErr) throw insErr;
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error building Report 607 data:', error);
+      throw error;
+    }
+  },
+
   async generateReport607(period: string) {
     try {
+      await this.buildReport607(period);
       const { data, error } = await supabase
         .from('report_607_data')
         .select('*')
@@ -1683,10 +4301,9 @@ export const taxService = {
 
       if (error) throw error;
 
-      // Mapear los datos al formato esperado por el componente
       const mappedData = data?.map(item => ({
         rnc_cedula: item.rnc_cedula || item.rnc_cedula_cliente || '',
-        tipo_identificacion: item.rnc_cedula?.length === 11 ? 'RNC' : 'Cédula',
+        tipo_identificacion: (item.rnc_cedula || item.rnc_cedula_cliente || '').length === 11 ? 'RNC' : 'Cédula',
         numero_comprobante_fiscal: item.numero_comprobante_fiscal || item.numero_comprobante || item.ncf || '',
         fecha_comprobante: item.fecha_comprobante || item.fecha_factura || '',
         monto_facturado: item.monto_facturado || 0,
@@ -1699,7 +4316,7 @@ export const taxService = {
         isr_percibido_ventas: item.isr_percibido_ventas || 0,
         impuesto_selectivo_consumo: item.impuesto_selectivo_consumo || 0,
         otros_impuestos_tasas: item.otros_impuestos_tasas || 0,
-        monto_propina_legal_2: item.monto_propina_legal_2 || 0
+        monto_propina_legal_2: item.monto_propina_legal_2 || 0,
       })) || [];
 
       return mappedData;
@@ -1735,72 +4352,63 @@ export const taxService = {
     }
   },
 
-  async getReport607ByComprobante() {
+  async buildReport608(period: string) {
     try {
-      const { data, error } = await supabase
-        .from('report_607_data')
-        .select('tipo_comprobante, tipo_documento');
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return;
 
-      if (error) throw error;
+      const [yearStr, monthStr] = period.split('-');
+      const year = Number(yearStr);
+      const month = Number(monthStr);
+      const startDate = `${period}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      const endDate = `${period}-${String(lastDay).padStart(2, '0')}`;
 
-      const comprobantes = data?.reduce((acc: any, record) => {
-        const tipo = record.tipo_comprobante || record.tipo_documento;
-        if (tipo) {
-          acc[tipo] = (acc[tipo] || 0) + 1;
-        }
-        return acc;
-      }, {}) || {};
+      const { data: docs, error: fdErr } = await supabase
+        .from('fiscal_documents')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('status', 'cancelled')
+        .gte('cancelled_date', startDate)
+        .lte('cancelled_date', endDate);
 
-      return comprobantes;
+      if (fdErr) throw fdErr;
+
+      const rows = (docs || []).map((doc: any) => ({
+        period,
+        cancellation_date: doc.cancelled_date || doc.issue_date,
+        tipo_comprobante: doc.document_type || 'NCF',
+        ncf: doc.ncf_number,
+        ncf_modificado: doc.ncf_modificado || null,
+        motivo: doc.cancellation_reason || 'Cancelado',
+        amount: Number(doc.amount || 0),
+        tax_amount: Number(doc.tax_amount || 0),
+      }));
+
+      const { error: delErr } = await supabase
+        .from('report_608_data')
+        .delete()
+        .eq('period', period);
+      if (delErr) throw delErr;
+
+      if (rows.length > 0) {
+        const { error: insErr } = await supabase
+          .from('report_608_data')
+          .insert(rows);
+        if (insErr) throw insErr;
+      }
     } catch (error) {
-      console.error('Error getting Report 607 by comprobante:', error);
-      return {};
+      // eslint-disable-next-line no-console
+      console.error('Error building Report 608 data:', error);
+      throw error;
     }
   },
 
-  async getReport607ByPaymentMethod() {
-    try {
-      const { data, error } = await supabase
-        .from('report_607_data')
-        .select('tipo_pago, monto_facturado, efectivo, cheque, tarjeta, credito, bonos, permuta, otros');
-
-      if (error) throw error;
-
-      const payments = data?.reduce((acc: any, record) => {
-        // Usar tipo_pago si existe, sino inferir del monto en las columnas específicas
-        let tipo = record.tipo_pago;
-        
-        if (!tipo) {
-          if (record.efectivo > 0) tipo = 'Efectivo';
-          else if (record.tarjeta > 0) tipo = 'Tarjeta';
-          else if (record.cheque > 0) tipo = 'Cheque';
-          else if (record.credito > 0) tipo = 'Crédito';
-          else if (record.bonos > 0) tipo = 'Bonos';
-          else if (record.permuta > 0) tipo = 'Permuta';
-          else if (record.otros > 0) tipo = 'Otros';
-          else tipo = 'No especificado';
-        }
-
-        if (!acc[tipo]) {
-          acc[tipo] = { count: 0, amount: 0 };
-        }
-        acc[tipo].count += 1;
-        acc[tipo].amount += record.monto_facturado || 0;
-        return acc;
-      }, {}) || {};
-
-      return payments;
-    } catch (error) {
-      console.error('Error getting Report 607 by payment method:', error);
-      return {};
-    }
-  },
-
-  // -----------------------------------------------------------------
-  // Report Generation - Reporte 608 (Documentos Cancelados)
-  // -----------------------------------------------------------------
   async generateReport608(period: string) {
     try {
+      await this.buildReport608(period);
       const { data, error } = await supabase
         .from('report_608_data')
         .select('*')
@@ -1888,8 +4496,88 @@ export const taxService = {
   // -----------------------------------------------------------------
   // Report Generation - Reporte IR-17 (Retenciones ISR)
   // -----------------------------------------------------------------
+  async buildReportIR17(period: string) {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return;
+
+      const [yearStr, monthStr] = period.split('-');
+      const year = Number(yearStr);
+      const month = Number(monthStr);
+      const startDate = `${period}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      const endDate = `${period}-${String(lastDay).padStart(2, '0')}`;
+
+      // Obtener tasa de retención desde tax_settings (si existe)
+      const { data: taxSettings } = await supabase
+        .from('tax_settings')
+        .select('retention_rate')
+        .limit(1)
+        .maybeSingle();
+
+      const defaultRate = 10; // 10% por defecto si no hay configuración
+      const retentionRate = Number(taxSettings?.retention_rate ?? defaultRate);
+
+      // Pagos a suplidores del período
+      const { data: payments, error: payErr } = await supabase
+        .from('supplier_payments')
+        .select(
+          `*,
+           suppliers (name, tax_id)`
+        )
+        .eq('user_id', user.id)
+        .gte('payment_date', startDate)
+        .lte('payment_date', endDate)
+        .in('status', ['completed', 'Completado']);
+
+      if (payErr) throw payErr;
+
+      const rows = (payments || []).map((p: any) => {
+        const gross = Number(p.amount || 0);
+        const rate = retentionRate;
+        const withheld = (gross * rate) / 100;
+        const net = gross - withheld;
+
+        return {
+          user_id: user.id,
+          period,
+          supplier_rnc: p.suppliers?.tax_id || null,
+          supplier_name: p.suppliers?.name || null,
+          payment_date: p.payment_date,
+          service_type: p.description || p.method || null,
+          gross_amount: gross,
+          withholding_rate: rate,
+          withheld_amount: withheld,
+          net_amount: net,
+        };
+      });
+
+      // Limpiar datos anteriores del período para este usuario
+      const { error: delErr } = await supabase
+        .from('report_ir17_data')
+        .delete()
+        .eq('period', period)
+        .eq('user_id', user.id);
+      if (delErr) throw delErr;
+
+      if (rows.length > 0) {
+        const { error: insErr } = await supabase
+          .from('report_ir17_data')
+          .insert(rows);
+        if (insErr) throw insErr;
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error building Report IR-17 data:', error);
+      throw error;
+    }
+  },
+
   async generateReportIR17(period: string) {
     try {
+      await this.buildReportIR17(period);
       const { data, error } = await supabase
         .from('report_ir17_data')
         .select('*')
@@ -1940,7 +4628,7 @@ export const taxService = {
         .from('report_it1_data')
         .select('*')
         .eq('period', period)
-        .single();
+        .maybeSingle();
 
       if (!existingError && existing) {
         return existing;
@@ -1977,37 +4665,16 @@ export const taxService = {
       // Calcular ITBIS neto a pagar
       const netItbisDue = itbisCollected - itbisPaid;
 
-      // Si no hay datos, crear datos de ejemplo para demostración
-      let reportData;
-      if (totalSales === 0 && totalPurchases === 0) {
-        // Generar datos de ejemplo basados en el período
-        const monthIndex = parseInt(period.split('-')[1]) - 1;
-        const baseAmount = 3000000 + (monthIndex * 150000);
-        const salesAmount = baseAmount + (Math.random() * 500000);
-        const purchasesAmount = salesAmount * 0.4 + (Math.random() * 200000);
-        const itbisCollectedCalc = salesAmount * 0.18;
-        const itbisPaidCalc = purchasesAmount * 0.18;
-        
-        reportData = {
-          period,
-          total_sales: Math.round(salesAmount),
-          itbis_collected: Math.round(itbisCollectedCalc),
-          total_purchases: Math.round(purchasesAmount),
-          itbis_paid: Math.round(itbisPaidCalc),
-          net_itbis_due: Math.round(itbisCollectedCalc - itbisPaidCalc),
-          generated_date: new Date().toISOString()
-        };
-      } else {
-        reportData = {
-          period,
-          total_sales: totalSales,
-          itbis_collected: itbisCollected,
-          total_purchases: totalPurchases,
-          itbis_paid: itbisPaid,
-          net_itbis_due: netItbisDue,
-          generated_date: new Date().toISOString()
-        };
-      }
+      // Construir la declaración SIEMPRE con datos reales (o ceros si no hay datos)
+      const reportData = {
+        period,
+        total_sales: totalSales,
+        itbis_collected: itbisCollected,
+        total_purchases: totalPurchases,
+        itbis_paid: itbisPaid,
+        net_itbis_due: netItbisDue,
+        generated_date: new Date().toISOString()
+      };
 
       // Guardar la declaración en la base de datos
       const { data, error } = await supabase
@@ -2417,7 +5084,8 @@ export const settingsService = {
       const { data, error } = await supabase
         .from('tax_settings')
         .select('*')
-        .single();
+        .limit(1)
+        .maybeSingle();
 
       if (error && error.code !== 'PGRST116') throw error;
       return data ?? null;
@@ -2481,7 +5149,8 @@ export const settingsService = {
       const { data, error } = await supabase
         .from('inventory_settings')
         .select('*')
-        .single();
+        .limit(1)
+        .maybeSingle();
 
       if (error && error.code !== 'PGRST116') throw error;
       return data ?? null;
@@ -2493,9 +5162,13 @@ export const settingsService = {
 
   async saveInventorySettings(settings: any) {
     try {
+      const normalized = {
+        ...settings,
+        default_warehouse: settings.default_warehouse || null
+      };
       const { data, error } = await supabase
         .from('inventory_settings')
-        .upsert(settings)
+        .upsert(normalized)
         .select()
         .single();
 
@@ -2503,6 +5176,201 @@ export const settingsService = {
       return data;
     } catch (error) {
       console.error('Error saving inventory settings:', error);
+      throw error;
+    }
+  },
+
+  // Data Backups
+  async getBackups() {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.id) return [];
+
+      const { data, error } = await supabase
+        .from('data_backups')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('backup_date', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      console.error('Error getting data backups:', error);
+      return [];
+    }
+  },
+
+  async createBackup(options?: { backup_type?: string; backup_name?: string; retention_days?: number }) {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.id) throw new Error('Usuario no autenticado');
+
+      const safeSingle = async (query: any) => {
+        try {
+          const { data, error } = await query;
+          if (error && error.code !== 'PGRST116') throw error;
+          if (Array.isArray(data)) return data[0] ?? null;
+          return data ?? null;
+        } catch (e) {
+          console.error('Backup safeSingle error:', e);
+          return null;
+        }
+      };
+
+      const safeList = async (query: any) => {
+        try {
+          const { data, error } = await query;
+          if (error && error.code !== 'PGRST116') throw error;
+          return data ?? [];
+        } catch (e) {
+          console.error('Backup safeList error:', e);
+          return [];
+        }
+      };
+
+      // Settings (una sola fila cada una)
+      const companyInfo = await safeSingle(
+        supabase.from('company_info').select('*').limit(1)
+      );
+      const accountingSettings = await safeSingle(
+        supabase.from('accounting_settings').select('*').limit(1)
+      );
+      const taxSettings = await safeSingle(
+        supabase.from('tax_settings').select('*').limit(1)
+      );
+      const inventorySettings = await safeSingle(
+        supabase.from('inventory_settings').select('*').limit(1)
+      );
+      const payrollSettings = await safeSingle(
+        supabase.from('payroll_settings').select('*').limit(1)
+      );
+
+      // Catálogos (por usuario)
+      const customers = await safeList(
+        supabase.from('customers').select('*').eq('user_id', user.id)
+      );
+      const suppliers = await safeList(
+        supabase.from('suppliers').select('*').eq('user_id', user.id)
+      );
+      const chartAccounts = await safeList(
+        supabase.from('chart_accounts').select('*').eq('user_id', user.id)
+      );
+      const products = await safeList(
+        supabase.from('inventory_items').select('*').eq('user_id', user.id)
+      );
+      const warehouses = await safeList(
+        supabase.from('warehouses').select('*')
+      );
+
+      // Movimientos principales (por usuario)
+      const invoices = await safeList(
+        supabase.from('invoices').select('*').eq('user_id', user.id)
+      );
+      const supplierPayments = await safeList(
+        supabase.from('supplier_payments').select('*').eq('user_id', user.id)
+      );
+      const journalEntries = await safeList(
+        supabase.from('journal_entries').select('*').eq('user_id', user.id)
+      );
+      const journalEntryLines = await safeList(
+        supabase.from('journal_entry_lines').select('*')
+      );
+      const pettyFunds = await safeList(
+        supabase.from('petty_cash_funds').select('*').eq('user_id', user.id)
+      );
+      const pettyExpenses = await safeList(
+        supabase.from('petty_cash_expenses').select('*').eq('user_id', user.id)
+      );
+      const pettyReimbursements = await safeList(
+        supabase.from('petty_cash_reimbursements').select('*').eq('user_id', user.id)
+      );
+      const fixedAssets = await safeList(
+        supabase.from('fixed_assets').select('*').eq('user_id', user.id)
+      );
+      const fixedDepreciations = await safeList(
+        supabase.from('fixed_asset_depreciations').select('*').eq('user_id', user.id)
+      );
+      const fixedDisposals = await safeList(
+        supabase.from('fixed_asset_disposals').select('*').eq('user_id', user.id)
+      );
+
+      const backupPayload = {
+        version: 1,
+        generated_at: new Date().toISOString(),
+        user_id: user.id,
+        settings: {
+          company_info: companyInfo,
+          accounting_settings: accountingSettings,
+          tax_settings: taxSettings,
+          inventory_settings: inventorySettings,
+          payroll_settings: payrollSettings,
+        },
+        catalogs: {
+          customers,
+          suppliers,
+          chart_accounts: chartAccounts,
+          products,
+          warehouses,
+        },
+        movements: {
+          invoices,
+          supplier_payments: supplierPayments,
+          journal_entries: journalEntries,
+          journal_entry_lines: journalEntryLines,
+          petty_cash_funds: pettyFunds,
+          petty_cash_expenses: pettyExpenses,
+          petty_cash_reimbursements: pettyReimbursements,
+          fixed_assets: fixedAssets,
+          fixed_asset_depreciations: fixedDepreciations,
+          fixed_asset_disposals: fixedDisposals,
+        },
+      };
+
+      const serialized = JSON.stringify(backupPayload);
+      const approximateSize = new Blob([serialized]).size;
+
+      const now = new Date().toISOString();
+      const payload: any = {
+        user_id: user.id,
+        backup_type: options?.backup_type || 'manual',
+        backup_name: options?.backup_name || `Respaldo ${now}`,
+        backup_data: backupPayload,
+        backup_date: now,
+        status: 'completed',
+        retention_days: options?.retention_days ?? 30,
+        file_size: approximateSize,
+      };
+
+      const { data, error } = await supabase
+        .from('data_backups')
+        .insert(payload)
+        .select()
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error creating data backup:', error);
+      throw error;
+    }
+  },
+
+  async deleteBackup(id: string) {
+    try {
+      const { error } = await supabase
+        .from('data_backups')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error deleting data backup:', error);
       throw error;
     }
   },
@@ -2525,9 +5393,22 @@ export const settingsService = {
 
   async createWarehouse(warehouseData: any) {
     try {
+      const generatedCode = (warehouseData.code || warehouseData.name || 'ALM')
+        .toString()
+        .trim()
+        .substring(0, 8)
+        .toUpperCase();
+      const payload = {
+        name: warehouseData.name,
+        code: generatedCode,
+        address: warehouseData.address ?? null,
+        manager: warehouseData.manager ?? null,
+        phone: warehouseData.phone ?? null,
+        active: warehouseData.active !== false,
+      };
       const { data, error } = await supabase
         .from('warehouses')
-        .insert(warehouseData)
+        .insert(payload)
         .select()
         .single();
 
@@ -2535,6 +5416,36 @@ export const settingsService = {
       return data;
     } catch (error) {
       console.error('Error creating warehouse:', error);
+      throw error;
+    }
+  },
+
+  async updateWarehouse(id: string, warehouseData: any) {
+    try {
+      const safeCode = (warehouseData.code || warehouseData.name || 'ALM')
+        .toString()
+        .trim()
+        .substring(0, 8)
+        .toUpperCase();
+      const payload = {
+        name: warehouseData.name,
+        code: safeCode,
+        address: warehouseData.address ?? null,
+        manager: warehouseData.manager ?? null,
+        phone: warehouseData.phone ?? null,
+        active: warehouseData.active !== false,
+      };
+      const { data, error } = await supabase
+        .from('warehouses')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating warehouse:', error);
       throw error;
     }
   },
@@ -2589,9 +5500,20 @@ export const settingsService = {
 
   async createPayrollConcept(conceptData: any) {
     try {
+      const safeName = (conceptData.name || 'CONCEPTO')
+        .toString()
+        .trim()
+        .substring(0, 20)
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '_');
+      const generatedCode = `${safeName}_${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const payload = {
+        ...conceptData,
+        code: conceptData.code || generatedCode,
+      };
       const { data, error } = await supabase
         .from('payroll_concepts')
-        .insert(conceptData)
+        .insert(payload)
         .select()
         .single();
 
@@ -2601,5 +5523,428 @@ export const settingsService = {
       console.error('Error creating payroll concept:', error);
       throw error;
     }
+  },
+
+  // Payroll Tax Brackets (ISR)
+  async getPayrollTaxBrackets() {
+    try {
+      const { data, error } = await supabase
+        .from('payroll_tax_brackets')
+        .select('*')
+        .order('min_amount');
+
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      console.error('Error getting payroll tax brackets:', error);
+      return [];
+    }
+  },
+
+  async createPayrollTaxBracket(bracketData: any) {
+    try {
+      const { data, error } = await supabase
+        .from('payroll_tax_brackets')
+        .insert(bracketData)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error creating payroll tax bracket:', error);
+      throw error;
+    }
+  },
+
+  async updatePayrollTaxBracket(id: string, bracketData: any) {
+    try {
+      const { data, error } = await supabase
+        .from('payroll_tax_brackets')
+        .update(bracketData)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating payroll tax bracket:', error);
+      throw error;
+    }
+  },
+
+  async deletePayrollTaxBracket(id: string) {
+    try {
+      const { error } = await supabase
+        .from('payroll_tax_brackets')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error deleting payroll tax bracket:', error);
+      throw error;
+    }
   }
+};
+
+/* ==========================================================
+  Fixed Asset Types Service
+  Tabla: fixed_asset_types
+========================================================== */
+export const assetTypesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('fixed_asset_types')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name');
+
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      console.error('assetTypesService.getAll error', error);
+      return [];
+    }
+  },
+
+  async create(userId: string, payload: any) {
+    try {
+      const insertPayload = {
+        ...payload,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('fixed_asset_types')
+        .insert(insertPayload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('assetTypesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: any) {
+    try {
+      const { data, error } = await supabase
+        .from('fixed_asset_types')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('assetTypesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('fixed_asset_types')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('assetTypesService.delete error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+  Fixed Assets Service
+  Tabla: fixed_assets
+========================================================== */
+export const fixedAssetsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('fixed_assets')
+        .select('*')
+        .eq('user_id', userId)
+        .order('code');
+
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      console.error('fixedAssetsService.getAll error', error);
+      return [];
+    }
+  },
+
+  async create(userId: string, payload: any) {
+    try {
+      const insertPayload = {
+        ...payload,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('fixed_assets')
+        .insert(insertPayload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('fixedAssetsService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: any) {
+    try {
+      const { data, error } = await supabase
+        .from('fixed_assets')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('fixedAssetsService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('fixed_assets')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('fixedAssetsService.delete error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+  Fixed Asset Disposals Service
+  Tabla: fixed_asset_disposals
+========================================================== */
+export const assetDisposalService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('fixed_asset_disposals')
+        .select('*')
+        .eq('user_id', userId)
+        .order('disposal_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      console.error('assetDisposalService.getAll error', error);
+      return [];
+    }
+  },
+
+  async create(userId: string, payload: any) {
+    try {
+      const insertPayload = {
+        ...payload,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('fixed_asset_disposals')
+        .insert(insertPayload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('assetDisposalService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: any) {
+    try {
+      const { data, error } = await supabase
+        .from('fixed_asset_disposals')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('assetDisposalService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('fixed_asset_disposals')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('assetDisposalService.delete error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+  Fixed Asset Depreciation Service
+  Tabla: fixed_asset_depreciations
+========================================================== */
+export const assetDepreciationService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('fixed_asset_depreciations')
+        .select('*')
+        .eq('user_id', userId)
+        .order('depreciation_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      console.error('assetDepreciationService.getAll error', error);
+      return [];
+    }
+  },
+
+  async createMany(userId: string, records: any[]) {
+    try {
+      if (!userId || !Array.isArray(records) || records.length === 0) return [];
+      const payload = records.map((r) => ({
+        ...r,
+        user_id: userId,
+      }));
+
+      const { data, error } = await supabase
+        .from('fixed_asset_depreciations')
+        .insert(payload)
+        .select('*');
+
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      console.error('assetDepreciationService.createMany error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: any) {
+    try {
+      const { data, error } = await supabase
+        .from('fixed_asset_depreciations')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('assetDepreciationService.update error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+  Fixed Asset Revaluations Service
+  Tabla: fixed_asset_revaluations
+========================================================== */
+export const revaluationService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('fixed_asset_revaluations')
+        .select('*')
+        .eq('user_id', userId)
+        .order('revaluation_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data ?? [];
+    } catch (error) {
+      console.error('revaluationService.getAll error', error);
+      return [];
+    }
+  },
+
+  async create(userId: string, payload: any) {
+    try {
+      const insertPayload = {
+        ...payload,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('fixed_asset_revaluations')
+        .insert(insertPayload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('revaluationService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: any) {
+    try {
+      const { data, error } = await supabase
+        .from('fixed_asset_revaluations')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('revaluationService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('fixed_asset_revaluations')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('revaluationService.delete error', error);
+      throw error;
+    }
+  },
 };

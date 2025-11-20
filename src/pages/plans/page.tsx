@@ -3,6 +3,7 @@ import DashboardLayout from '../../components/layout/DashboardLayout';
 import { usePlans } from '../../hooks/usePlans';
 import { useAuth } from '../../hooks/useAuth';
 import { notifyPlanPurchase } from '../../utils/notify';
+import { referralsService } from '../../services/database';
 
 interface Plan {
   id: string;
@@ -130,6 +131,26 @@ export default function PlansPage() {
             method: (result as any)?.method || 'desconocido',
             purchasedAt: new Date().toISOString(),
           });
+          // Atribuir comisión por referido (15%) si aplica
+          try {
+            const ref = localStorage.getItem('ref_code') || '';
+            const buyerId = user?.id || '';
+            const planAmount = plan?.price ?? 0;
+            if (ref && buyerId && planAmount > 0) {
+              const refRow = await referralsService.getReferrerByCode(ref);
+              // Evitar auto-referido
+              if (refRow && refRow.user_id !== buyerId) {
+                const commission = Number((planAmount * 0.15).toFixed(2));
+                await referralsService.createCommission({
+                  ref_code: ref,
+                  referee_user_id: buyerId,
+                  plan_id: selectedPlan,
+                  amount: commission,
+                  currency: 'USD'
+                });
+              }
+            }
+          } catch {}
         } catch {}
       } else {
         alert(result.error || 'Error al procesar el pago. Intente nuevamente.');

@@ -1,104 +1,58 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { exportToPdf } from '../../../../src/utils/exportImportUtils';
 import { toast } from 'sonner';
+import { useAuth } from '../../../hooks/useAuth';
+import { quotesService, invoicesService, customersService, inventoryService } from '../../../services/database';
+
+interface UiQuoteItem {
+  description: string;
+  quantity: number;
+  price: number;
+  total: number;
+}
+
+interface UiQuote {
+  id: string; // visible number
+  dbId: string; // internal id
+  customerId?: string;
+  customer: string;
+  customerEmail: string;
+  amount: number;
+  tax: number;
+  total: number;
+  status: 'pending' | 'under_review' | 'approved' | 'rejected' | 'expired';
+  date: string;
+  validUntil: string;
+  items: UiQuoteItem[];
+}
 
 export default function PreInvoicingPage() {
+  const { user } = useAuth();
   const [showNewQuoteModal, setShowNewQuoteModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [quotes, setQuotes] = useState<UiQuote[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [customers, setCustomers] = useState<Array<{ id: string; name: string; email?: string }>>([]);
+  const [products, setProducts] = useState<Array<{ id: string; name: string; price: number }>>([]);
 
-  const quotes = [
-    {
-      id: 'COT-2024-045',
-      customer: 'Nuevo Cliente SA',
-      customerEmail: 'contacto@nuevocliente.com',
-      amount: 125000,
-      tax: 22500,
-      total: 147500,
-      status: 'pending',
-      date: '2024-01-15',
-      validUntil: '2024-01-25',
-      items: [
-        { description: 'Servidor Dell PowerEdge R740', quantity: 1, price: 85000, total: 85000 },
-        { description: 'Licencias Windows Server', quantity: 2, price: 20000, total: 40000 }
-      ]
-    },
-    {
-      id: 'COT-2024-044',
-      customer: 'Empresa Potencial SRL',
-      customerEmail: 'compras@empresapotencial.com',
-      amount: 89000,
-      tax: 16020,
-      total: 105020,
-      status: 'under_review',
-      date: '2024-01-14',
-      validUntil: '2024-01-22',
-      items: [
-        { description: 'Sistema de Videoconferencia', quantity: 1, price: 65000, total: 65000 },
-        { description: 'Instalación y Configuración', quantity: 1, price: 24000, total: 24000 }
-      ]
-    },
-    {
-      id: 'COT-2024-043',
-      customer: 'Comercial ABC EIRL',
-      customerEmail: 'ventas@comercialabc.com',
-      amount: 45000,
-      tax: 8100,
-      total: 53100,
-      status: 'approved',
-      date: '2024-01-13',
-      validUntil: '2024-01-20',
-      items: [
-        { description: 'Laptops HP EliteBook', quantity: 3, price: 15000, total: 45000 }
-      ]
-    },
-    {
-      id: 'COT-2024-042',
-      customer: 'Servicios XYZ SA',
-      customerEmail: 'admin@serviciosxyz.com',
-      amount: 78000,
-      tax: 14040,
-      total: 92040,
-      status: 'rejected',
-      date: '2024-01-12',
-      validUntil: '2024-01-19',
-      items: [
-        { description: 'Software de Gestión Empresarial', quantity: 1, price: 78000, total: 78000 }
-      ]
-    },
-    {
-      id: 'COT-2024-041',
-      customer: 'Distribuidora DEF SA',
-      customerEmail: 'compras@distribuidoradef.com',
-      amount: 156000,
-      tax: 28080,
-      total: 184080,
-      status: 'expired',
-      date: '2024-01-10',
-      validUntil: '2024-01-17',
-      items: [
-        { description: 'Equipos de Red Cisco', quantity: 5, price: 25000, total: 125000 },
-        { description: 'Servicios de Implementación', quantity: 1, price: 31000, total: 31000 }
-      ]
-    }
-  ];
+  const [newQuoteCustomerId, setNewQuoteCustomerId] = useState('');
+  const [newQuoteValidUntil, setNewQuoteValidUntil] = useState('');
+  const [newQuoteTerms, setNewQuoteTerms] = useState('');
+  const [quoteItems, setQuoteItems] = useState<UiQuoteItem[]>([{
+    description: '',
+    quantity: 1,
+    price: 0,
+    total: 0,
+  }]);
+  const [quoteSubtotal, setQuoteSubtotal] = useState(0);
+  const [quoteTax, setQuoteTax] = useState(0);
+  const [quoteTotal, setQuoteTotal] = useState(0);
 
-  const customers = [
-    { id: '1', name: 'Nuevo Cliente SA', email: 'contacto@nuevocliente.com', phone: '809-555-0201' },
-    { id: '2', name: 'Empresa Potencial SRL', email: 'compras@empresapotencial.com', phone: '809-555-0202' },
-    { id: '3', name: 'Comercial ABC EIRL', email: 'ventas@comercialabc.com', phone: '809-555-0203' },
-    { id: '4', name: 'Servicios XYZ SA', email: 'admin@serviciosxyz.com', phone: '809-555-0204' },
-    { id: '5', name: 'Distribuidora DEF SA', email: 'compras@distribuidoradef.com', phone: '809-555-0205' }
-  ];
-
-  const products = [
-    { id: '1', name: 'Servidor Dell PowerEdge R740', price: 85000, stock: 5 },
-    { id: '2', name: 'Sistema de Videoconferencia', price: 65000, stock: 8 },
-    { id: '3', name: 'Laptops HP EliteBook', price: 15000, stock: 25 },
-    { id: '4', name: 'Software de Gestión Empresarial', price: 78000, stock: 1 },
-    { id: '5', name: 'Equipos de Red Cisco', price: 25000, stock: 12 }
-  ];
+  const [clientError, setClientError] = useState('');
+  const [validUntilError, setValidUntilError] = useState('');
+  const [itemsError, setItemsError] = useState('');
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -109,6 +63,85 @@ export default function PreInvoicingPage() {
       case 'expired': return 'bg-gray-100 text-gray-800';
       default: return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const populateFormFromQuote = (quote: UiQuote) => {
+    setNewQuoteCustomerId(quote.customerId || '');
+    setNewQuoteValidUntil(quote.validUntil || '');
+    setNewQuoteTerms('');
+
+    const items = (quote.items && quote.items.length > 0)
+      ? quote.items
+      : [{ description: 'Línea', quantity: 1, price: quote.total, total: quote.total }];
+
+    setQuoteItems(items.map(it => ({
+      description: it.description,
+      quantity: it.quantity,
+      price: it.price,
+      total: it.total,
+    })));
+
+    const subtotal = items.reduce((sum, it) => sum + (it.total || 0), 0);
+    const taxCalc = subtotal * 0.18;
+    const totalCalc = subtotal + taxCalc;
+    setQuoteSubtotal(subtotal);
+    setQuoteTax(taxCalc);
+    setQuoteTotal(totalCalc);
+
+    setClientError('');
+    setValidUntilError('');
+    setItemsError('');
+  };
+
+  const recalcTotals = (items: UiQuoteItem[]) => {
+    const subtotal = items.reduce((sum, it) => sum + (Number(it.total) || 0), 0);
+    const tax = subtotal * 0.18;
+    const total = subtotal + tax;
+    setQuoteSubtotal(subtotal);
+    setQuoteTax(tax);
+    setQuoteTotal(total);
+  };
+
+  const handleItemChange = (index: number, field: 'product' | 'quantity' | 'price', value: string) => {
+    setQuoteItems(prev => {
+      const next = [...prev];
+      const current = { ...next[index] };
+
+      if (field === 'product') {
+        const product = products.find(p => p.id === value);
+        current.description = product?.name || '';
+        current.price = product?.price || 0;
+      } else if (field === 'quantity') {
+        const qty = Number(value) || 0;
+        current.quantity = qty;
+      } else if (field === 'price') {
+        const price = Number(value) || 0;
+        current.price = price;
+      }
+
+      current.total = (current.quantity || 0) * (current.price || 0);
+      next[index] = current;
+      recalcTotals(next);
+      return next;
+    });
+  };
+
+  const handleAddItem = () => {
+    setQuoteItems(prev => {
+      const next = [...prev, { description: '', quantity: 1, price: 0, total: 0 }];
+      return next;
+    });
+  };
+
+  const handleRemoveItem = (index: number) => {
+    setQuoteItems(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0) {
+        next.push({ description: '', quantity: 1, price: 0, total: 0 });
+      }
+      recalcTotals(next);
+      return next;
+    });
   };
 
   const getStatusText = (status: string) => {
@@ -122,6 +155,108 @@ export default function PreInvoicingPage() {
     }
   };
 
+  const loadQuotes = async () => {
+    if (!user?.id) return;
+    setLoading(true);
+    try {
+      const data = await quotesService.getAll(user.id);
+      const mapped: UiQuote[] = (data as any[]).map((q) => {
+        const subtotal = Number(q.subtotal) || 0;
+        const tax = Number(q.tax_amount) || 0;
+        const total = Number(q.total_amount) || subtotal + tax;
+
+        const items: UiQuoteItem[] = (q.quote_lines || []).map((line: any) => {
+          const qty = Number(line.quantity) || 0;
+          const unitPrice = Number(line.unit_price) || 0;
+          const lineTotal = Number(line.line_total) || qty * unitPrice;
+          return {
+            description: line.description || 'Ítem',
+            quantity: qty,
+            price: unitPrice,
+            total: lineTotal,
+          };
+        });
+
+        if (items.length === 0) {
+          items.push({
+            description: q.description || 'Cotización',
+            quantity: 1,
+            price: total,
+            total,
+          });
+        }
+
+        const statusDb = (q.status as string) || 'pending';
+        let status: UiQuote['status'];
+        if (statusDb === 'approved') status = 'approved';
+        else if (statusDb === 'under_review') status = 'under_review';
+        else if (statusDb === 'rejected') status = 'rejected';
+        else if (statusDb === 'expired') status = 'expired';
+        else status = 'pending';
+
+        return {
+          id: (q.quote_number as string) || String(q.id),
+          dbId: String(q.id),
+          customerId: q.customer_id ? String(q.customer_id) : undefined,
+          customer: 'Cliente',
+          customerEmail: '',
+          amount: subtotal,
+          tax,
+          total,
+          status,
+          date: (q.quote_date as string) || new Date().toISOString().slice(0, 10),
+          validUntil: (q.valid_until as string) || (q.quote_date as string) || new Date().toISOString().slice(0, 10),
+          items,
+        };
+      });
+
+      setQuotes(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading quotes:', error);
+      toast.error('Error al cargar las cotizaciones');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadCustomers = async () => {
+    if (!user?.id) return;
+    try {
+      const list = await customersService.getAll(user.id);
+      setCustomers(list.map((c: any) => ({ id: c.id, name: c.name, email: c.email })));
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading customers for quotes:', error);
+    }
+  };
+
+  const loadProducts = async () => {
+    if (!user?.id) return;
+    try {
+      const list = await inventoryService.getItems(user.id);
+      const mapped = (list as any[]).map((p) => ({
+        id: String(p.id),
+        name: p.name as string,
+        // Tomar un precio de venta razonable: sale_price, unit_price o price
+        price: Number((p as any).sale_price ?? (p as any).unit_price ?? (p as any).price ?? 0) || 0,
+      }));
+      setProducts(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading inventory items for quotes:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (user?.id) {
+      loadQuotes();
+      loadCustomers();
+      loadProducts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const filteredQuotes = quotes.filter(quote => {
     const matchesSearch = quote.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          quote.id.toLowerCase().includes(searchTerm.toLowerCase());
@@ -130,20 +265,47 @@ export default function PreInvoicingPage() {
   });
 
   const handleCreateQuote = () => {
+    // Resetear formulario de nueva cotización
+    setNewQuoteCustomerId('');
+    setNewQuoteValidUntil('');
+    setNewQuoteTerms('');
+    setQuoteItems([{ description: '', quantity: 1, price: 0, total: 0 }]);
+    setQuoteSubtotal(0);
+    setQuoteTax(0);
+    setQuoteTotal(0);
+    setClientError('');
+    setValidUntilError('');
+    setItemsError('');
     setShowNewQuoteModal(true);
   };
 
   const handleViewQuote = (quoteId: string) => {
-    alert(`Visualizando cotización: ${quoteId}`);
+    const quote = quotes.find(q => q.id === quoteId);
+    if (!quote) return;
+    populateFormFromQuote(quote);
+    setShowNewQuoteModal(true);
   };
 
   const handleEditQuote = (quoteId: string) => {
-    alert(`Editando cotización: ${quoteId}`);
+    const quote = quotes.find(q => q.id === quoteId);
+    if (!quote) return;
+    populateFormFromQuote(quote);
+    setShowNewQuoteModal(true);
   };
 
-  const handleDeleteQuote = (quoteId: string) => {
-    if (confirm(`¿Está seguro de eliminar la cotización ${quoteId}?`)) {
-      alert(`Cotización ${quoteId} eliminada`);
+  const handleDeleteQuote = async (quoteId: string) => {
+    const quote = quotes.find(q => q.id === quoteId);
+    if (!quote) return;
+    if (!confirm(`¿Está seguro de eliminar la cotización ${quoteId}?`)) return;
+
+    try {
+      await quotesService.delete(quote.dbId);
+      await loadQuotes();
+      toast.success('Cotización eliminada correctamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error deleting quote:', error);
+      toast.error('Error al eliminar la cotización');
     }
   };
 
@@ -201,24 +363,212 @@ export default function PreInvoicingPage() {
   };
 
   const handleConvertToInvoice = (quoteId: string) => {
-    if (confirm(`¿Convertir cotización ${quoteId} en factura?`)) {
-      alert(`Cotización ${quoteId} convertida en factura`);
+    const quote = quotes.find(q => q.id === quoteId);
+    if (!quote) return;
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para convertir en factura');
+      return;
     }
+
+    if (!quote.customerId) {
+      toast.error('La cotización no tiene un cliente válido');
+      return;
+    }
+
+    if (!confirm(`¿Convertir cotización ${quoteId} en factura?`)) return;
+
+    (async () => {
+      try {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const invoiceNumber = `FAC-${Date.now()}`;
+
+        const invoicePayload = {
+          customer_id: quote.customerId,
+          invoice_number: invoiceNumber,
+          invoice_date: todayStr,
+          due_date: quote.validUntil || todayStr,
+          currency: 'DOP',
+          subtotal: quote.amount,
+          tax_amount: quote.tax,
+          total_amount: quote.total,
+          paid_amount: 0,
+          status: 'pending',
+          notes: `Generada desde cotización ${quote.id}`,
+        };
+
+        const linesPayload = quote.items.map((item, index) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: item.price,
+          line_total: item.total,
+          line_number: index + 1,
+        }));
+
+        await invoicesService.create(user.id, invoicePayload, linesPayload);
+
+        // Marcar cotización como aprobada/convertida
+        await quotesService.update(quote.dbId, { status: 'approved' });
+        await loadQuotes();
+
+        toast.success(`Cotización ${quote.id} convertida en factura ${invoiceNumber}`);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error converting quote to invoice:', error);
+        toast.error('Error al convertir la cotización en factura');
+      }
+    })();
   };
 
   const handleDuplicateQuote = (quoteId: string) => {
-    alert(`Duplicando cotización: ${quoteId}`);
+    const quote = quotes.find(q => q.id === quoteId);
+    if (!quote) return;
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para duplicar cotizaciones');
+      return;
+    }
+
+    if (!quote.customerId) {
+      toast.error('La cotización no tiene un cliente válido para duplicar');
+      return;
+    }
+
+    (async () => {
+      try {
+        const baseLines = quote.items && quote.items.length > 0
+          ? quote.items
+          : [{ description: 'Línea duplicada', quantity: 1, price: quote.total, total: quote.total }];
+
+        const linesPayload = baseLines.map((item) => ({
+          description: item.description,
+        }));
+
+        const quotePayload = {
+          customer_id: quote.customerId,
+          status: 'pending',
+        };
+
+        await quotesService.create(user.id, quotePayload, linesPayload);
+        await loadQuotes();
+        toast.success(`Cotización ${quote.id} duplicada correctamente`);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error duplicating quote:', error);
+        toast.error('Error al duplicar la cotización');
+      }
+    })();
   };
 
   const handleApproveQuote = (quoteId: string) => {
-    if (confirm(`¿Aprobar cotización ${quoteId}?`)) {
-      alert(`Cotización ${quoteId} aprobada`);
+    const quote = quotes.find(q => q.id === quoteId);
+    if (!quote) return;
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para aprobar cotizaciones');
+      return;
     }
+
+    if (!confirm(`¿Aprobar cotización ${quoteId}?`)) return;
+
+    (async () => {
+      try {
+        await quotesService.update(quote.dbId, { status: 'approved' });
+        await loadQuotes();
+        toast.success(`Cotización ${quote.id} aprobada`);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error approving quote:', error);
+        toast.error('Error al aprobar la cotización');
+      }
+    })();
   };
 
   const handleRejectQuote = (quoteId: string) => {
-    if (confirm(`¿Rechazar cotización ${quoteId}?`)) {
-      alert(`Cotización ${quoteId} rechazada`);
+    const quote = quotes.find(q => q.id === quoteId);
+    if (!quote) return;
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para rechazar cotizaciones');
+      return;
+    }
+
+    if (!confirm(`¿Rechazar cotización ${quoteId}?`)) return;
+
+    (async () => {
+      try {
+        await quotesService.update(quote.dbId, { status: 'rejected' });
+        await loadQuotes();
+        toast.success(`Cotización ${quote.id} rechazada`);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error rejecting quote:', error);
+        toast.error('Error al rechazar la cotización');
+      }
+    })();
+  };
+
+  const hasValidItems = quoteItems.some(i => i.description && i.quantity > 0 && i.price > 0);
+  const isFormValid = !!newQuoteCustomerId && !!newQuoteValidUntil && hasValidItems;
+
+  const handleSaveNewQuote = async (mode: 'draft' | 'final') => {
+    setClientError('');
+    setValidUntilError('');
+    setItemsError('');
+
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para crear cotizaciones');
+      return;
+    }
+
+    if (!newQuoteCustomerId) {
+      const msg = 'Selecciona un cliente';
+      setClientError(msg);
+      toast.error(msg);
+      return;
+    }
+
+    if (!newQuoteValidUntil) {
+      const msg = 'Selecciona la fecha de vigencia (Válida Hasta)';
+      setValidUntilError(msg);
+      toast.error(msg);
+      return;
+    }
+
+    const validItems = quoteItems.filter(i => i.description && i.quantity > 0 && i.price > 0);
+    if (validItems.length === 0) {
+      const msg = 'Agrega al menos un producto con cantidad y precio mayor que 0';
+      setItemsError(msg);
+      toast.error(msg);
+      return;
+    }
+
+    const subtotal = validItems.reduce((sum, it) => sum + (it.total || 0), 0);
+    const tax = subtotal * 0.18;
+    const total = subtotal + tax;
+
+    const status = mode === 'draft' ? 'pending' : 'pending';
+
+    try {
+      const quotePayload = {
+        customer_id: newQuoteCustomerId,
+        subtotal,
+        tax_amount: tax,
+        total_amount: total,
+        status,
+      };
+
+      const linesPayload = validItems.map((item) => ({
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.price,
+        line_total: item.total,
+      }));
+
+      await quotesService.create(user.id, quotePayload, linesPayload);
+      await loadQuotes();
+      setShowNewQuoteModal(false);
+      toast.success(mode === 'draft' ? 'Borrador de cotización guardado' : 'Cotización creada correctamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error creating quote:', error);
+      toast.error('Error al crear la cotización');
     }
   };
 
@@ -402,14 +752,22 @@ export default function PreInvoicingPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredQuotes.map((quote) => (
-                  <tr key={quote.id} className="hover:bg-gray-50">
+                {filteredQuotes.map((quote) => {
+                  const customerName = quote.customerId
+                    ? customers.find(c => c.id === quote.customerId)?.name || quote.customer
+                    : quote.customer;
+                  const customerEmail = quote.customerId
+                    ? customers.find(c => c.id === quote.customerId)?.email || quote.customerEmail
+                    : quote.customerEmail;
+
+                  return (
+                    <tr key={quote.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{quote.id}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{quote.customer}</div>
-                      <div className="text-sm text-gray-500">{quote.customerEmail}</div>
+                      <div className="text-sm text-gray-900">{customerName}</div>
+                      <div className="text-sm text-gray-500">{customerEmail}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {new Date(quote.date).toLocaleDateString('es-DO')}
@@ -440,20 +798,6 @@ export default function PreInvoicingPage() {
                           title="Editar cotización"
                         >
                           <i className="ri-edit-line"></i>
-                        </button>
-                        <button
-                          onClick={() => handlePrintQuote(quote.id)}
-                          className="text-gray-600 hover:text-gray-900 p-1"
-                          title="Imprimir cotización"
-                        >
-                          <i className="ri-printer-line"></i>
-                        </button>
-                        <button
-                          onClick={() => handleSendQuote(quote.id, quote.customerEmail)}
-                          className="text-purple-600 hover:text-purple-900 p-1"
-                          title="Enviar por email"
-                        >
-                          <i className="ri-mail-line"></i>
                         </button>
                         {quote.status === 'approved' && (
                           <button
@@ -499,7 +843,8 @@ export default function PreInvoicingPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -524,19 +869,31 @@ export default function PreInvoicingPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
-                    <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8">
+                    <select
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                      value={newQuoteCustomerId}
+                      onChange={(e) => setNewQuoteCustomerId(e.target.value)}
+                    >
                       <option value="">Seleccionar cliente...</option>
                       {customers.map((customer) => (
                         <option key={customer.id} value={customer.id}>{customer.name}</option>
                       ))}
                     </select>
+                    {clientError && (
+                      <p className="mt-1 text-xs text-red-600">{clientError}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Válida Hasta</label>
                     <input
                       type="date"
+                      value={newQuoteValidUntil}
+                      onChange={(e) => setNewQuoteValidUntil(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
+                    {validUntilError && (
+                      <p className="mt-1 text-xs text-red-600">{validUntilError}</p>
+                    )}
                   </div>
                 </div>
                 
@@ -554,37 +911,64 @@ export default function PreInvoicingPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          <td className="px-4 py-3">
-                            <select className="w-full px-2 py-1 border border-gray-300 rounded text-sm pr-8">
-                              <option value="">Seleccionar producto...</option>
-                              {products.map((product) => (
-                                <option key={product.id} value={product.id}>{product.name}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-4 py-3">
-                            <input type="number" min="1" className="w-full px-2 py-1 border border-gray-300 rounded text-sm" />
-                          </td>
-                          <td className="px-4 py-3">
-                            <input type="number" className="w-full px-2 py-1 border border-gray-300 rounded text-sm" />
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="text-sm font-medium">RD$ 0.00</span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <button className="text-red-600 hover:text-red-800">
-                              <i className="ri-delete-bin-line"></i>
-                            </button>
-                          </td>
-                        </tr>
+                        {quoteItems.map((item, index) => (
+                          <tr key={index}>
+                            <td className="px-4 py-3">
+                              <select
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm pr-8"
+                                onChange={(e) => handleItemChange(index, 'product', e.target.value)}
+                              >
+                                <option value="">Seleccionar producto...</option>
+                                {products.map((product) => (
+                                  <option key={product.id} value={product.id}>{product.name}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="number"
+                                min="1"
+                                value={item.quantity}
+                                onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="number"
+                                value={item.price}
+                                onChange={(e) => handleItemChange(index, 'price', e.target.value)}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="text-sm font-medium">RD$ {item.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveItem(index)}
+                                className="text-red-600 hover:text-red-800"
+                              >
+                                <i className="ri-delete-bin-line"></i>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
-                  <button className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap">
+                  <button
+                    type="button"
+                    onClick={handleAddItem}
+                    className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+                  >
                     <i className="ri-add-line mr-2"></i>
                     Agregar Producto
                   </button>
+                  {itemsError && (
+                    <p className="mt-2 text-xs text-red-600">{itemsError}</p>
+                  )}
                 </div>
 
                 <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -592,6 +976,8 @@ export default function PreInvoicingPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Términos y Condiciones</label>
                     <textarea
                       rows={4}
+                      value={newQuoteTerms}
+                      onChange={(e) => setNewQuoteTerms(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Términos y condiciones de la cotización..."
                     ></textarea>
@@ -600,16 +986,16 @@ export default function PreInvoicingPage() {
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-sm text-gray-600">Subtotal:</span>
-                        <span className="text-sm font-medium">RD$ 0.00</span>
+                        <span className="text-sm font-medium">RD$ {quoteSubtotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-gray-600">ITBIS (18%):</span>
-                        <span className="text-sm font-medium">RD$ 0.00</span>
+                        <span className="text-sm font-medium">RD$ {quoteTax.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                       </div>
                       <div className="border-t border-gray-200 pt-2">
                         <div className="flex justify-between">
                           <span className="text-base font-semibold">Total:</span>
-                          <span className="text-base font-semibold">RD$ 0.00</span>
+                          <span className="text-base font-semibold">RD$ {quoteTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                         </div>
                       </div>
                     </div>
@@ -624,20 +1010,26 @@ export default function PreInvoicingPage() {
                   Cancelar
                 </button>
                 <button
-                  onClick={() => {
-                    alert('Guardando cotización como borrador...');
-                    setShowNewQuoteModal(false);
-                  }}
-                  className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors whitespace-nowrap"
+                  type="button"
+                  onClick={() => handleSaveNewQuote('draft')}
+                  disabled={!isFormValid}
+                  className={`px-4 py-2 rounded-lg text-white transition-colors whitespace-nowrap ${
+                    isFormValid
+                      ? 'bg-yellow-600 hover:bg-yellow-700'
+                      : 'bg-yellow-300 cursor-not-allowed'
+                  }`}
                 >
                   Guardar Borrador
                 </button>
                 <button
-                  onClick={() => {
-                    alert('Creando y enviando cotización...');
-                    setShowNewQuoteModal(false);
-                  }}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                  type="button"
+                  onClick={() => handleSaveNewQuote('final')}
+                  disabled={!isFormValid}
+                  className={`px-4 py-2 rounded-lg text-white transition-colors whitespace-nowrap ${
+                    isFormValid
+                      ? 'bg-blue-600 hover:bg-blue-700'
+                      : 'bg-blue-300 cursor-not-allowed'
+                  }`}
                 >
                   Crear Cotización
                 </button>

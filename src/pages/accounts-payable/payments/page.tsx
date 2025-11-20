@@ -1,65 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { bankAccountsService, supplierPaymentsService, suppliersService } from '../../../services/database';
 
 export default function PaymentsPage() {
+  const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<any>(null);
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterMethod, setFilterMethod] = useState('all');
 
-  const [payments, setPayments] = useState([
-    {
-      id: 1,
-      date: '2024-01-15',
-      supplier: 'Proveedor Industrial SA',
-      reference: 'PAY-2024-001',
-      invoice: 'INV-001234',
-      method: 'Transferencia',
-      amount: 125000,
-      status: 'Completado',
-      description: 'Pago de factura por materiales industriales',
-      bankAccount: 'Banco Popular - 1234567890'
-    },
-    {
-      id: 2,
-      date: '2024-01-14',
-      supplier: 'Distribuidora Nacional SRL',
-      reference: 'PAY-2024-002',
-      invoice: 'INV-001235',
-      method: 'Cheque',
-      amount: 85000,
-      status: 'Pendiente',
-      description: 'Pago de productos de distribución',
-      bankAccount: 'Banco BHD - 0987654321'
-    },
-    {
-      id: 3,
-      date: '2024-01-13',
-      supplier: 'Servicios Técnicos EIRL',
-      reference: 'PAY-2024-003',
-      invoice: 'INV-001236',
-      method: 'Efectivo',
-      amount: 45000,
-      status: 'Completado',
-      description: 'Servicios técnicos especializados',
-      bankAccount: 'Caja General'
-    },
-    {
-      id: 4,
-      date: '2024-01-12',
-      supplier: 'Materiales Construcción SA',
-      reference: 'PAY-2024-004',
-      invoice: 'INV-001237',
-      method: 'Transferencia',
-      amount: 195000,
-      status: 'Rechazado',
-      description: 'Materiales de construcción premium',
-      bankAccount: 'Banco Reservas - 5555666677'
-    }
-  ]);
+  const [payments, setPayments] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
-    supplier: '',
+    supplierId: '',
     invoice: '',
     method: 'Transferencia',
     amount: '',
@@ -68,20 +22,10 @@ export default function PaymentsPage() {
     date: new Date().toISOString().split('T')[0]
   });
 
-  const suppliers = [
-    'Proveedor Industrial SA',
-    'Distribuidora Nacional SRL',
-    'Servicios Técnicos EIRL',
-    'Materiales Construcción SA'
-  ];
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
 
   const paymentMethods = ['Transferencia', 'Cheque', 'Efectivo', 'Tarjeta de Crédito'];
-  const bankAccounts = [
-    'Banco Popular - 1234567890',
-    'Banco BHD - 0987654321', 
-    'Banco Reservas - 5555666677',
-    'Caja General'
-  ];
 
   const filteredPayments = payments.filter(payment => {
     const matchesStatus = filterStatus === 'all' || payment.status === filterStatus;
@@ -89,30 +33,126 @@ export default function PaymentsPage() {
     return matchesStatus && matchesMethod;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const loadSuppliers = async () => {
+    if (!user?.id) {
+      setSuppliers([]);
+      return;
+    }
+    try {
+      const data = await suppliersService.getAll(user.id);
+      setSuppliers(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading suppliers for payments', error);
+      setSuppliers([]);
+    }
+  };
+
+  const loadBankAccounts = async () => {
+    if (!user?.id) {
+      setBankAccounts([]);
+      return;
+    }
+    try {
+      const data = await bankAccountsService.getAll(user.id);
+      setBankAccounts(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading bank accounts for payments', error);
+      setBankAccounts([]);
+    }
+  };
+
+  const loadPayments = async () => {
+    if (!user?.id) {
+      setPayments([]);
+      return;
+    }
+    try {
+      const data = await supplierPaymentsService.getAll(user.id);
+      const mapped = (data || []).map((p: any) => ({
+        id: p.id,
+        date: p.payment_date,
+        supplier: (p.suppliers as any)?.name || 'Proveedor',
+        supplierId: p.supplier_id,
+        reference: p.reference,
+        invoice: p.invoice_number || '',
+        method: p.method,
+        amount: Number(p.amount) || 0,
+        status: p.status || 'Pendiente',
+        description: p.description || '',
+        bankAccount: p.bank_account || '',
+      }));
+      setPayments(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading supplier payments', error);
+      setPayments([]);
+    }
+  };
+
+  useEffect(() => {
+    loadSuppliers();
+    loadBankAccounts();
+    loadPayments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const newPayment = {
-      id: payments.length + 1,
-      date: formData.date,
-      supplier: formData.supplier,
-      reference: `PAY-2024-${String(payments.length + 1).padStart(3, '0')}`,
-      invoice: formData.invoice,
-      method: formData.method,
-      amount: parseFloat(formData.amount),
-      status: 'Pendiente',
-      description: formData.description,
-      bankAccount: formData.bankAccount
-    };
-    
-    setPayments([...payments, newPayment]);
-    resetForm();
-    alert('Pago registrado exitosamente');
+
+    if (!user?.id) {
+      alert('Debes iniciar sesión para registrar pagos');
+      return;
+    }
+
+    if (!formData.supplierId) {
+      alert('Debes seleccionar un proveedor');
+      return;
+    }
+
+    const amount = parseFloat(formData.amount || '0');
+    if (!amount || amount <= 0) {
+      alert('El monto debe ser mayor que cero');
+      return;
+    }
+
+    const reference = `PAY-${new Date().getFullYear()}-${String(payments.length + 1).padStart(3, '0')}`;
+
+    // Resolver banco seleccionado
+    const selectedBank = bankAccounts.find((b: any) => String(b.id) === String(formData.bankAccount));
+    if (!selectedBank) {
+      alert('Debes seleccionar una cuenta bancaria válida');
+      return;
+    }
+    const bankLabel = `${selectedBank.bank_name} - ${selectedBank.account_number}`;
+
+    try {
+      await supplierPaymentsService.create(user.id, {
+        supplier_id: formData.supplierId,
+        payment_date: formData.date,
+        reference,
+        method: formData.method,
+        amount,
+        status: 'Pendiente',
+        description: formData.description || null,
+        bank_account_id: selectedBank.id,
+        bank_account: bankLabel,
+        invoice_number: formData.invoice || null,
+      });
+      await loadPayments();
+      resetForm();
+      alert('Pago registrado exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error saving supplier payment', error);
+      alert('Error al registrar el pago');
+    }
   };
 
   const resetForm = () => {
     setFormData({
-      supplier: '',
+      supplierId: '',
       invoice: '',
       method: 'Transferencia',
       amount: '',
@@ -123,21 +163,29 @@ export default function PaymentsPage() {
     setShowModal(false);
   };
 
-  const handleApprovePayment = (id: number) => {
-    if (confirm('¿Confirmar este pago?')) {
-      setPayments(payments.map(payment => 
-        payment.id === id ? { ...payment, status: 'Completado' } : payment
-      ));
+  const handleApprovePayment = async (id: string | number) => {
+    if (!confirm('¿Confirmar este pago?')) return;
+    try {
+      await supplierPaymentsService.updateStatus(String(id), 'Completado');
+      await loadPayments();
       alert('Pago aprobado exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error approving supplier payment', error);
+      alert('No se pudo aprobar el pago');
     }
   };
 
-  const handleRejectPayment = (id: number) => {
-    if (confirm('¿Rechazar este pago?')) {
-      setPayments(payments.map(payment => 
-        payment.id === id ? { ...payment, status: 'Rechazado' } : payment
-      ));
+  const handleRejectPayment = async (id: string | number) => {
+    if (!confirm('¿Rechazar este pago?')) return;
+    try {
+      await supplierPaymentsService.updateStatus(String(id), 'Rechazado');
+      await loadPayments();
       alert('Pago rechazado');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error rejecting supplier payment', error);
+      alert('No se pudo rechazar el pago');
     }
   };
 
@@ -432,13 +480,13 @@ export default function PaymentsPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Proveedor *</label>
                     <select 
                       required
-                      value={formData.supplier}
-                      onChange={(e) => setFormData({...formData, supplier: e.target.value})}
+                      value={formData.supplierId}
+                      onChange={(e) => setFormData({ ...formData, supplierId: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Seleccionar proveedor</option>
-                      {suppliers.map(supplier => (
-                        <option key={supplier} value={supplier}>{supplier}</option>
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
                   </div>
@@ -485,9 +533,12 @@ export default function PaymentsPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Seleccionar cuenta</option>
-                      {bankAccounts.map(account => (
-                        <option key={account} value={account}>{account}</option>
-                      ))}
+                      {bankAccounts.map((account: any) => {
+                        const label = `${account.bank_name} - ${account.account_number}`;
+                        return (
+                          <option key={account.id} value={account.id}>{label}</option>
+                        );
+                      })}
                     </select>
                   </div>
                   <div>

@@ -1,14 +1,59 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import * as ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { useAuth } from '../../../hooks/useAuth';
+import { invoicesService, receiptsService } from '../../../services/database';
 
 export default function SalesReportsPage() {
+  const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState('today');
   const [selectedReport, setSelectedReport] = useState('sales-summary');
   const [showFilters, setShowFilters] = useState(false);
+
+  const [loading, setLoading] = useState(false);
+  const [hasData, setHasData] = useState(false);
+
+  const [salesSummary, setSalesSummary] = useState({
+    totalSales: 'RD$ 0',
+    totalInvoices: 0,
+    averageTicket: 'RD$ 0',
+    totalTax: 'RD$ 0',
+    netSales: 'RD$ 0',
+    grossProfit: 'RD$ 0',
+    profitMargin: '0.0%'
+  });
+
+  const [topProducts, setTopProducts] = useState<{
+    name: string;
+    quantity: number;
+    revenue: string;
+    margin: string;
+  }[]>([]);
+
+  const [topCustomers, setTopCustomers] = useState<{
+    name: string;
+    invoices: number;
+    revenue: string;
+    lastPurchase: string;
+  }[]>([]);
+
+  const [paymentMethods, setPaymentMethods] = useState<{
+    method: string;
+    amount: string;
+    percentage: string;
+    transactions: number;
+  }[]>([]);
+
+  // Cargar datos iniciales y al cambiar el período
+  useEffect(() => {
+    if (user) {
+      handleGenerateReport();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, selectedPeriod]);
 
   const reportTypes = [
     { id: 'sales-summary', name: 'Resumen de Ventas', icon: 'ri-bar-chart-line' },
@@ -30,45 +75,234 @@ export default function SalesReportsPage() {
     { id: 'custom', name: 'Personalizado' }
   ];
 
-  const salesSummary = {
-    totalSales: 'RD$ 185,450',
-    totalInvoices: 67,
-    averageTicket: 'RD$ 2,768',
-    totalTax: 'RD$ 33,381',
-    netSales: 'RD$ 152,069',
-    grossProfit: 'RD$ 45,621',
-    profitMargin: '30.0%'
+  const parseSelectedPeriod = () => {
+    const now = new Date();
+
+    const toDate = now.toISOString().slice(0, 10);
+    let fromDate = toDate;
+
+    switch (selectedPeriod) {
+      case 'today':
+        fromDate = toDate;
+        break;
+      case 'yesterday': {
+        const y = new Date(now);
+        y.setDate(y.getDate() - 1);
+        fromDate = y.toISOString().slice(0, 10);
+        break;
+      }
+      case 'this-week': {
+        const d = new Date(now);
+        const day = d.getDay() || 7; // 1-7
+        d.setDate(d.getDate() - (day - 1));
+        fromDate = d.toISOString().slice(0, 10);
+        break;
+      }
+      case 'last-week': {
+        const d = new Date(now);
+        const day = d.getDay() || 7;
+        d.setDate(d.getDate() - (day - 1 + 7));
+        fromDate = d.toISOString().slice(0, 10);
+        const end = new Date(d);
+        end.setDate(end.getDate() + 6);
+        return { fromDate, toDate: end.toISOString().slice(0, 10) };
+      }
+      case 'this-month': {
+        const d = new Date(now.getFullYear(), now.getMonth(), 1);
+        fromDate = d.toISOString().slice(0, 10);
+        break;
+      }
+      case 'last-month': {
+        const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const end = new Date(now.getFullYear(), now.getMonth(), 0);
+        return { fromDate: d.toISOString().slice(0, 10), toDate: end.toISOString().slice(0, 10) };
+      }
+      case 'this-year': {
+        const d = new Date(now.getFullYear(), 0, 1);
+        fromDate = d.toISOString().slice(0, 10);
+        break;
+      }
+      default:
+        fromDate = toDate;
+    }
+
+    return { fromDate, toDate };
   };
 
-  const topProducts = [
-    { name: 'Laptop Dell Inspiron 15', quantity: 8, revenue: 'RD$ 280,000', margin: '22%' },
-    { name: 'Monitor Samsung 24"', quantity: 15, revenue: 'RD$ 150,000', margin: '18%' },
-    { name: 'Impresora HP LaserJet', quantity: 6, revenue: 'RD$ 108,000', margin: '25%' },
-    { name: 'Teclado Mecánico RGB', quantity: 25, revenue: 'RD$ 75,000', margin: '35%' },
-    { name: 'Mouse Inalámbrico', quantity: 40, revenue: 'RD$ 40,000', margin: '40%' }
-  ];
+  const handleGenerateReport = async () => {
+    if (!user) {
+      alert('Debe iniciar sesión para generar reportes.');
+      return;
+    }
 
-  const topCustomers = [
-    { name: 'Empresa ABC SRL', invoices: 12, revenue: 'RD$ 450,000', lastPurchase: '15/01/2024' },
-    { name: 'Comercial XYZ EIRL', invoices: 8, revenue: 'RD$ 320,000', lastPurchase: '14/01/2024' },
-    { name: 'Distribuidora DEF SA', invoices: 15, revenue: 'RD$ 780,000', lastPurchase: '15/01/2024' },
-    { name: 'Servicios GHI SRL', invoices: 6, revenue: 'RD$ 180,000', lastPurchase: '13/01/2024' },
-    { name: 'Tecnología JKL SA', invoices: 10, revenue: 'RD$ 520,000', lastPurchase: '15/01/2024' }
-  ];
+    const { fromDate, toDate } = parseSelectedPeriod();
 
-  const paymentMethods = [
-    { method: 'Efectivo', amount: 'RD$ 75,200', percentage: '40.6%', transactions: 28 },
-    { method: 'Tarjeta de Crédito', amount: 'RD$ 65,150', percentage: '35.1%', transactions: 22 },
-    { method: 'Transferencia', amount: 'RD$ 35,100', percentage: '18.9%', transactions: 12 },
-    { method: 'Cheque', amount: 'RD$ 10,000', percentage: '5.4%', transactions: 5 }
-  ];
+    setLoading(true);
+    try {
+      const [invoices, receipts] = await Promise.all([
+        invoicesService.getAll(user.id),
+        receiptsService.getAll(user.id),
+      ]);
 
-  const handleGenerateReport = () => {
-    alert(`Generando reporte: ${reportTypes.find(r => r.id === selectedReport)?.name} para el período: ${periods.find(p => p.id === selectedPeriod)?.name}`);
+      // Filtrar por rango de fechas (invoice_date)
+      const filteredInvoices = (invoices || []).filter((inv: any) => {
+        if (!inv.invoice_date) return false;
+        const d = String(inv.invoice_date).slice(0, 10);
+        return d >= fromDate && d <= toDate;
+      });
+
+      // Si no hay facturas en el período, limpiar métricas y marcar sin datos
+      if (filteredInvoices.length === 0) {
+        setSalesSummary({
+          totalSales: 'RD$ 0',
+          totalInvoices: 0,
+          averageTicket: 'RD$ 0',
+          totalTax: 'RD$ 0',
+          netSales: 'RD$ 0',
+          grossProfit: 'RD$ 0',
+          profitMargin: '0.0%',
+        });
+        setTopProducts([]);
+        setTopCustomers([]);
+        setPaymentMethods([]);
+        setHasData(false);
+        return;
+      }
+
+      // Métricas principales
+      const totalSalesNum = filteredInvoices.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+      const totalInvoices = filteredInvoices.length;
+      const avgTicketNum = totalInvoices > 0 ? totalSalesNum / totalInvoices : 0;
+
+      const totalTaxNum = filteredInvoices.reduce((sum: number, inv: any) => sum + (Number(inv.tax_amount) || 0), 0);
+      const netSalesNum = totalSalesNum - totalTaxNum;
+
+      // Por ahora margen aproximado: 30% de ventas netas si hay datos
+      const grossProfitNum = netSalesNum > 0 ? netSalesNum * 0.3 : 0;
+      const profitMarginNum = netSalesNum > 0 ? (grossProfitNum / netSalesNum) * 100 : 0;
+
+      setSalesSummary({
+        totalSales: `RD$ ${totalSalesNum.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+        totalInvoices,
+        averageTicket: `RD$ ${avgTicketNum.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+        totalTax: `RD$ ${totalTaxNum.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+        netSales: `RD$ ${netSalesNum.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+        grossProfit: `RD$ ${grossProfitNum.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+        profitMargin: `${profitMarginNum.toFixed(1)}%`,
+      });
+
+      // Top products (desde invoice_lines)
+      const productMap = new Map<string, { qty: number; revenue: number }>();
+      filteredInvoices.forEach((inv: any) => {
+        (inv.invoice_lines || []).forEach((line: any) => {
+          const name = line.inventory_items?.name || line.description || 'Producto';
+          const qty = Number(line.quantity) || 0;
+          const lineTotal = Number(line.line_total) || Number(line.total) || 0;
+          const current = productMap.get(name) || { qty: 0, revenue: 0 };
+          current.qty += qty;
+          current.revenue += lineTotal;
+          productMap.set(name, current);
+        });
+      });
+
+      const productArray = Array.from(productMap.entries())
+        .map(([name, v]) => ({
+          name,
+          quantity: v.qty,
+          revenueNum: v.revenue,
+        }))
+        .sort((a, b) => b.revenueNum - a.revenueNum)
+        .slice(0, 5)
+        .map((p) => ({
+          name: p.name,
+          quantity: p.quantity,
+          revenue: `RD$ ${p.revenueNum.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+          margin: 'N/A',
+        }));
+      setTopProducts(productArray);
+
+      // Top customers
+      const customerMap = new Map<string, { name: string; invoices: number; revenue: number; last: string }>();
+      filteredInvoices.forEach((inv: any) => {
+        const id = inv.customer_id || 'sin-cliente';
+        const name = inv.customers?.name || 'Sin cliente';
+        const amount = Number(inv.total_amount) || 0;
+        const dateStr = String(inv.invoice_date).slice(0, 10);
+        const current = customerMap.get(id) || { name, invoices: 0, revenue: 0, last: dateStr };
+        current.invoices += 1;
+        current.revenue += amount;
+        if (dateStr > current.last) current.last = dateStr;
+        customerMap.set(id, current);
+      });
+
+      const customerArray = Array.from(customerMap.values())
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, 5)
+        .map((c) => ({
+          name: c.name,
+          invoices: c.invoices,
+          revenue: `RD$ ${c.revenue.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+          lastPurchase: new Date(c.last).toLocaleDateString(),
+        }));
+      setTopCustomers(customerArray);
+
+      // Métodos de pago desde recibos (receipt_date)
+      const filteredReceipts = (receipts || []).filter((r: any) => {
+        if (!r.receipt_date) return false;
+        const d = String(r.receipt_date).slice(0, 10);
+        return d >= fromDate && d <= toDate;
+      });
+
+      const methodMap = new Map<string, { amount: number; count: number }>();
+      filteredReceipts.forEach((r: any) => {
+        const method = r.payment_method || 'Otro';
+        const amount = Number(r.amount) || 0;
+        const current = methodMap.get(method) || { amount: 0, count: 0 };
+        current.amount += amount;
+        current.count += 1;
+        methodMap.set(method, current);
+      });
+
+      const totalReceiptsAmount = Array.from(methodMap.values()).reduce((s, m) => s + m.amount, 0) || 1;
+      const methodsArray = Array.from(methodMap.entries()).map(([method, v]) => ({
+        method,
+        amountNum: v.amount,
+        percentageNum: (v.amount / totalReceiptsAmount) * 100,
+        transactions: v.count,
+      }));
+
+      const methodsUi = methodsArray
+        .sort((a, b) => b.amountNum - a.amountNum)
+        .map((m) => ({
+          method: m.method,
+          amount: `RD$ ${m.amountNum.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+          percentage: `${m.percentageNum.toFixed(1)}%`,
+          transactions: m.transactions,
+        }));
+
+      setPaymentMethods(methodsUi);
+      setHasData(true);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error generating sales report:', error);
+      alert('Error al generar el reporte de ventas.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleExportReport = async (format: 'excel' | 'pdf') => {
     try {
+      if (!user) {
+        alert('Debe iniciar sesión para exportar reportes.');
+        return;
+      }
+
+      // Asegurar que haya datos actualizados antes de exportar
+      if (!hasData && !loading) {
+        await handleGenerateReport();
+      }
+
       if (format === 'excel') {
         await exportToExcel();
       } else {
@@ -254,7 +488,7 @@ export default function SalesReportsPage() {
   };
 
   const handlePrintReport = () => {
-    alert('Imprimiendo reporte...');
+    window.print();
   };
 
   return (
@@ -266,7 +500,13 @@ export default function SalesReportsPage() {
             <h1 className="text-2xl font-bold text-gray-900">Reportes de Ventas</h1>
             <p className="text-gray-600">Análisis detallado de ventas y rendimiento</p>
           </div>
-          <div className="flex space-x-3">
+          <div className="flex items-center space-x-3">
+            {loading && (
+              <span className="text-sm text-gray-500 flex items-center">
+                <span className="inline-block w-3 h-3 rounded-full border-2 border-blue-500 border-t-transparent animate-spin mr-2" />
+                Actualizando...
+              </span>
+            )}
             <button
               onClick={() => setShowFilters(!showFilters)}
               className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap"

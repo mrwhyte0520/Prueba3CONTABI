@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { customersService } from '../../services/database';
+import { customersService, invoicesService, receiptsService, inventoryService } from '../../services/database';
 import { exportToExcelStyled } from '../../utils/exportImportUtils';
 
 interface Product {
@@ -159,6 +159,13 @@ export default function POSPage() {
     };
   }, []);
 
+  // When auth user becomes available, reload customers from Supabase
+  useEffect(() => {
+    if (user?.id) {
+      loadCustomers();
+    }
+  }, [user?.id]);
+
   const loadProducts = () => {
     const savedProducts = localStorage.getItem('contabi_products');
     if (savedProducts) {
@@ -188,7 +195,75 @@ export default function POSPage() {
     }
   };
 
-  const loadSales = () => {
+  const loadSales = async () => {
+    try {
+      if (user?.id) {
+        const invoices: any[] = await invoicesService.getAll(user.id);
+        const posInvoices = (invoices || []).filter((inv: any) =>
+          (inv.invoice_number || '').startsWith('POS-')
+        );
+
+        const mappedSales: Sale[] = posInvoices.map((inv: any) => {
+          const createdAt: string | undefined = inv.created_at || undefined;
+          const date = inv.invoice_date || (createdAt ? createdAt.split('T')[0] : '');
+          const time = createdAt ? createdAt.split('T')[1]?.slice(0, 8) || '00:00:00' : '00:00:00';
+
+          const customer: Customer | null = inv.customers
+            ? {
+                id: inv.customers.id,
+                name: inv.customers.name || 'Cliente',
+                document: inv.customers.document || '',
+                phone: inv.customers.phone || '',
+                email: inv.customers.email || '',
+                address: inv.customers.address || '',
+                type: 'regular',
+              }
+            : null;
+
+          const items: CartItem[] = (inv.invoice_lines || []).map((line: any) => ({
+            id: line.inventory_items?.id || line.inventory_item_id || line.id,
+            name: line.inventory_items?.name || line.description || 'Producto',
+            price: line.unit_price || line.price || 0,
+            stock: 0,
+            category: '',
+            barcode: '',
+            imageUrl: '',
+            sku: '',
+            cost: 0,
+            minStock: 0,
+            maxStock: 0,
+            description: '',
+            supplier: '',
+            status: 'active',
+            quantity: line.quantity || 1,
+            total: line.line_total || (line.quantity || 1) * (line.unit_price || 0),
+          }));
+
+          return {
+            id: inv.invoice_number || inv.id,
+            date,
+            time,
+            customer,
+            items,
+            subtotal: inv.subtotal ?? 0,
+            tax: inv.tax_amount ?? 0,
+            total: inv.total_amount ?? 0,
+            paymentMethod: 'cash',
+            amountReceived: inv.total_amount ?? 0,
+            change: 0,
+            status: inv.status === 'cancelled' ? 'cancelled' : 'completed',
+            cashier: 'POS',
+          } as Sale;
+        });
+
+        setSales(mappedSales);
+        return;
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[POS] Error loading sales from invoices, falling back to localStorage', error);
+    }
+
     const savedSales = localStorage.getItem('contabi_pos_sales');
     if (savedSales) {
       setSales(JSON.parse(savedSales));
@@ -293,7 +368,7 @@ export default function POSPage() {
   const getTax = () => getSubtotal() * 0.18; // 18% ITBIS
   const getTotal = () => getSubtotal() + getTax();
 
-  const processPayment = () => {
+  const processPayment = async () => {
     const total = getTotal();
     const received = parseFloat(amountReceived) || total;
     
@@ -314,12 +389,69 @@ export default function POSPage() {
         cashier: 'Admin'
       };
 
-      // Update sales
-      const updatedSales = [newSale, ...sales];
+      // Update sales locally (sólo como historial rápido en este dispositivo)
+      // Guardamos máximo 500 ventas y protegemos contra QuotaExceededError
+      const updatedSales = [newSale, ...sales].slice(0, 500);
       setSales(updatedSales);
-      localStorage.setItem('contabi_pos_sales', JSON.stringify(updatedSales));
+      try {
+        localStorage.setItem('contabi_pos_sales', JSON.stringify(updatedSales));
+      } catch (error) {
+        // Si el storage está lleno, no interrumpir el flujo del POS
+        // eslint-disable-next-line no-console
+        console.error('[POS] Error saving contabi_pos_sales to localStorage (ignorado):', error);
+      }
 
-      // Update product stock
+      // If logged in and a concrete customer is selected, create AR invoice/receipt in Supabase
+      if (user?.id && selectedCustomer) {
+        try {
+          const todayStr = newSale.date;
+          const invoiceNumber = `POS-${Date.now()}`;
+
+          const isImmediatePayment = ['cash', 'card', 'transfer'].includes(newSale.paymentMethod);
+
+          const invoicePayload = {
+            customer_id: selectedCustomer.id,
+            invoice_number: invoiceNumber,
+            invoice_date: todayStr,
+            due_date: todayStr,
+            currency: 'DOP',
+            subtotal: newSale.subtotal,
+            tax_amount: newSale.tax,
+            total_amount: newSale.total,
+            paid_amount: isImmediatePayment ? newSale.total : 0,
+            status: isImmediatePayment ? 'paid' : 'pending',
+            notes: `Venta POS ${newSale.id}`,
+          };
+
+          const linesPayload = newSale.items.map((item) => ({
+            description: item.name,
+            quantity: item.quantity,
+            unit_price: item.price,
+            line_total: item.total,
+          }));
+
+          const created = await invoicesService.create(user.id, invoicePayload, linesPayload);
+
+          // Create receipt only when sale is fully paid (which is the only case permitido ahora)
+          const receiptNumber = `REC-${Date.now()}`;
+          await receiptsService.create(user.id, {
+            customer_id: selectedCustomer.id,
+            receipt_number: receiptNumber,
+            receipt_date: todayStr,
+            amount: newSale.total,
+            payment_method: newSale.paymentMethod,
+            reference: newSale.id,
+            concept: `Cobro venta POS ${created.invoice.invoice_number}`,
+            status: 'active',
+          });
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error('[POS] Error creando factura/recibo en CxC', error);
+          alert('La venta se guardó en el POS, pero hubo un problema al registrar la factura/recibo en Cuentas por Cobrar. Revisa la consola.');
+        }
+      }
+
+      // Update product stock in local POS cache
       const updatedProducts = products.map(product => {
         const cartItem = cart.find(item => item.id === product.id);
         if (cartItem) {
@@ -336,6 +468,43 @@ export default function POSPage() {
       
       localStorage.setItem('contabi_products', JSON.stringify(finalProducts));
       window.dispatchEvent(new CustomEvent('productsUpdated'));
+
+      // If logged in, also sync stock and movements with Inventory module in Supabase
+      if (user?.id) {
+        try {
+          for (const cartItem of cart) {
+            const current = products.find(p => p.id === cartItem.id);
+            // Solo sincronizar con Supabase cuando el id del producto sea un UUID válido
+            if (!current || !isUuid(current.id)) {
+              // eslint-disable-next-line no-console
+              console.warn('[POS] Skipping inventory sync for non-UUID product id', current?.id ?? cartItem.id);
+              continue;
+            }
+
+            // 1) Update inventory item stock
+            const newStock = (current.stock ?? 0) - cartItem.quantity;
+            await inventoryService.updateItem(current.id, {
+              current_stock: newStock < 0 ? 0 : newStock,
+            });
+
+            // 2) Create inventory movement (exit)
+            await inventoryService.createMovement(user.id, {
+              item_id: current.id,
+              movement_type: 'exit',
+              quantity: cartItem.quantity,
+              unit_cost: cartItem.cost ?? 0,
+              movement_date: newSale.date,
+              reference: newSale.id,
+              total_cost: (cartItem.quantity || 0) * (cartItem.cost ?? 0),
+              notes: `Salida por venta POS ${newSale.id}`,
+            });
+          }
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error('[POS] Error syncing inventory from POS sale', error);
+          alert('La venta se registró, pero hubo un problema al actualizar el inventario en la base de datos. Revisa el módulo de Inventario.');
+        }
+      }
       
       alert(`Venta procesada exitosamente. ${paymentMethod === 'cash' ? `Cambio: RD$${(received - total).toFixed(2)}` : ''}`);
       setCart([]);
@@ -374,7 +543,8 @@ export default function POSPage() {
           phone: newCustomer.phone,
           email: newCustomer.email,
           address: newCustomer.address,
-          type: newCustomer.type
+          creditLimit: 0,
+          status: 'active',
         });
         await loadCustomers();
       } catch (error) {
@@ -418,7 +588,8 @@ export default function POSPage() {
           phone: editCustomer.phone,
           email: editCustomer.email,
           address: editCustomer.address,
-          type: editCustomer.type
+          creditLimit: 0,
+          status: 'active',
         });
         await loadCustomers();
       } else {
@@ -570,7 +741,7 @@ export default function POSPage() {
           <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
             <div className="flex items-center">
               <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
-                <i className="ri-box-line text-orange-600 text-xl"></i>
+                <i className="ri-shopping-bag-3-line text-orange-600 text-xl"></i>
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Productos</p>
@@ -713,25 +884,27 @@ export default function POSPage() {
         </div>
 
         {/* Products Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredProducts.map((product) => (
             <div
               key={product.id}
-              className="relative bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow cursor-pointer"
+              className="relative bg-white rounded-xl shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow cursor-pointer flex flex-col h-full overflow-hidden"
               onClick={() => addToCart(product)}
             >
               <button
                 title="Eliminar producto"
                 onClick={(e) => { e.stopPropagation(); deleteProduct(product.id); }}
-                className="absolute top-2 right-2 w-8 h-8 bg-red-50 text-red-600 rounded-full flex items-center justify-center hover:bg-red-100"
+                className="absolute top-2 right-2 w-7 h-7 bg-red-50 text-red-600 rounded-full flex items-center justify-center hover:bg-red-100 shadow-sm"
               >
-                <i className="ri-delete-bin-line"></i>
+                <i className="ri-delete-bin-line text-sm"></i>
               </button>
-              <div className="w-full h-32 mb-3 bg-gray-100 rounded-lg overflow-hidden">
+
+              {/* Imagen */}
+              <div className="w-full h-32 mb-2 bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center">
                 <img
                   src={product.imageUrl}
                   alt={product.name}
-                  className="w-full h-full object-cover object-top"
+                  className="max-h-full w-auto object-contain"
                   onError={(e) => {
                     const target = e.target as HTMLImageElement;
                     target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xNTAgMTAwQzE2MS4wNDYgMTAwIDE3MCA5MC45NTQzIDE3MCA4MEM1NyA2OS4wNDU3IDE0Ny45NTQgNjAgMTM2IDYwQzEyNC45NTQgNjAgMTE2IDY5LjA0NTcgMTE2IDgwQzExNiA5MC45NTQzIDEyNC45NTQgMTAwIDEzNiAxMDBIMTUwWiIgZmlsbD0iIzlDQTNBRiIvPgo8cGF0aCBkPSJNMTg2IDEyMEgxMTRDMTA3LjM3MyAxMjAgMTAyIDEyNS4zNzMgMTAyIDEzMlYyMDBDMTAyIDIwNi2MjcgMTA3LjM3MyAyMTIgMTE0IDIxMkgxODZDMTkyLjYyNyAyMTIgMTk4IDIwNi4yMjJgMTk0IDIwMFYxMzJDMTk0IDEyNS4zNzMgMTkyLjYyNyAxMjAgMTg2IDEyMFoiIGZpbGw9IiM5Q0EzQUYiLz4KPC9zdmc+';
@@ -739,23 +912,38 @@ export default function POSPage() {
                 />
               </div>
 
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-gray-500">{product.category}</span>
-                <span className={`text-xs px-2 py-1 rounded-full ${
-                  product.stock > 10 ? 'bg-green-100 text-green-800' :
-                  product.stock > 0 ? 'bg-yellow-100 text-yellow-800' :
-                  'bg-red-100 text-red-800'
-                }`}>
+              {/* Categoría + Stock */}
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] uppercase tracking-wide text-gray-400 truncate max-w-[60%]">
+                  {product.category}
+                </span>
+                <span
+                  className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                    product.stock > 10
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : product.stock > 0
+                      ? 'bg-amber-50 text-amber-700'
+                      : 'bg-red-50 text-red-700'
+                  }`}
+                >
                   Stock: {product.stock}
                 </span>
               </div>
-              <h3 className="font-medium text-gray-900 mb-2 text-sm">{product.name}</h3>
-              <div className="flex items-center justify-between">
-                <span className="text-lg font-bold text-blue-600">
+
+              {/* Nombre */}
+              <h3 className="font-semibold text-gray-900 text-sm mb-2 line-clamp-2 min-h-[2.5rem]">
+                {product.name}
+              </h3>
+
+              {/* Precio + botón agregar */}
+              <div className="mt-auto flex items-center justify-between pt-2">
+                <span className="text-base font-extrabold text-blue-600 max-w-[70%] truncate leading-tight">
                   RD${product.price.toLocaleString()}
                 </span>
-                <button className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center hover:bg-blue-700 transition-colors">
-                  <i className="ri-add-line"></i>
+                <button
+                  className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center hover:bg-blue-700 transition-colors shadow-sm flex-shrink-0"
+                >
+                  <i className="ri-add-line text-sm"></i>
                 </button>
               </div>
             </div>

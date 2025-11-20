@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { useAuth } from '../../../hooks/useAuth';
+import { customersService, invoicesService, creditDebitNotesService } from '../../../services/database';
 
 interface DebitNote {
   id: string;
@@ -21,88 +23,18 @@ interface DebitNote {
 }
 
 export default function DebitNotesPage() {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [showNoteDetails, setShowNoteDetails] = useState(false);
   const [showApplyModal, setShowApplyModal] = useState(false);
   const [selectedNote, setSelectedNote] = useState<DebitNote | null>(null);
-
-  // Mock data
-  const debitNotes: DebitNote[] = [
-    {
-      id: '1',
-      noteNumber: 'ND-001',
-      customerId: '1',
-      customerName: 'Empresa ABC S.R.L.',
-      date: '2024-01-15',
-      amount: 15000,
-      appliedAmount: 15000,
-      balance: 0,
-      reason: 'Intereses por mora',
-      concept: 'Intereses por pago tardío de factura',
-      status: 'applied',
-      relatedInvoice: 'FAC-001',
-      appliedInvoices: ['FAC-006']
-    },
-    {
-      id: '2',
-      noteNumber: 'ND-002',
-      customerId: '2',
-      customerName: 'Comercial XYZ',
-      date: '2024-01-20',
-      amount: 8000,
-      appliedAmount: 0,
-      balance: 8000,
-      reason: 'Gastos de cobranza',
-      concept: 'Gastos administrativos por gestión de cobranza',
-      status: 'pending',
-      appliedInvoices: []
-    },
-    {
-      id: '3',
-      noteNumber: 'ND-003',
-      customerId: '3',
-      customerName: 'Distribuidora DEF',
-      date: '2024-01-25',
-      amount: 12000,
-      appliedAmount: 5000,
-      balance: 7000,
-      reason: 'Ajuste de precio',
-      concept: 'Ajuste por diferencia de precio en mercancía',
-      status: 'partial',
-      relatedInvoice: 'FAC-003',
-      appliedInvoices: ['FAC-007']
-    },
-    {
-      id: '4',
-      noteNumber: 'ND-004',
-      customerId: '1',
-      customerName: 'Empresa ABC S.R.L.',
-      date: '2024-01-28',
-      amount: 20000,
-      appliedAmount: 0,
-      balance: 20000,
-      reason: 'Penalización contractual',
-      concept: 'Penalización por incumplimiento de contrato',
-      status: 'pending',
-      appliedInvoices: []
-    },
-    {
-      id: '5',
-      noteNumber: 'ND-005',
-      customerId: '2',
-      customerName: 'Comercial XYZ',
-      date: '2024-01-30',
-      amount: 10000,
-      appliedAmount: 0,
-      balance: 0,
-      reason: 'Cargo por servicio',
-      concept: 'Nota de débito cancelada',
-      status: 'cancelled',
-      appliedInvoices: []
-    }
-  ];
+  const [debitNotes, setDebitNotes] = useState<DebitNote[]>([]);
+  const [loadingNotes, setLoadingNotes] = useState(false);
+  const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
+  const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number; status: string }>>([]);
+  const [loadingSupport, setLoadingSupport] = useState(false);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -132,6 +64,81 @@ export default function DebitNotesPage() {
     return matchesSearch && matchesStatus;
   });
 
+  const loadSupportData = async () => {
+    if (!user?.id) return;
+    setLoadingSupport(true);
+    try {
+      const [custList, invList] = await Promise.all([
+        customersService.getAll(user.id),
+        invoicesService.getAll(user.id),
+      ]);
+      setCustomers(custList.map((c: any) => ({ id: c.id, name: c.name })));
+      setInvoices(
+        (invList as any[]).map((inv) => ({
+          id: String(inv.id),
+          invoiceNumber: inv.invoice_number as string,
+          totalAmount: Number(inv.total_amount) || 0,
+          paidAmount: Number(inv.paid_amount) || 0,
+          status: (inv.status as string) || 'pending',
+        }))
+      );
+    } finally {
+      setLoadingSupport(false);
+    }
+  };
+
+  const loadNotes = async () => {
+    if (!user?.id) return;
+    setLoadingNotes(true);
+    try {
+      const data = await creditDebitNotesService.getAll(user.id, 'debit');
+      const mapped: DebitNote[] = (data as any[]).map((n) => {
+        const amount = Number(n.total_amount) || 0;
+        const dbApplied = Number((n as any).applied_amount) || 0;
+        const dbBalance = Number((n as any).balance_amount);
+        const rawStatus = (n.status as string) || 'pending';
+        const status: DebitNote['status'] = (['pending', 'applied', 'partial', 'cancelled'] as const).includes(
+          rawStatus as any
+        )
+          ? (rawStatus as DebitNote['status'])
+          : 'pending';
+
+        let appliedAmount = dbApplied;
+        let balance = Number.isFinite(dbBalance) ? dbBalance : amount - appliedAmount;
+
+        if (status === 'cancelled') {
+          appliedAmount = 0;
+          balance = 0;
+        }
+
+        return {
+          id: String(n.id),
+          noteNumber: n.note_number as string,
+          customerId: String(n.customer_id),
+          customerName: (n.customers as any)?.name || 'Cliente',
+          date: n.note_date as string,
+          amount,
+          appliedAmount,
+          balance,
+          reason: (n.reason as string) || '',
+          concept: (n.reason as string) || '',
+          status,
+          relatedInvoice: (n.invoices as any)?.invoice_number || undefined,
+          appliedInvoices: [],
+        };
+      });
+      setDebitNotes(mapped);
+    } finally {
+      setLoadingNotes(false);
+    }
+  };
+
+  useEffect(() => {
+    loadSupportData();
+    loadNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const exportToPDF = () => {
     const doc = new jsPDF();
     
@@ -142,11 +149,12 @@ export default function DebitNotesPage() {
     doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
     doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter)}`, 20, 50);
     
-    // Estadísticas
-    const totalAmount = filteredNotes.reduce((sum, note) => sum + note.amount, 0);
-    const totalApplied = filteredNotes.reduce((sum, note) => sum + note.appliedAmount, 0);
-    const totalBalance = filteredNotes.reduce((sum, note) => sum + note.balance, 0);
-    const pendingNotes = filteredNotes.filter(n => n.status === 'pending').length;
+    // Estadísticas (excluyendo canceladas)
+    const activeNotes = filteredNotes.filter(n => n.status !== 'cancelled');
+    const totalAmount = activeNotes.reduce((sum, note) => sum + note.amount, 0);
+    const totalApplied = activeNotes.reduce((sum, note) => sum + note.appliedAmount, 0);
+    const totalBalance = activeNotes.reduce((sum, note) => sum + note.balance, 0);
+    const pendingNotes = activeNotes.filter(n => n.status === 'pending').length;
     
     doc.setFontSize(14);
     doc.text('Resumen de Notas de Débito', 20, 70);
@@ -157,7 +165,7 @@ export default function DebitNotesPage() {
       ['Total Aplicado', `RD$ ${totalApplied.toLocaleString()}`],
       ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
       ['Notas Pendientes', pendingNotes.toString()],
-      ['Total de Notas', filteredNotes.length.toString()]
+      ['Total de Notas', activeNotes.length.toString()]
     ];
     
     (doc as any).autoTable({
@@ -172,7 +180,7 @@ export default function DebitNotesPage() {
     doc.setFontSize(14);
     doc.text('Detalle de Notas de Débito', 20, (doc as any).lastAutoTable.finalY + 20);
     
-    const noteData = filteredNotes.map(note => [
+    const noteData = activeNotes.map(note => [
       note.noteNumber,
       note.customerName,
       note.date,
@@ -196,10 +204,11 @@ export default function DebitNotesPage() {
   };
 
   const exportToExcel = () => {
-    const totalAmount = filteredNotes.reduce((sum, note) => sum + note.amount, 0);
-    const totalApplied = filteredNotes.reduce((sum, note) => sum + note.appliedAmount, 0);
-    const totalBalance = filteredNotes.reduce((sum, note) => sum + note.balance, 0);
-    const pendingNotes = filteredNotes.filter(n => n.status === 'pending').length;
+    const activeNotes = filteredNotes.filter(n => n.status !== 'cancelled');
+    const totalAmount = activeNotes.reduce((sum, note) => sum + note.amount, 0);
+    const totalApplied = activeNotes.reduce((sum, note) => sum + note.appliedAmount, 0);
+    const totalBalance = activeNotes.reduce((sum, note) => sum + note.balance, 0);
+    const pendingNotes = activeNotes.filter(n => n.status === 'pending').length;
     
     const csvContent = [
       ['Reporte de Notas de Débito'],
@@ -211,11 +220,11 @@ export default function DebitNotesPage() {
       ['Total Aplicado', `RD$ ${totalApplied.toLocaleString()}`],
       ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
       ['Notas Pendientes', pendingNotes.toString()],
-      ['Total de Notas', filteredNotes.length.toString()],
+      ['Total de Notas', activeNotes.length.toString()],
       [''],
       ['DETALLE DE NOTAS DE DÉBITO'],
       ['Nota', 'Cliente', 'Fecha', 'Monto', 'Aplicado', 'Saldo', 'Motivo', 'Concepto', 'Estado'],
-      ...filteredNotes.map(note => [
+      ...activeNotes.map(note => [
         note.noteNumber,
         note.customerName,
         note.date,
@@ -250,23 +259,134 @@ export default function DebitNotesPage() {
     setShowApplyModal(true);
   };
 
-  const handleCancelNote = (noteId: string) => {
-    if (confirm('¿Está seguro de que desea cancelar esta nota de débito?')) {
+  const handleCancelNote = async (noteId: string) => {
+    if (!user?.id) {
+      alert('Debes iniciar sesión para cancelar notas');
+      return;
+    }
+    if (!confirm('¿Está seguro de que desea cancelar esta nota de débito?')) return;
+    try {
+      await creditDebitNotesService.updateStatus(noteId, 'cancelled');
+      await loadNotes();
       alert('Nota de débito cancelada exitosamente');
+    } catch (error: any) {
+      // eslint-disable-next-line no-console
+      console.error('[DebitNotes] Error al cancelar nota', error);
+      alert(`Error al cancelar la nota: ${error?.message || 'revisa la consola para más detalles'}`);
     }
   };
 
-  const handleSaveNote = (e: React.FormEvent) => {
+  const handleSaveNote = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert('Nota de débito creada exitosamente');
-    setShowNoteModal(false);
+    if (!user?.id) {
+      alert('Debes iniciar sesión para crear notas de débito');
+      return;
+    }
+    const formData = new FormData(e.currentTarget);
+    const customerId = String(formData.get('customer_id') || '');
+    const date = String(formData.get('date') || '');
+    const amount = Number(formData.get('amount') || 0);
+    const invoiceId = String(formData.get('invoice_id') || '');
+    const reason = String(formData.get('reason') || '');
+    const concept = String(formData.get('concept') || '');
+
+    if (!customerId || !amount) {
+      alert('Cliente y monto son obligatorios');
+      return;
+    }
+
+    const noteNumber = `ND-${Date.now()}`;
+    const noteDate = date || new Date().toISOString().slice(0, 10);
+
+    const payload = {
+      note_type: 'debit' as const,
+      customer_id: customerId,
+      invoice_id: invoiceId || null,
+      note_number: noteNumber,
+      note_date: noteDate,
+      total_amount: amount,
+      reason: reason || concept || null,
+      applied_amount: 0,
+      balance_amount: amount,
+      status: 'pending',
+    };
+
+    try {
+      await creditDebitNotesService.create(user.id, payload);
+      await loadNotes();
+      alert('Nota de débito creada exitosamente');
+      setShowNoteModal(false);
+    } catch (error: any) {
+      // eslint-disable-next-line no-console
+      console.error('[DebitNotes] Error al crear nota', error);
+      alert(`Error al crear la nota de débito: ${error?.message || 'revisa la consola para más detalles'}`);
+    }
   };
 
-  const handleSaveApplication = (e: React.FormEvent) => {
+  const handleSaveApplication = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    alert('Nota de débito aplicada exitosamente');
-    setShowApplyModal(false);
-    setSelectedNote(null);
+    if (!user?.id || !selectedNote) {
+      alert('Debes iniciar sesión y seleccionar una nota válida');
+      return;
+    }
+
+    const formData = new FormData(e.currentTarget);
+    const invoiceId = String(formData.get('invoice_id') || '');
+    const amountToApply = Number(formData.get('amount_to_apply') || 0);
+
+    if (!invoiceId) {
+      alert('Debes seleccionar una factura para aplicar la nota');
+      return;
+    }
+
+    if (!amountToApply || amountToApply <= 0) {
+      alert('El monto a aplicar debe ser mayor que 0');
+      return;
+    }
+
+    if (amountToApply > selectedNote.balance) {
+      alert('El monto a aplicar no puede ser mayor que el saldo pendiente de la nota');
+      return;
+    }
+
+    const newApplied = selectedNote.appliedAmount + amountToApply;
+    const newBalance = selectedNote.balance - amountToApply;
+
+    const newStatus: DebitNote['status'] = newBalance > 0 ? 'partial' : 'applied';
+
+    const targetInvoice = invoices.find((inv) => inv.id === invoiceId);
+    if (!targetInvoice) {
+      alert('La factura seleccionada no es válida');
+      return;
+    }
+
+    const newInvoiceTotal = targetInvoice.totalAmount + amountToApply;
+    const invoiceBalanceAfter = newInvoiceTotal - targetInvoice.paidAmount;
+    let newInvoiceStatus = targetInvoice.status as 'pending' | 'partial' | 'paid' | string;
+    if (invoiceBalanceAfter <= 0) {
+      newInvoiceStatus = 'paid';
+    } else if (targetInvoice.paidAmount > 0 && targetInvoice.paidAmount < newInvoiceTotal) {
+      newInvoiceStatus = 'partial';
+    } else if (targetInvoice.paidAmount === 0) {
+      newInvoiceStatus = 'pending';
+    }
+
+    try {
+      await invoicesService.updateTotals(invoiceId, newInvoiceTotal, newInvoiceStatus);
+
+      await creditDebitNotesService.updateStatus(selectedNote.id, newStatus, {
+        appliedAmount: newApplied,
+        balanceAmount: newBalance,
+      });
+      await loadNotes();
+      alert('Nota de débito aplicada exitosamente');
+      setShowApplyModal(false);
+      setSelectedNote(null);
+    } catch (error: any) {
+      // eslint-disable-next-line no-console
+      console.error('[DebitNotes] Error al aplicar nota', error);
+      alert(`Error al aplicar la nota de débito: ${error?.message || 'revisa la consola para más detalles'}`);
+    }
   };
 
   return (
@@ -398,6 +518,9 @@ export default function DebitNotesPage() {
 
         {/* Debit Notes Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          {(loadingNotes || loadingSupport) && (
+            <div className="px-6 pt-3 text-sm text-gray-500">Cargando datos...</div>
+          )}
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -518,12 +641,13 @@ export default function DebitNotesPage() {
                     </label>
                     <select 
                       required
+                      name="customer_id"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar cliente</option>
-                      <option value="1">Empresa ABC S.R.L.</option>
-                      <option value="2">Comercial XYZ</option>
-                      <option value="3">Distribuidora DEF</option>
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
                     </select>
                   </div>
                   
@@ -534,6 +658,7 @@ export default function DebitNotesPage() {
                     <input
                       type="date"
                       required
+                      name="date"
                       defaultValue={new Date().toISOString().split('T')[0]}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
@@ -549,6 +674,7 @@ export default function DebitNotesPage() {
                       type="number"
                       step="0.01"
                       required
+                      name="amount"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
                     />
@@ -559,12 +685,13 @@ export default function DebitNotesPage() {
                       Factura Relacionada (Opcional)
                     </label>
                     <select 
+                      name="invoice_id"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar factura</option>
-                      <option value="FAC-001">FAC-001</option>
-                      <option value="FAC-002">FAC-002</option>
-                      <option value="FAC-003">FAC-003</option>
+                      {invoices.map((inv) => (
+                        <option key={inv.id} value={inv.id}>{inv.invoiceNumber}</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -575,6 +702,7 @@ export default function DebitNotesPage() {
                   </label>
                   <select 
                     required
+                    name="reason"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar motivo</option>
@@ -594,6 +722,7 @@ export default function DebitNotesPage() {
                   <textarea
                     rows={3}
                     required
+                    name="concept"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Descripción detallada de la nota de débito..."
                   />
@@ -649,12 +778,15 @@ export default function DebitNotesPage() {
                   </label>
                   <select 
                     required
+                    name="invoice_id"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar factura</option>
-                    <option value="FAC-001">FAC-001 - RD$ 50,000</option>
-                    <option value="FAC-002">FAC-002 - RD$ 75,000</option>
-                    <option value="FAC-003">FAC-003 - RD$ 100,000</option>
+                    {invoices.map((inv) => (
+                      <option key={inv.id} value={inv.id}>
+                        {inv.invoiceNumber}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 
@@ -665,8 +797,9 @@ export default function DebitNotesPage() {
                   <input
                     type="number"
                     step="0.01"
+                    name="amount_to_apply"
                     required
-                    max={selectedNote.balance}
+                    max={selectedNote?.balance ?? undefined}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="0.00"
                   />

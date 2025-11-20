@@ -1,20 +1,53 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { taxService } from '../../../services/database';
 
 export default function ReportIR17Page() {
   const navigate = useNavigate();
   const [selectedPeriod, setSelectedPeriod] = useState('');
+  const [reportPeriod, setReportPeriod] = useState('');
   const [withholdingData, setWithholdingData] = useState<any[]>([]);
   const [generating, setGenerating] = useState(false);
+
+  useEffect(() => {
+    // Establecer el mes actual como período por defecto
+    const now = new Date();
+    const currentPeriod = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
+    setSelectedPeriod(currentPeriod);
+  }, []);
+
+  const formatPeriodLabel = (period: string) => {
+    if (!period) return '';
+    const [yearStr, monthStr] = period.split('-');
+    const monthIndex = Number(monthStr) - 1;
+    const months = [
+      'enero',
+      'febrero',
+      'marzo',
+      'abril',
+      'mayo',
+      'junio',
+      'julio',
+      'agosto',
+      'septiembre',
+      'octubre',
+      'noviembre',
+      'diciembre'
+    ];
+
+    const monthName = months[monthIndex] || '';
+    return monthName ? `${monthName} de ${yearStr}` : period;
+  };
 
   const generateReport = async () => {
     if (!selectedPeriod) return;
     
     setGenerating(true);
     try {
-      // No generar datos de prueba: mantener vacío hasta integrar fuente real
-      setWithholdingData([]);
+      const data = await taxService.generateReportIR17(selectedPeriod);
+      setReportPeriod(selectedPeriod);
+      setWithholdingData(data || []);
     } catch (error) {
       console.error('Error generating report IR-17:', error);
       alert('Error al generar el reporte IR-17');
@@ -206,7 +239,7 @@ export default function ReportIR17Page() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">
-              Detalle del Reporte IR-17 - {selectedPeriod && new Date(selectedPeriod + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}
+              Detalle del Reporte IR-17 - {formatPeriodLabel(reportPeriod || selectedPeriod)}
             </h3>
           </div>
           <div className="overflow-x-auto">

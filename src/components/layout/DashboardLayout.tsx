@@ -48,7 +48,35 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     }));
   }, [user]);
 
-  // RBAC: fetch allowed modules
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        if (!profilePanelOpen || !user?.id) return;
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+        if (error || !data) return;
+        setUserProfile(prev => ({
+          ...prev,
+          email: data.email || user.email || prev.email,
+          fullName: data.full_name || prev.fullName || (user.email?.split('@')[0] ?? ''),
+          phone: data.phone || prev.phone,
+          company: data.company || prev.company,
+          position: data.position || prev.position,
+          address: data.address || prev.address,
+          city: data.city || prev.city,
+          country: data.country || prev.country || 'República Dominicana',
+        }));
+      } catch (error) {
+        console.error('Error al cargar perfil en DashboardLayout:', error);
+      }
+    };
+
+    loadProfile();
+  }, [profilePanelOpen, user?.id, user?.email]);
+
   useEffect(() => {
     const STORAGE_PREFIX = 'contabi_rbac_';
     const fetchAllowed = async () => {
@@ -247,6 +275,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       current: location.pathname.startsWith('/plans')
     },
     {
+      name: 'Referidos',
+      href: '/referrals',
+      icon: 'ri-share-forward-line',
+      current: location.pathname.startsWith('/referrals')
+    },
+    {
       name: 'Configuración',
       href: '/settings',
       icon: 'ri-settings-line',
@@ -345,17 +379,37 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   };
 
   const handleSaveProfile = async () => {
+    if (!user?.id) {
+      setSaveMessage('Usuario no autenticado');
+      return;
+    }
+
     try {
-      // Aquí iría la lógica para guardar en Supabase
-      console.log('Guardando perfil:', userProfile);
+      const { error } = await supabase
+        .from('users')
+        .update({
+          full_name: userProfile.fullName,
+          phone: userProfile.phone,
+          company: userProfile.company,
+          position: userProfile.position,
+          address: userProfile.address,
+          city: userProfile.city,
+          country: userProfile.country || 'República Dominicana',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      if (error) throw error;
+
       setSaveMessage('Perfil actualizado correctamente');
       setTimeout(() => {
         setSaveMessage('');
         setEditProfileOpen(false);
       }, 2000);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error al guardar perfil:', error);
-      setSaveMessage('Error al actualizar el perfil');
+      const message = error?.message || (error?.error_description) || 'Error al actualizar el perfil';
+      setSaveMessage(message);
     }
   };
 
@@ -370,8 +424,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     }
     
     try {
-      // Aquí iría la lógica para cambiar contraseña en Supabase
-      console.log('Cambiando contraseña');
+      const { error } = await supabase.auth.updateUser({
+        password: passwordData.newPassword,
+      });
+      if (error) throw error;
       setSaveMessage('Contraseña actualizada correctamente');
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setTimeout(() => setSaveMessage(''), 2000);
@@ -482,9 +538,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                       </div>
                       <h3 className="text-lg font-semibold text-gray-900">{userProfile.fullName}</h3>
                       <p className="text-sm text-gray-600">{userProfile.email}</p>
-                      <span className="inline-block px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full mt-2">
-                        Plan Profesional
-                      </span>
                     </div>
 
                     {/* Account Status */}

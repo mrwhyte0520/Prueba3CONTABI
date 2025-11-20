@@ -359,26 +359,39 @@ export default function QuotesPage() {
             email: c.email || c.contact_email || '',
             phone: c.phone || c.contact_phone || ''
           })));
-          // Map quotes to UI shape
-          const mapped = (qts || []).map((q: any) => ({
-            id: q.id,
-            customer: q.customer_name || q.customers?.name || 'Cliente',
-            customerEmail: q.customer_email || q.customers?.email || '',
-            project: q.project || '',
-            amount: q.amount || 0,
-            tax: q.tax || 0,
-            total: q.total || 0,
-            status: (q.status || 'pending') as StatusType,
-            date: q.date || q.created_at || new Date().toISOString(),
-            validUntil: q.valid_until || q.validUntil || new Date().toISOString(),
-            probability: q.probability || 0,
-            items: (q.quote_lines || q.items || []).map((it: any) => ({
-              description: it.description || '',
-              quantity: it.quantity || 1,
-              price: it.price || 0,
-              total: it.total || ((it.quantity || 1) * (it.price || 0)),
-            }))
-          }));
+          // Map quotes to UI shape usando los campos reales de la tabla quotes
+          const mapped = (qts || []).map((q: any) => {
+            const subtotal = Number(q.subtotal) || 0;
+            const tax = Number(q.tax_amount) || 0;
+            const total = Number(q.total_amount) || subtotal + tax;
+
+            const items = (q.quote_lines || q.items || []).map((it: any) => {
+              const qty = Number(it.quantity) || 0;
+              const unitPrice = Number(it.unit_price) || 0;
+              const lineTotal = Number(it.line_total) || qty * unitPrice;
+              return {
+                description: it.description || '',
+                quantity: qty || 1,
+                price: unitPrice,
+                total: lineTotal,
+              };
+            });
+
+            return {
+              id: q.id,
+              customer: q.customer_name || q.customers?.name || 'Cliente',
+              customerEmail: q.customer_email || q.customers?.email || '',
+              project: q.project || '',
+              amount: subtotal,
+              tax,
+              total,
+              status: (q.status || 'pending') as StatusType,
+              date: q.date || q.created_at || new Date().toISOString(),
+              validUntil: q.valid_until || q.validUntil || new Date().toISOString(),
+              probability: q.probability || 0,
+              items,
+            };
+          });
           setQuotes(mapped);
         } else {
           // Demo fallback
