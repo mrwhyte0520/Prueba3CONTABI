@@ -2073,10 +2073,7 @@ export const vacationsService = {
       if (!userId) return [];
       const { data, error } = await supabase
         .from('vacations')
-        .select(`
-          *,
-          employees (first_name, last_name, employee_code)
-        `)
+        .select('*')
         .eq('user_id', userId)
         .order('start_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -2348,10 +2345,7 @@ export const overtimeService = {
       if (!userId) return [];
       const { data, error } = await supabase
         .from('overtime_records')
-        .select(`
-          *,
-          employees (first_name, last_name, employee_code)
-        `)
+        .select('*')
         .eq('user_id', userId)
         .order('date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
