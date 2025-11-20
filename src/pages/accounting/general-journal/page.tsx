@@ -156,12 +156,13 @@ const GeneralJournalPage: React.FC = () => {
           line.account_id && (line.debit_amount > 0 || line.credit_amount > 0)
         );
 
-        const linesData = validLines.map(line => ({
+        const linesData = validLines.map((line, index) => ({
           journal_entry_id: entry.id,
           account_id: line.account_id,
           debit_amount: line.debit_amount || 0,
           credit_amount: line.credit_amount || 0,
-          description: line.description
+          description: line.description,
+          line_number: index + 1,
         }));
 
         const { error: linesError } = await supabase

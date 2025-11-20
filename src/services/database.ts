@@ -981,6 +981,9 @@ export const pettyCashService = {
 /* ==========================================================
    Financial Reports Service (Trial Balance / Statements)
 ========================================================== */
+/**
+ * Servicio para generar reportes financieros, incluyendo el balance de prueba y los estados financieros.
+ */
 export const financialReportsService = {
   async getTrialBalance(userId: string, fromDate: string, toDate: string) {
     try {
@@ -995,6 +998,7 @@ export const financialReportsService = {
           journal_entries (entry_date, user_id),
           chart_accounts (code, name, type, normal_balance)
         `)
+        .eq('journal_entries.user_id', userId)
         .gte('journal_entries.entry_date', fromDate)
         .lte('journal_entries.entry_date', toDate);
 
@@ -1154,15 +1158,19 @@ export const financialStatementsService = {
       console.error('financialStatementsService.create error', error);
       throw error;
     }
-  },
+   /**
+    * Servicio para gestionar asientos contables.
+    */
+  }
 };
 
-/* ==========================================================
-   Journal Entries Service
-========================================================== */
+/**
+ * Servicio para gestionar asientos contables.
+ */
 export const journalEntriesService = {
-  async getAll(_userId: string) {
+  async getAll(userId: string) {
     try {
+      if (!userId) return [];
       const { data, error } = await supabase
         .from('journal_entries')
         .select(`
@@ -1172,6 +1180,7 @@ export const journalEntriesService = {
             chart_accounts (code, name)
           )
         `)
+        .eq('user_id', userId)
         .order('entry_date', { ascending: false });
       
       if (error) {
@@ -1682,8 +1691,12 @@ export const inventoryService = {
         .update(item)
         .eq('id', id)
         .select('*')
-        .single();
+        .maybeSingle();
       if (error) throw error;
+      if (!data) {
+        console.warn('inventoryService.updateItem: item not found', id);
+        return null;
+      }
       return data;
     } catch (error) {
       console.error('inventoryService.updateItem error', error);
