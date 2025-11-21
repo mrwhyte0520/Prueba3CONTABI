@@ -571,8 +571,21 @@ export default function ChartAccountsPage() {
 
       try {
         const rawType = (data.type || '').toLowerCase();
+
+        // Si no viene tipo en el archivo, inferirlo por el primer dígito del código
+        let inferredType = rawType;
+        if (!inferredType && data.code) {
+          const first = data.code.trim()[0];
+          if (first === '1') inferredType = 'asset';
+          else if (first === '2') inferredType = 'liability';
+          else if (first === '3') inferredType = 'equity';
+          else if (first === '4') inferredType = 'income';
+          else if (first === '5') inferredType = 'cost';
+          else if (first === '6') inferredType = 'expense';
+        }
+
         const validTypes = new Set(['asset', 'liability', 'equity', 'income', 'cost', 'expense']);
-        const safeType = (validTypes.has(rawType) ? rawType : mapSpanishTypeToInternal(rawType)) as any;
+        const safeType = (validTypes.has(inferredType) ? inferredType : mapSpanishTypeToInternal(inferredType)) as any;
 
         const account = {
           code: data.code,
@@ -939,8 +952,11 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
 
     return (
       <div key={account.id}>
-        <div className="flex items-center py-3 px-4 border-b border-gray-100 hover:bg-gray-50">
-          <div className="flex items-center flex-1" style={{ paddingLeft: `${(account.level - 1) * 20}px` }}>
+        <div className="flex items-center px-4 py-2 border-b border-gray-100 hover:bg-gray-50">
+          <div
+            className="flex items-center flex-1"
+            style={{ paddingLeft: `${(account.level - 1) * 16}px` }}
+          >
             {hasChildren && (
               <button
                 onClick={() => toggleExpanded(account.id)}
@@ -949,34 +965,44 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                 <i className={`ri-arrow-${isExpanded ? 'down' : 'right'}-s-line`}></i>
               </button>
             )}
-            <div className="flex-1 grid grid-cols-8 gap-4 items-center">
-              <div>
+            <div className="flex-1 grid grid-cols-8 gap-4 items-center text-sm">
+              <div className="flex items-center">
                 <input
                   type="checkbox"
                   checked={selectedIds.includes(account.id)}
                   onChange={() => toggleSelectOne(account.id)}
                 />
               </div>
-              <div className="font-medium text-gray-900">{account.code}</div>
-              <div className="text-gray-900">{account.name}</div>
-              <div>
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getAccountTypeColor(account.type)}`}>
+              <div className="font-semibold text-gray-900 tabular-nums">{account.code}</div>
+              <div className="text-gray-900 truncate">{account.name}</div>
+              <div className="flex justify-center">
+                <span
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${getAccountTypeColor(
+                    account.type
+                  )}`}
+                >
                   {getAccountTypeName(account.type)}
                 </span>
               </div>
-              <div className="text-sm text-gray-600">{account.level}</div>
-              <div className="text-sm text-gray-900">
+              <div className="flex justify-center">
+                <span className="inline-flex items-center justify-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700">
+                  {account.level}
+                </span>
+              </div>
+              <div className="text-right text-gray-900 tabular-nums">
                 RD${Math.abs(account.balance).toLocaleString()}
                 {account.balance < 0 && ' (Cr)'}
               </div>
-              <div>
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                  account.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                }`}>
+              <div className="flex justify-center">
+                <span
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
+                    account.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                  }`}
+                >
                   {account.isActive ? 'Activa' : 'Inactiva'}
                 </span>
               </div>
-              <div className="flex space-x-2">
+              <div className="flex items-center justify-center gap-3 text-base">
                 <button
                   onClick={() => {
                     setEditingAccount(account);
@@ -1090,22 +1116,22 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
 
         {/* Chart of Accounts */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-            <div className="grid grid-cols-8 gap-4 text-xs font-medium text-gray-500 uppercase tracking-wider">
-              <div>
+          <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
+            <div className="grid grid-cols-8 gap-4 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <div className="flex items-center">
                 <input
                   type="checkbox"
                   checked={isAllSelected}
                   onChange={toggleSelectAll}
                 />
               </div>
-              <div>Código</div>
-              <div>Nombre de la Cuenta</div>
-              <div>Tipo</div>
-              <div>Nivel</div>
-              <div>Saldo</div>
-              <div>Estado</div>
-              <div>Acciones</div>
+              <div className="text-left">Código</div>
+              <div className="text-left">Nombre de la cuenta</div>
+              <div className="text-center">Tipo</div>
+              <div className="text-center">Nivel</div>
+              <div className="text-right">Saldo</div>
+              <div className="text-center">Estado</div>
+              <div className="text-center">Acciones</div>
             </div>
           </div>
           <div className="max-h-96 overflow-y-auto">

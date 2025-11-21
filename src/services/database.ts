@@ -472,6 +472,77 @@ export const chartAccountsService = {
     }
   },
 
+  // Obtener saldos por cuenta a partir de las líneas de diario general.
+  // Esto es la base para balances y estados financieros.
+  async getBalances(userId: string) {
+    try {
+      // 1. Cargar cuentas activas con su tipo y saldo normal
+      const { data: accounts, error: accError } = await supabase
+        .from('chart_accounts')
+        .select('id, code, name, type, normal_balance, is_active')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .order('code');
+
+      if (accError) {
+        console.error('Error loading accounts for balances:', accError);
+        return [];
+      }
+
+      // 2. Cargar líneas de diario solo de asientos contabilizados (status = 'posted')
+      const { data: lines, error: linesError } = await supabase
+        .from('journal_entry_lines')
+        .select('account_id, debit_amount, credit_amount, journal_entries!inner(status, user_id)')
+        .eq('journal_entries.user_id', userId)
+        .eq('journal_entries.status', 'posted');
+
+      if (linesError) {
+        console.error('Error loading journal lines for balances:', linesError);
+        return [];
+      }
+
+      // 3. Agrupar débitos y créditos por cuenta
+      const sums: Record<string, { debit: number; credit: number }> = {};
+
+      (lines || []).forEach((line: any) => {
+        const accountId = line.account_id;
+        if (!accountId) return;
+        if (!sums[accountId]) {
+          sums[accountId] = { debit: 0, credit: 0 };
+        }
+        sums[accountId].debit += Number(line.debit_amount || 0);
+        sums[accountId].credit += Number(line.credit_amount || 0);
+      });
+
+      // 4. Calcular saldo firmado según normal_balance
+      const balances = (accounts || []).map((acc: any) => {
+        const sum = sums[acc.id] || { debit: 0, credit: 0 };
+        const normal: 'debit' | 'credit' = acc.normal_balance || 'debit';
+
+        const balance =
+          normal === 'debit'
+            ? sum.debit - sum.credit
+            : sum.credit - sum.debit;
+
+        return {
+          id: acc.id,
+          code: acc.code || '',
+          name: acc.name || '',
+          type: acc.type || 'asset',
+          normalBalance: normal,
+          debit: sum.debit,
+          credit: sum.credit,
+          balance,
+        };
+      });
+
+      return balances;
+    } catch (error) {
+      console.error('Error in getBalances:', error);
+      return [];
+    }
+  },
+
   async create(userId: string, account: any) {
     try {
       const normalizeAccountType = (t: string) => {
@@ -685,52 +756,27 @@ export const chartAccountsService = {
 
   async generateTrialBalance(userId: string, asOfDate: string) {
     try {
-      const { data, error } = await supabase
-        .from('chart_accounts')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .order('code');
-
-      if (error) {
-        console.error('Error in generateTrialBalance:', error);
-        // Retornar datos de ejemplo
+      if (!userId) {
         return {
           accounts: [],
           totalDebits: 0,
           totalCredits: 0,
           isBalanced: true,
-          asOfDate
+          asOfDate,
         };
       }
 
-      const accounts = data || [];
-      let totalDebits = 0;
-      let totalCredits = 0;
+      const trial = await financialReportsService.getTrialBalance(userId, '1900-01-01', asOfDate);
 
-      const trialBalanceData = accounts.map(account => {
-        const balance = account.balance || 0;
-        const debitBalance = account.normal_balance === 'debit' && balance > 0 ? balance : 
-                           account.normal_balance === 'credit' && balance < 0 ? Math.abs(balance) : 0;
-        const creditBalance = account.normal_balance === 'credit' && balance > 0 ? balance :
-                            account.normal_balance === 'debit' && balance < 0 ? Math.abs(balance) : 0;
-
-        totalDebits += debitBalance;
-        totalCredits += creditBalance;
-
-        return {
-          ...account,
-          debitBalance,
-          creditBalance
-        };
-      });
+      const totalDebits = trial.reduce((sum: number, acc: any) => sum + (acc.debit || 0), 0);
+      const totalCredits = trial.reduce((sum: number, acc: any) => sum + (acc.credit || 0), 0);
 
       return {
-        accounts: trialBalanceData,
+        accounts: trial,
         totalDebits,
         totalCredits,
         isBalanced: Math.abs(totalDebits - totalCredits) < 0.01,
-        asOfDate
+        asOfDate,
       };
     } catch (error) {
       console.error('Error generating trial balance:', error);
@@ -739,7 +785,7 @@ export const chartAccountsService = {
         totalDebits: 0,
         totalCredits: 0,
         isBalanced: true,
-        asOfDate
+        asOfDate,
       };
     }
   },
