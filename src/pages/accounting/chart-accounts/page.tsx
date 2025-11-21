@@ -389,11 +389,12 @@ export default function ChartAccountsPage() {
       // Datos a partir de la fila siguiente al encabezado
       for (let i = headerRowIndex + 1; i < rows.length; i++) {
         const row = rows[i] || [];
-        // Formato esperado:
+        // Formato esperado idealmente:
         // [Codigo, Nombre, Grupo, Tipo, Nivel, Cuenta Madre, Descripcion]
+        // Pero permitimos archivos simples con solo [Codigo, Nombre]
         const code = String(row[0] ?? '').trim();
         const name = String(row[1] ?? '').trim();
-        const group = String(row[2] ?? '').trim(); // Activo, Pasivo, etc.
+        const group = String(row[2] ?? '').trim(); // Activo, Pasivo, etc. (puede venir vacío)
         // const detailType = String(row[3] ?? '').trim(); // General / Detalle (por ahora no se usa)
         // const levelRaw = row[4]; // Nivel (podemos recalcular por la jerarquía)
         const parentCode = String(row[5] ?? '').trim();
@@ -401,7 +402,9 @@ export default function ChartAccountsPage() {
 
         if (!code || !name) continue;
 
-        const mappedType = mapSpanishTypeToInternal(group).toLowerCase();
+        // Si la columna de grupo/tipo viene vacía, dejamos type en '' para que
+        // luego processImportedData lo infiera según el primer dígito del código.
+        const mappedType = group ? mapSpanishTypeToInternal(group).toLowerCase() : '';
 
         importedData.push({
           code,
@@ -570,11 +573,15 @@ export default function ChartAccountsPage() {
       }
 
       try {
-        const rawType = (data.type || '').toLowerCase();
+        const rawType = (data.type || '').toLowerCase().trim();
 
-        // Si no viene tipo en el archivo, inferirlo por el primer dígito del código
         let inferredType = rawType;
-        if (!inferredType && data.code) {
+
+        // 1) Si viene texto en el tipo, normalizarlo ("activo", "pasivo", etc.)
+        if (inferredType) {
+          inferredType = mapSpanishTypeToInternal(inferredType).toLowerCase();
+        } else if (data.code) {
+          // 2) Si no viene texto, inferir por el primer dígito del código
           const first = data.code.trim()[0];
           if (first === '1') inferredType = 'asset';
           else if (first === '2') inferredType = 'liability';
@@ -585,7 +592,7 @@ export default function ChartAccountsPage() {
         }
 
         const validTypes = new Set(['asset', 'liability', 'equity', 'income', 'cost', 'expense']);
-        const safeType = (validTypes.has(inferredType) ? inferredType : mapSpanishTypeToInternal(inferredType)) as any;
+        const safeType = (validTypes.has(inferredType) ? inferredType : 'asset') as any;
 
         const account = {
           code: data.code,
@@ -1467,7 +1474,10 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                         const last = numericCodes.length > 0 ? numericCodes[numericCodes.length - 1] : base - 1;
                         const next = Math.max(last + 1, base);
 
-                        setEditingAccount(prev => ({ ...prev, code: String(next) }));
+                        setEditingAccount({
+                          ...editingAccount,
+                          code: String(next),
+                        });
                       }}
                       className="px-3 py-2 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 whitespace-nowrap"
                     >
