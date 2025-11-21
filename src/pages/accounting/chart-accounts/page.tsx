@@ -952,6 +952,58 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
     }
   };
 
+  const downloadTemplateHeaders = () => {
+    try {
+      const header = ['Codigo', 'Nombre', 'Grupo', 'Tipo', 'Nivel', 'Cuenta Madre', 'Descripcion'];
+
+      // Solo título, fila en blanco y encabezados, sin filas de datos
+      const aoa = [
+        ['Catálogo de Cuentas - Plantilla'],
+        [],
+        header,
+      ];
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+      ws['!cols'] = [
+        { wch: 12 },
+        { wch: 40 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 8 },
+        { wch: 14 },
+        { wch: 40 },
+      ];
+
+      const titleCellRef = 'A1';
+      if (!ws[titleCellRef]) {
+        ws[titleCellRef] = { t: 's', v: 'Catálogo de Cuentas - Plantilla' } as any;
+      }
+      (ws[titleCellRef] as any).s = {
+        font: { bold: true, underline: true, sz: 14 },
+        alignment: { horizontal: 'center' },
+      };
+      (ws as any)['!merges'] = (ws as any)['!merges'] || [];
+      (ws as any)['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } });
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.href = url;
+      link.download = 'plantilla_catalogo_cuentas.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading template headers:', error);
+      alert('Error al descargar la plantilla');
+    }
+  };
+
   const renderAccountRow = (account: ChartAccount) => {
     const hasChildren = accounts.some(acc => acc.parentId === account.id);
     const isExpanded = expandedAccounts.includes(account.id);
@@ -1065,7 +1117,14 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
               className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
             >
               <i className="ri-file-excel-line mr-2"></i>
-              Descargar plantilla (sistema)
+              Descargar catálogo de cuentas
+            </button>
+            <button
+              onClick={downloadTemplateHeaders}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+            >
+              <i className="ri-file-excel-line mr-2"></i>
+              Descargar plantilla
             </button>
             <button
               onClick={() => setShowFormatModal(true)}
