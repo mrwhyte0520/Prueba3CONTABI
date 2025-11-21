@@ -30,6 +30,7 @@ interface FinancialData {
   };
   equity: { name: string; amount: number }[];
   revenue: { name: string; amount: number }[];
+  costs: { name: string; amount: number }[];
   expenses: { name: string; amount: number }[];
 }
 
@@ -49,6 +50,7 @@ export default function FinancialStatementsPage() {
     liabilities: { current: [], nonCurrent: [] },
     equity: [],
     revenue: [],
+    costs: [],
     expenses: []
   });
 
@@ -90,6 +92,7 @@ export default function FinancialStatementsPage() {
           liabilities: { current: [], nonCurrent: [] },
           equity: [],
           revenue: [],
+          costs: [],
           expenses: []
         };
 
@@ -115,6 +118,11 @@ export default function FinancialStatementsPage() {
             case 'income':
             case 'ingreso':
               nextData.revenue.push({ name: label, amount: balance });
+              break;
+            case 'cost':
+            case 'costo':
+            case 'costos':
+              nextData.costs.push({ name: label, amount: balance });
               break;
             case 'expense':
             case 'gasto':
@@ -225,8 +233,9 @@ export default function FinancialStatementsPage() {
 
     const totalEquity = financialData.equity.reduce((sum, item) => sum + item.amount, 0);
     const totalRevenue = financialData.revenue.reduce((sum, item) => sum + item.amount, 0);
+    const totalCosts = financialData.costs.reduce((sum, item) => sum + item.amount, 0);
     const totalExpenses = financialData.expenses.reduce((sum, item) => sum + item.amount, 0);
-    const netIncome = totalRevenue - totalExpenses;
+    const netIncome = totalRevenue - totalCosts - totalExpenses;
 
     return {
       totalCurrentAssets,
@@ -237,6 +246,7 @@ export default function FinancialStatementsPage() {
       totalLiabilities,
       totalEquity,
       totalRevenue,
+      totalCosts,
       totalExpenses,
       netIncome
     };
@@ -307,6 +317,8 @@ export default function FinancialStatementsPage() {
       const rows: any[] = [];
       financialData.revenue.forEach(i => rows.push(['INGRESOS', i.name, i.amount]));
       rows.push(['', 'Total Ingresos', totals.totalRevenue]);
+      financialData.costs.forEach(i => rows.push(['COSTOS', i.name, i.amount]));
+      rows.push(['', 'Total Costos', totals.totalCosts]);
       financialData.expenses.forEach(i => rows.push(['GASTOS', i.name, i.amount]));
       rows.push(['', 'Total Gastos', totals.totalExpenses]);
       rows.push(['', 'UTILIDAD NETA', totals.netIncome]);
@@ -683,6 +695,7 @@ export default function FinancialStatementsPage() {
               </div>
 
               <div className="max-w-2xl">
+                {/* INGRESOS */}
                 <div className="mb-6">
                   <h3 className="text-lg font-semibold mb-4 text-green-600">INGRESOS</h3>
                   {financialData.revenue.map((item, index) => (
@@ -699,6 +712,24 @@ export default function FinancialStatementsPage() {
                   </div>
                 </div>
 
+                {/* COSTOS */}
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold mb-4 text-yellow-600">COSTOS</h3>
+                  {financialData.costs.map((item, index) => (
+                    <div key={index} className="flex justify-between py-2">
+                      <span>{item.name}</span>
+                      <span className="font-medium">{formatCurrency(item.amount)}</span>
+                    </div>
+                  ))}
+                  <div className="border-t pt-3 mt-3">
+                    <div className="flex justify-between font-bold text-lg">
+                      <span>Total Costos</span>
+                      <span>{formatCurrency(totals.totalCosts)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* GASTOS */}
                 <div className="mb-6">
                   <h3 className="text-lg font-semibold mb-4 text-red-600">GASTOS</h3>
                   {financialData.expenses.map((item, index) => (
@@ -715,6 +746,7 @@ export default function FinancialStatementsPage() {
                   </div>
                 </div>
 
+                {/* UTILIDAD NETA */}
                 <div className="border-t-2 border-gray-800 pt-4">
                   <div className="flex justify-between font-bold text-xl">
                     <span>UTILIDAD NETA</span>

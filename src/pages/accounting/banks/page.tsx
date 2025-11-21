@@ -16,6 +16,7 @@ interface Bank {
   swift_code?: string;
   contact_info?: string;
   created_at: string;
+  chart_account_id?: string | null;
 }
 
 interface AccountOption {
@@ -31,6 +32,7 @@ export default function BanksPage() {
   const [loadingAccounts, setLoadingAccounts] = useState(false);
   
   const [showBankModal, setShowBankModal] = useState(false);
+  const [editingBank, setEditingBank] = useState<Bank | null>(null);
 
   // Función para formatear moneda
   const formatCurrency = (value: number, currency: string = 'DOP') => {
@@ -60,6 +62,7 @@ export default function BanksPage() {
         swift_code: b.swift_bic || '',
         contact_info: b.contact_info || '',
         created_at: b.created_at,
+        chart_account_id: b.chart_account_id ?? null,
       }));
       setBanks(mapped);
     } catch (error) {
@@ -81,7 +84,11 @@ export default function BanksPage() {
       try {
         const data = await chartAccountsService.getAll(user.id);
         const opts: AccountOption[] = (data || [])
-          .filter((acc: any) => acc.allow_posting !== false)
+          .filter((acc: any) =>
+            acc.isBankAccount &&          // marcadas como cuentas bancarias
+            acc.allowPosting &&           // permiten movimientos
+            acc.isActive !== false        // y están activas
+          )
           .map((acc: any) => ({
             id: acc.id,
             code: acc.code,
@@ -114,24 +121,35 @@ export default function BanksPage() {
     const chartAccountId = (formData.get('chart_account_id') as string) || null;
 
     try {
-      await bankAccountsService.create(user.id, {
+      const payloadBase = {
         bank_name: formData.get('name') as string,
         account_number: formData.get('account_number') as string,
         account_type: formData.get('account_type') as string,
         currency: (formData.get('currency') as string) || 'DOP',
-        initial_balance: initialBalance,
-        current_balance: initialBalance,
-        is_active: true,
         bank_code: formData.get('bank_code') as string,
         swift_bic: (formData.get('swift_code') as string) || '',
         contact_info: (formData.get('contact_info') as string) || '',
         chart_account_id: chartAccountId,
-      });
+      };
+
+      if (editingBank) {
+        // En edición no tocamos initial_balance ni current_balance, solo los demás datos
+        await bankAccountsService.update(editingBank.id, payloadBase as any);
+        toast.success('Banco actualizado correctamente');
+      } else {
+        await bankAccountsService.create(user.id, {
+          ...payloadBase,
+          initial_balance: initialBalance,
+          current_balance: initialBalance,
+          is_active: true,
+        } as any);
+        toast.success('Banco agregado correctamente');
+      }
 
       await loadBanks();
       setShowBankModal(false);
+      setEditingBank(null);
       form.reset();
-      toast.success('Banco agregado correctamente');
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error saving bank account', error);
@@ -168,6 +186,7 @@ export default function BanksPage() {
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Número de Cuenta</th>
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
                   <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Saldo</th>
+                  <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -201,6 +220,18 @@ export default function BanksPage() {
                       <div className="text-gray-900">{formatCurrency(bank.balance, bank.currency)}</div>
                       <div className="text-gray-500 text-xs">{bank.currency}</div>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingBank(bank);
+                          setShowBankModal(true);
+                        }}
+                        className="text-blue-600 hover:text-blue-800 text-xs font-medium"
+                      >
+                        Editar
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -208,23 +239,26 @@ export default function BanksPage() {
           </div>
         </div>
 
-        {/* Modal para agregar banco */}
-        {showBankModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-semibold text-gray-900">Nuevo Banco</h2>
-                  <button
-                    onClick={() => setShowBankModal(false)}
-                    className="text-gray-400 hover:text-gray-500"
-                  >
-                    <span className="sr-only">Cerrar</span>
-                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
+      {/* Modal para agregar banco */}
+      {showBankModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-semibold text-gray-900">{editingBank ? 'Editar Banco' : 'Nuevo Banco'}</h2>
+                <button
+                  onClick={() => {
+                    setShowBankModal(false);
+                    setEditingBank(null);
+                  }}
+                  className="text-gray-400 hover:text-gray-500"
+                >
+                  <span className="sr-only">Cerrar</span>
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
                 
                 <form onSubmit={handleSubmitBank} className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -235,6 +269,7 @@ export default function BanksPage() {
                       <input
                         type="text"
                         name="name"
+                        defaultValue={editingBank?.name || ''}
                         required
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         placeholder="Ej: Banco Popular"
@@ -247,6 +282,7 @@ export default function BanksPage() {
                       <input
                         type="text"
                         name="account_number"
+                        defaultValue={editingBank?.account_number || ''}
                         required
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         placeholder="Ej: 1234567890"
@@ -260,7 +296,7 @@ export default function BanksPage() {
                         name="account_type"
                         required
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
-                        defaultValue="checking"
+                        defaultValue={editingBank?.account_type || 'checking'}
                       >
                         <option value="checking">Cuenta Corriente</option>
                         <option value="savings">Cuenta de Ahorros</option>
@@ -274,7 +310,7 @@ export default function BanksPage() {
                         name="currency"
                         required
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
-                        defaultValue="DOP"
+                        defaultValue={editingBank?.currency || 'DOP'}
                       >
                         <option value="DOP">Peso Dominicano (DOP)</option>
                         <option value="USD">Dólar Estadounidense (USD)</option>
@@ -282,16 +318,21 @@ export default function BanksPage() {
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Saldo Inicial *
+                        {editingBank ? 'Saldo actual' : 'Saldo Inicial *'}
                       </label>
                       <input
                         type="number"
                         name="balance"
                         step="0.01"
                         min="0"
-                        required
-                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        required={!editingBank}
+                        readOnly={!!editingBank}
+                        className={
+                          "w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" +
+                          (editingBank ? " bg-gray-100 text-gray-500" : "")
+                        }
                         placeholder="0.00"
+                        defaultValue={editingBank ? String(editingBank.balance) : ''}
                       />
                     </div>
                     <div>
@@ -301,6 +342,7 @@ export default function BanksPage() {
                       <input
                         type="text"
                         name="bank_code"
+                        defaultValue={editingBank?.bank_code || ''}
                         required
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         placeholder="Ej: BPDO"
@@ -313,6 +355,7 @@ export default function BanksPage() {
                       <input
                         type="text"
                         name="swift_code"
+                        defaultValue={editingBank?.swift_code || ''}
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         placeholder="Ej: BPDODOSX"
                       />
@@ -324,6 +367,7 @@ export default function BanksPage() {
                       <input
                         type="email"
                         name="contact_info"
+                        defaultValue={editingBank?.contact_info || ''}
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         placeholder="Ej: contacto@bancopopular.com"
                       />
@@ -338,7 +382,7 @@ export default function BanksPage() {
                         <select
                           name="chart_account_id"
                           className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
-                          defaultValue=""
+                          defaultValue={editingBank ? (editingBank as any).chart_account_id || '' : ''}
                         >
                           <option value="">Seleccionar cuenta contable (opcional)</option>
                           {accounts.map((acc) => (

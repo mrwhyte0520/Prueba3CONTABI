@@ -8,7 +8,7 @@ interface ChartAccount {
   id: string;
   code: string;
   name: string;
-  type: 'asset' | 'liability' | 'equity' | 'income' | 'expense';
+  type: 'asset' | 'liability' | 'equity' | 'income' | 'cost' | 'expense';
   parentId?: string;
   level: number;
   balance: number;
@@ -16,6 +16,7 @@ interface ChartAccount {
   description?: string;
   normalBalance: 'debit' | 'credit';
   allowPosting: boolean;
+  isBankAccount?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,13 +60,24 @@ export default function ChartAccountsPage() {
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  const [newAccount, setNewAccount] = useState({
+  const [newAccount, setNewAccount] = useState<{
+    code: string;
+    name: string;
+    type: ChartAccount['type'];
+    parentId: string;
+    level: number;
+    description: string;
+    allowPosting: boolean;
+    isBankAccount: boolean;
+  }>({
     code: '',
     name: '',
-    type: 'asset' as const,
+    type: 'asset',
     parentId: '',
+    level: 1,
     description: '',
-    allowPosting: true
+    allowPosting: true,
+    isBankAccount: false,
   });
 
   // Load accounts from database
@@ -81,6 +93,7 @@ export default function ChartAccountsPage() {
     setLoading(true);
     try {
       const data = await chartAccountsService.getAll(user.id);
+      console.log('DEBUG cuentas cargadas:', data.length);
       setAccounts(data);
     } catch (error) {
       console.error('Error loading accounts:', error);
@@ -106,6 +119,7 @@ export default function ChartAccountsPage() {
     { value: 'liability', label: 'Pasivos' },
     { value: 'equity', label: 'Patrimonio' },
     { value: 'income', label: 'Ingresos' },
+    { value: 'cost', label: 'Costos' },
     { value: 'expense', label: 'Gastos' }
   ];
 
@@ -182,6 +196,7 @@ export default function ChartAccountsPage() {
       case 'liability': return 'bg-red-100 text-red-800';
       case 'equity': return 'bg-green-100 text-green-800';
       case 'income': return 'bg-purple-100 text-purple-800';
+      case 'cost': return 'bg-yellow-100 text-yellow-800';
       case 'expense': return 'bg-orange-100 text-orange-800';
       default: return 'bg-gray-100 text-gray-800';
     }
@@ -193,13 +208,14 @@ export default function ChartAccountsPage() {
       case 'liability': return 'Pasivo';
       case 'equity': return 'Patrimonio';
       case 'income': return 'Ingreso';
+      case 'cost': return 'Costo';
       case 'expense': return 'Gasto';
       default: return 'Otro';
     }
   };
 
   const getNormalBalance = (type: string): 'debit' | 'credit' => {
-    return ['asset', 'expense'].includes(type) ? 'debit' : 'credit';
+    return ['asset', 'cost', 'expense'].includes(type) ? 'debit' : 'credit';
   };
 
   const getParentAccounts = (type: string) => {
@@ -258,6 +274,9 @@ export default function ChartAccountsPage() {
         return 'equity';
       case 'ingreso':
         return 'income';
+      case 'costo':
+      case 'costos':
+        return 'cost';
       case 'gasto':
       case 'gastos':
         return 'expense';
@@ -552,7 +571,7 @@ export default function ChartAccountsPage() {
 
       try {
         const rawType = (data.type || '').toLowerCase();
-        const validTypes = new Set(['asset', 'liability', 'equity', 'income', 'expense']);
+        const validTypes = new Set(['asset', 'liability', 'equity', 'income', 'cost', 'expense']);
         const safeType = (validTypes.has(rawType) ? rawType : mapSpanishTypeToInternal(rawType)) as any;
 
         const account = {
@@ -706,18 +725,22 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
       return;
     }
     try {
+      const isControlLevel = newAccount.level <= 2;
       const account = {
         code: trimmedCode,
         name: newAccount.name,
         type: newAccount.type,
         parent_id: newAccount.parentId || null,
-        level: calculateLevel(newAccount.parentId),
+        level: newAccount.level,
         balance: 0,
         is_active: true,
         description: newAccount.description,
         normal_balance: getNormalBalance(newAccount.type),
-        allow_posting: newAccount.allowPosting
+        allow_posting: isControlLevel ? false : newAccount.allowPosting,
+        is_bank_account: newAccount.isBankAccount
       };
+
+      console.log('DEBUG account to create:', account);
 
       await chartAccountsService.create(user.id, account);
       await loadAccounts();
@@ -727,14 +750,16 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
         name: '',
         type: 'asset',
         parentId: '',
+        level: 1,
         description: '',
-        allowPosting: true
+        allowPosting: true,
+        isBankAccount: false
       });
       setShowAddModal(false);
       alert('Cuenta creada exitosamente.');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating account:', error);
-      alert('Error al crear la cuenta. Verifique que el código no esté duplicado.');
+      alert(`Error al crear la cuenta: ${error?.message || 'Error desconocido'}`);
     }
   };
 
@@ -752,13 +777,29 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
       return;
     }
 
+    // Si se cambia el tipo, obligar a cambiar también el código para que corresponda al nuevo tipo
+    const originalAccount = accounts.find(acc => acc.id === editingAccount.id);
+    if (originalAccount) {
+      const originalType = originalAccount.type;
+      const originalCode = originalAccount.code;
+      if (editingAccount.type !== originalType && trimmedCode === originalCode) {
+        alert('Ha cambiado el tipo de la cuenta. Debe generar o modificar el código para que corresponda con el nuevo tipo antes de guardar.');
+        return;
+      }
+    }
+
     try {
+      const isControlLevel = editingAccount.level <= 2;
       const account = {
         code: trimmedCode,
         name: editingAccount.name,
+        type: editingAccount.type,
+        level: editingAccount.level,
         description: editingAccount.description,
-        allow_posting: editingAccount.allowPosting,
-        is_active: editingAccount.isActive
+        allow_posting: isControlLevel ? false : editingAccount.allowPosting,
+        is_active: editingAccount.isActive,
+        normal_balance: getNormalBalance(editingAccount.type),
+        is_bank_account: editingAccount.isBankAccount
       };
 
       await chartAccountsService.update(editingAccount.id, account);
@@ -796,9 +837,16 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
       await chartAccountsService.delete(accountId);
       await loadAccounts();
       alert('Cuenta eliminada exitosamente.');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting account:', error);
-      alert('Error al eliminar la cuenta. Verifique que no tenga movimientos contables asociados.');
+      const code = error?.code;
+      const details: string | undefined = error?.details;
+
+      if (code === '23503' && details?.includes('"bank_accounts"')) {
+        alert('No se puede eliminar esta cuenta porque está asociada a uno o más bancos.\nPrimero quite o cambie la cuenta contable en el módulo de Bancos.');
+      } else {
+        alert('Error al eliminar la cuenta. Verifique que no tenga movimientos ni relaciones asociadas.');
+      }
     }
   };
 
@@ -953,7 +1001,9 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
     );
   };
 
-  const topLevelAccounts = filteredAccounts.filter(account => account.level === 1);
+  // Mostrar todas las cuentas filtradas sin limitar por nivel,
+  // para que las cuentas con nivel 2-5 también aparezcan en el listado.
+  const topLevelAccounts = filteredAccounts;
 
   if (loading) {
     return (
@@ -982,7 +1032,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
               className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
             >
               <i className="ri-file-excel-line mr-2"></i>
-              Descargar Excel
+              Descargar plantilla (sistema)
             </button>
             <button
               onClick={() => setShowFormatModal(true)}
@@ -1110,60 +1160,30 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
           </div>
         )}
 
-        {/* Import Modal */}
+        {/* Import File Modal */}
         {showImportModal && selectedFormat && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-full max-w-lg">
-              <h3 className="text-lg font-semibold mb-4">Importar desde {selectedFormat.name}</h3>
-              
-              <div className="space-y-4">
-                <div className={`border rounded-lg p-4 ${selectedFormat.color.replace('text-', 'border-').replace('100', '200')}`}>
-                  <div className="flex items-center mb-2">
-                    <i className={`${selectedFormat.icon} text-lg mr-2`}></i>
-                    <h4 className="font-medium">{selectedFormat.name}</h4>
-                  </div>
-                  <p className="text-sm mb-2">{selectedFormat.description}</p>
-                  <p className="text-xs">Formatos soportados: {selectedFormat.fileTypes.join(', ')}</p>
-                </div>
-                
-                {isImporting && (
-                  <div className="mb-4">
-                    <div className="flex justify-between text-sm text-gray-600 mb-1">
-                      <span>Procesando archivo...</span>
-                      <span>{importProgress}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div 
-                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${importProgress}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                )}
+            <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+              <h3 className="text-lg font-semibold mb-4">Importar Catálogo desde {selectedFormat.name}</h3>
+              <p className="text-gray-600 mb-4">
+                Seleccione un archivo {selectedFormat.fileTypes.join(', ')} con el catálogo de cuentas.
+              </p>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Seleccionar archivo {selectedFormat.name}
-                  </label>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept={selectedFormat.fileTypes.join(',')}
-                    onChange={handleFileImport}
-                    disabled={isImporting}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-              </div>
-              
-              <div className="flex justify-end space-x-3 mt-6">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={selectedFormat.fileTypes.join(',')}
+                onChange={handleFileImport}
+                className="w-full mb-4"
+              />
+
+              <div className="flex justify-end space-x-3 mt-4">
                 <button
                   onClick={() => {
                     setShowImportModal(false);
-                    setSelectedFormat(null);
+                    if (fileInputRef.current) fileInputRef.current.value = '';
                   }}
-                  disabled={isImporting}
-                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 whitespace-nowrap disabled:opacity-50"
+                  className="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 whitespace-nowrap"
                 >
                   Cancelar
                 </button>
@@ -1178,38 +1198,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
             <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-semibold mb-4">Agregar Nueva Cuenta</h3>
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Código</label>
-                  <div className="flex space-x-2">
-                    <input
-                      type="text"
-                      value={newAccount.code}
-                      onChange={(e) => setNewAccount({...newAccount, code: e.target.value})}
-                      className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="Ej: 1114"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextCode = generateNextCode();
-                        setNewAccount(prev => ({ ...prev, code: nextCode }));
-                      }}
-                      className="px-3 py-2 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 whitespace-nowrap"
-                    >
-                      Generar
-                    </button>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-                  <input
-                    type="text"
-                    value={newAccount.name}
-                    onChange={(e) => setNewAccount({...newAccount, name: e.target.value})}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Nombre de la cuenta"
-                  />
-                </div>
+                {/* Tipo primero */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
                   <select
@@ -1221,14 +1210,83 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                     <option value="liability">Pasivo</option>
                     <option value="equity">Patrimonio</option>
                     <option value="income">Ingreso</option>
+                    <option value="cost">Costo</option>
                     <option value="expense">Gasto</option>
                   </select>
                 </div>
+
+                {/* Código + Generar */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Código</label>
+                  <div className="flex space-x-2">
+                    <input
+                      type="text"
+                      value={newAccount.code}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setNewAccount({ ...newAccount, code: value });
+                      }}
+                      className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Ej: 1114"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const typeFirstDigitMap: Record<ChartAccount['type'], string> = {
+                          asset: '1',
+                          liability: '2',
+                          equity: '3',
+                          income: '4',
+                          cost: '5',
+                          expense: '6',
+                        };
+                        const firstDigit = typeFirstDigitMap[newAccount.type] || '1';
+
+                        const numericCodes = accounts
+                          .map(acc => acc.code.trim())
+                          .filter(code => code.startsWith(firstDigit) && /^\d+$/.test(code))
+                          .map(code => parseInt(code, 10))
+                          .sort((a, b) => a - b);
+
+                        const base = parseInt(`${firstDigit}000`, 10);
+                        const last = numericCodes.length > 0 ? numericCodes[numericCodes.length - 1] : base - 1;
+                        const next = Math.max(last + 1, base);
+
+                        setNewAccount(prev => ({ ...prev, code: String(next) }));
+                      }}
+                      className="px-3 py-2 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 whitespace-nowrap"
+                    >
+                      Generar
+                    </button>
+                  </div>
+                </div>
+
+                {/* Nombre */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                  <input
+                    type="text"
+                    value={newAccount.name}
+                    onChange={(e) => setNewAccount({...newAccount, name: e.target.value})}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Nombre de la cuenta"
+                  />
+                </div>
+
+                {/* Cuenta Padre */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Padre</label>
                   <select
                     value={newAccount.parentId}
-                    onChange={(e) => setNewAccount({...newAccount, parentId: e.target.value})}
+                    onChange={(e) => {
+                      const parentId = e.target.value;
+                      const level = parentId ? calculateLevel(parentId) : 1;
+                      setNewAccount({
+                        ...newAccount,
+                        parentId,
+                        level: Math.min(5, level),
+                      });
+                    }}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Cuenta Principal</option>
@@ -1239,6 +1297,31 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                     ))}
                   </select>
                 </div>
+
+                {/* Nivel */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nivel</label>
+                  <select
+                    value={String(newAccount.level)}
+                    onChange={(e) => {
+                      const selected = Number(e.target.value);
+                      const clamped = Math.min(5, Math.max(1, selected || 1));
+                      setNewAccount({
+                        ...newAccount,
+                        level: clamped,
+                      });
+                    }}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </div>
+
+                {/* Descripción */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
                   <textarea
@@ -1249,16 +1332,38 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                     placeholder="Descripción opcional"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Categoría</label>
+                  <select
+                    value={newAccount.allowPosting ? 'detail' : 'control'}
+                    onChange={(e) =>
+                      setNewAccount({
+                        ...newAccount,
+                        allowPosting: e.target.value === 'detail',
+                      })
+                    }
+                    disabled={newAccount.level <= 2}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="control">Control (no permite movimientos)</option>
+                    <option value="detail">Detalle (permite movimientos)</option>
+                  </select>
+                </div>
                 <div className="flex items-center">
                   <input
                     type="checkbox"
-                    id="allowPosting"
-                    checked={newAccount.allowPosting}
-                    onChange={(e) => setNewAccount({...newAccount, allowPosting: e.target.checked})}
+                    id="newIsBankAccount"
+                    checked={newAccount.isBankAccount}
+                    onChange={(e) =>
+                      setNewAccount({
+                        ...newAccount,
+                        isBankAccount: e.target.checked,
+                      })
+                    }
                     className="mr-2"
                   />
-                  <label htmlFor="allowPosting" className="text-sm text-gray-700">
-                    Permitir movimientos contables
+                  <label htmlFor="newIsBankAccount" className="text-sm text-gray-700">
+                    Cuenta bancaria (para módulo de Bancos)
                   </label>
                 </div>
               </div>
@@ -1286,51 +1391,179 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
             <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-semibold mb-4">Editar Cuenta</h3>
               <div className="space-y-4">
+                {/* Tipo */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+                  <select
+                    value={editingAccount.type}
+                    onChange={(e) => setEditingAccount({ ...editingAccount, type: e.target.value as any })}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="asset">Activo</option>
+                    <option value="liability">Pasivo</option>
+                    <option value="equity">Patrimonio</option>
+                    <option value="income">Ingreso</option>
+                    <option value="cost">Costo</option>
+                    <option value="expense">Gasto</option>
+                  </select>
+                </div>
+
+                {/* Código + Generar */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Código</label>
-                  <input
-                    type="text"
-                    value={editingAccount.code}
-                    onChange={(e) => setEditingAccount({...editingAccount, code: e.target.value})}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
+                  <div className="flex space-x-2">
+                    <input
+                      type="text"
+                      value={editingAccount.code}
+                      onChange={(e) => setEditingAccount({ ...editingAccount, code: e.target.value })}
+                      className="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const typeFirstDigitMap: Record<ChartAccount['type'], string> = {
+                          asset: '1',
+                          liability: '2',
+                          equity: '3',
+                          income: '4',
+                          cost: '5',
+                          expense: '6',
+                        };
+                        const firstDigit = typeFirstDigitMap[editingAccount.type] || '1';
+
+                        const numericCodes = accounts
+                          .map(acc => acc.code.trim())
+                          .filter(code => code.startsWith(firstDigit) && /^\d+$/.test(code))
+                          .map(code => parseInt(code, 10))
+                          .sort((a, b) => a - b);
+
+                        const base = parseInt(`${firstDigit}000`, 10);
+                        const last = numericCodes.length > 0 ? numericCodes[numericCodes.length - 1] : base - 1;
+                        const next = Math.max(last + 1, base);
+
+                        setEditingAccount(prev => ({ ...prev, code: String(next) }));
+                      }}
+                      className="px-3 py-2 text-sm bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 whitespace-nowrap"
+                    >
+                      Generar
+                    </button>
+                  </div>
                 </div>
+
+                {/* Nombre */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
                   <input
                     type="text"
                     value={editingAccount.name}
-                    onChange={(e) => setEditingAccount({...editingAccount, name: e.target.value})}
+                    onChange={(e) => setEditingAccount({ ...editingAccount, name: e.target.value })}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
+
+                {/* Cuenta Padre */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Padre</label>
+                  <select
+                    value={editingAccount.parentId || ''}
+                    onChange={(e) => {
+                      const parentId = e.target.value;
+                      const level = parentId ? calculateLevel(parentId) : 1;
+                      setEditingAccount({
+                        ...editingAccount,
+                        parentId,
+                        level: Math.min(5, level),
+                      });
+                    }}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="">Cuenta Principal</option>
+                    {getParentAccounts(editingAccount.type).map(account => (
+                      <option key={account.id} value={account.id}>
+                        {account.code} - {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Nivel */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nivel</label>
+                  <select
+                    value={String(editingAccount.level)}
+                    onChange={(e) => {
+                      const level = Math.min(5, Math.max(1, Number(e.target.value) || 1));
+                      setEditingAccount({
+                        ...editingAccount,
+                        level,
+                      });
+                    }}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                  </select>
+                </div>
+
+                {/* Descripción */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
                   <textarea
                     value={editingAccount.description || ''}
-                    onChange={(e) => setEditingAccount({...editingAccount, description: e.target.value})}
+                    onChange={(e) => setEditingAccount({ ...editingAccount, description: e.target.value })}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     rows={3}
                   />
                 </div>
+
+                {/* Categoría */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Categoría</label>
+                  <select
+                    value={editingAccount.allowPosting ? 'detail' : 'control'}
+                    onChange={(e) =>
+                      setEditingAccount({
+                        ...editingAccount,
+                        allowPosting: e.target.value === 'detail',
+                      })
+                    }
+                    disabled={editingAccount.level <= 2}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="control">Control (no permite movimientos)</option>
+                    <option value="detail">Detalle (permite movimientos)</option>
+                  </select>
+                </div>
+
+                {/* Marca de cuenta bancaria */}
                 <div className="flex items-center">
                   <input
                     type="checkbox"
-                    id="editAllowPosting"
-                    checked={editingAccount.allowPosting}
-                    onChange={(e) => setEditingAccount({...editingAccount, allowPosting: e.target.checked})}
+                    id="editIsBankAccount"
+                    checked={!!editingAccount.isBankAccount}
+                    onChange={(e) =>
+                      setEditingAccount({
+                        ...editingAccount,
+                        isBankAccount: e.target.checked,
+                      })
+                    }
                     className="mr-2"
                   />
-                  <label htmlFor="editAllowPosting" className="text-sm text-gray-700">
-                    Permitir movimientos contables
+                  <label htmlFor="editIsBankAccount" className="text-sm text-gray-700">
+                    Cuenta bancaria (para módulo de Bancos)
                   </label>
                 </div>
+
+                {/* Estado */}
                 <div className="flex items-center">
                   <input
                     type="checkbox"
                     id="editIsActive"
                     checked={editingAccount.isActive}
-                    onChange={(e) => setEditingAccount({...editingAccount, isActive: e.target.checked})}
+                    onChange={(e) => setEditingAccount({ ...editingAccount, isActive: e.target.checked })}
                     className="mr-2"
                   />
                   <label htmlFor="editIsActive" className="text-sm text-gray-700">

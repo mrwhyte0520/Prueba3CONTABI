@@ -432,21 +432,38 @@ export const chartAccountsService = {
       }
       
       // Mapear los datos de la base de datos al formato esperado por el componente
-      const mappedData = (data || []).map(account => ({
-        id: account.id,
-        code: account.code || '',
-        name: account.name || '',
-        type: account.type || 'asset',
-        parentId: account.parent_id || undefined,
-        level: account.level || 1,
-        balance: account.balance || 0,
-        isActive: account.is_active !== false,
-        description: account.description || '',
-        normalBalance: account.normal_balance || 'debit',
-        allowPosting: account.allow_posting !== false,
-        createdAt: account.created_at || new Date().toISOString(),
-        updatedAt: account.updated_at || new Date().toISOString()
-      }));
+      const rawAccounts = data || [];
+
+      const mappedData = rawAccounts.map(account => {
+        const level = account.level || 1;
+        const parentId = account.parent_id || undefined;
+
+        // Determinar si la cuenta tiene subcuentas (hijas)
+        const hasChildren = rawAccounts.some(a => a.parent_id === account.id);
+
+        // Regla de negocio:
+        // - Niveles 1 y 2 siempre son cuentas de control (no permiten movimientos).
+        // - Para nivel >= 3, si la cuenta tiene subcuentas también se trata como control.
+        const effectiveAllowPosting =
+          level <= 2 || hasChildren ? false : account.allow_posting !== false;
+
+        return {
+          id: account.id,
+          code: account.code || '',
+          name: account.name || '',
+          type: account.type || 'asset',
+          parentId,
+          level,
+          balance: account.balance || 0,
+          isActive: account.is_active !== false,
+          description: account.description || '',
+          normalBalance: account.normal_balance || 'debit',
+          allowPosting: effectiveAllowPosting,
+          isBankAccount: account.is_bank_account === true,
+          createdAt: account.created_at || new Date().toISOString(),
+          updatedAt: account.updated_at || new Date().toISOString()
+        };
+      });
 
       return mappedData;
     } catch (error) {
@@ -459,12 +476,13 @@ export const chartAccountsService = {
     try {
       const normalizeAccountType = (t: string) => {
         const v = (t || '').toLowerCase().trim();
-        if (['asset', 'liability', 'equity', 'income', 'expense'].includes(v)) return v;
+        if (['asset', 'liability', 'equity', 'income', 'cost', 'expense'].includes(v)) return v;
         if (['activo', 'activos'].includes(v)) return 'asset';
         if (['pasivo', 'pasivos'].includes(v)) return 'liability';
         if (['patrimonio', 'capital'].includes(v)) return 'equity';
         if (['ingreso', 'ingresos'].includes(v)) return 'income';
-        if (['gasto', 'gastos', 'costos', 'costo'].includes(v)) return 'expense';
+        if (['costo', 'costos'].includes(v)) return 'cost';
+        if (['gasto', 'gastos'].includes(v)) return 'expense';
         return 'asset';
       };
 
@@ -615,7 +633,7 @@ export const chartAccountsService = {
       const { data, error } = await supabase
         .from('chart_accounts')
         .select('*')
-        .in('type', ['income', 'expense'])
+        .in('type', ['income', 'cost', 'expense'])
         .eq('user_id', userId)
         .eq('is_active', true)
         .order('code');
@@ -635,7 +653,8 @@ export const chartAccountsService = {
       }
 
       const income = data?.filter(account => account.type === 'income') || [];
-      const expenses = data?.filter(account => account.type === 'expense') || [];
+      // Por ahora, tratar las cuentas de tipo 'cost' como parte de gastos en el estado de resultados
+      const expenses = data?.filter(account => account.type === 'expense' || account.type === 'cost') || [];
 
       const totalIncome = income.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
       const totalExpenses = expenses.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
