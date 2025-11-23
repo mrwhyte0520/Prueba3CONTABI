@@ -258,10 +258,6 @@ export default function PaymentsPage() {
     document.body.removeChild(link);
   };
 
-  const printPayment = (payment: any) => {
-    alert(`Imprimiendo comprobante de pago: ${payment.reference}`);
-  };
-
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -435,12 +431,6 @@ export default function PaymentsPage() {
                           className="text-blue-600 hover:text-blue-900 whitespace-nowrap"
                         >
                           <i className="ri-eye-line"></i>
-                        </button>
-                        <button 
-                          onClick={() => printPayment(payment)}
-                          className="text-gray-600 hover:text-gray-900 whitespace-nowrap"
-                        >
-                          <i className="ri-printer-line"></i>
                         </button>
                         {payment.status === 'Pendiente' && (
                           <>

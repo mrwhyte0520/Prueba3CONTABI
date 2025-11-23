@@ -249,6 +249,33 @@ export default function ChartAccountsPage() {
     return normalized.split('.').filter(Boolean).length || 1;
   };
 
+  const mapSpanishTypeToInternal = (value: string): string => {
+    const v = (value || '').toLowerCase().trim();
+    if (['activo', 'activos'].includes(v)) return 'asset';
+    if (['pasivo', 'pasivos'].includes(v)) return 'liability';
+    if (['patrimonio', 'capital'].includes(v)) return 'equity';
+    if (['ingreso', 'ingresos'].includes(v)) return 'income';
+    if (['costo', 'costos'].includes(v)) return 'cost';
+    if (['gasto', 'gastos'].includes(v)) return 'expense';
+    return v;
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpandedAccounts(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const calculateLevel = (parentId: string): number => {
+    const parent = accounts.find(acc => acc.id === parentId);
+    const baseLevel = parent ? (parent.level || 1) + 1 : 1;
+    return Math.min(5, Math.max(1, baseLevel));
+  };
+
+  const getParentAccounts = (type: ChartAccount['type']): ChartAccount[] => {
+    return accounts.filter(acc => acc.type === type);
+  };
+
   const parseExcelData = async (file: File): Promise<ImportData[]> => {
     try {
       const buffer = await file.arrayBuffer();

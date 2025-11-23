@@ -3,6 +3,7 @@ import DashboardLayout from '../../components/layout/DashboardLayout';
 import { settingsService } from '../../services/database';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+import { useAuth } from '../../hooks/useAuth';
 
 interface SettingsSection {
   id: string;
@@ -67,6 +68,7 @@ const settingsSections: SettingsSection[] = [
 ];
 
 export default function SettingsPage() {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
@@ -83,6 +85,10 @@ export default function SettingsPage() {
   };
 
   const handleExportConfiguration = async () => {
+    if (!user?.id) {
+      setMessage({ type: 'error', text: 'Usuario no autenticado. Inicia sesión para exportar la configuración.' });
+      return;
+    }
     setLoading(true);
     setMessage(null);
     
@@ -99,7 +105,7 @@ export default function SettingsPage() {
         payrollConcepts
       ] = await Promise.all([
         settingsService.getCompanyInfo(),
-        settingsService.getAccountingSettings(),
+        settingsService.getAccountingSettings(user.id),
         settingsService.getTaxSettings(),
         settingsService.getInventorySettings(),
         settingsService.getPayrollSettings(),
@@ -389,6 +395,10 @@ export default function SettingsPage() {
   };
 
   const handleResetConfiguration = async () => {
+    if (!user?.id) {
+      setMessage({ type: 'error', text: 'Usuario no autenticado. Inicia sesión para restablecer la configuración.' });
+      return;
+    }
     setLoading(true);
     try {
       // Restablecer configuraciones a valores por defecto para República Dominicana
@@ -432,7 +442,7 @@ export default function SettingsPage() {
       };
 
       await Promise.all([
-        settingsService.saveAccountingSettings(defaultAccountingSettings),
+        settingsService.saveAccountingSettings(defaultAccountingSettings, user.id),
         settingsService.saveTaxSettings(defaultTaxSettings),
         settingsService.saveInventorySettings(defaultInventorySettings),
         settingsService.savePayrollSettings(defaultPayrollSettings)

@@ -1396,8 +1396,38 @@ export const chartAccountsService = {
     }
   },
 
+  async checkRelations(id: string): Promise<{ hasAccountingSettings: boolean; hasJournalEntries: boolean }> {
+    try {
+      const [settingsRes, linesRes] = await Promise.all([
+        supabase
+          .from('accounting_settings')
+          .select('id')
+          .eq('ap_account_id', id)
+          .limit(1),
+        supabase
+          .from('journal_entry_lines')
+          .select('id')
+          .eq('account_id', id)
+          .limit(1),
+      ]);
+
+      const hasAccountingSettings = Array.isArray(settingsRes.data) && settingsRes.data.length > 0;
+      const hasJournalEntries = Array.isArray(linesRes.data) && linesRes.data.length > 0;
+
+      return { hasAccountingSettings, hasJournalEntries };
+    } catch (error) {
+      console.error('Error checking account relations:', error);
+      return { hasAccountingSettings: false, hasJournalEntries: false };
+    }
+  },
+
   async delete(id: string) {
     try {
+      const relations = await chartAccountsService.checkRelations(id);
+      if (relations.hasAccountingSettings || relations.hasJournalEntries) {
+        throw new Error('Cannot delete account with existing relations');
+      }
+
       const { error } = await supabase
         .from('chart_accounts')
         .delete()
@@ -5649,10 +5679,17 @@ export const settingsService = {
   // Company Info
   async getCompanyInfo() {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return null;
+
       const { data, error } = await supabase
         .from('company_info')
         .select('*')
-        .single();
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
 
       // When the table is empty Supabase returns error code "PGRST116"
       if (error && error.code !== 'PGRST116') throw error;
@@ -5665,9 +5702,22 @@ export const settingsService = {
 
   async saveCompanyInfo(companyInfo: any) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error('Usuario no autenticado');
+
+      const payload: any = {
+        ...companyInfo,
+        user_id: user.id,
+      };
+
+      // No enviar id en el upsert para evitar conflicto con la PK (company_info_pkey)
+      delete payload.id;
+
       const { data, error } = await supabase
         .from('company_info')
-        .upsert(companyInfo)
+        .upsert(payload, { onConflict: 'user_id' })
         .select()
         .single();
 
@@ -5779,9 +5829,15 @@ export const settingsService = {
   // Tax Settings
   async getTaxSettings() {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return null;
+
       const { data, error } = await supabase
         .from('tax_settings')
         .select('*')
+        .eq('user_id', user.id)
         .limit(1)
         .maybeSingle();
 
@@ -5795,9 +5851,22 @@ export const settingsService = {
 
   async saveTaxSettings(settings: any) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error('Usuario no autenticado');
+
+      const payload: any = {
+        ...settings,
+        user_id: user.id,
+      };
+
+      // Evitar conflicto con la PK de tax_settings
+      delete payload.id;
+
       const { data, error } = await supabase
         .from('tax_settings')
-        .upsert(settings)
+        .upsert(payload, { onConflict: 'user_id' })
         .select()
         .single();
 
@@ -5830,9 +5899,15 @@ export const settingsService = {
   // Tax Rates
   async getTaxRates() {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return [];
+
       const { data, error } = await supabase
         .from('tax_rates')
         .select('*')
+        .eq('user_id', user.id)
         .order('name');
 
       if (error) throw error;
@@ -5845,9 +5920,19 @@ export const settingsService = {
 
   async createTaxRate(rateData: any) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error('Usuario no autenticado');
+
+      const payload: any = {
+        ...rateData,
+        user_id: user.id,
+      };
+
       const { data, error } = await supabase
         .from('tax_rates')
-        .insert(rateData)
+        .insert(payload)
         .select()
         .single();
 
@@ -5859,12 +5944,61 @@ export const settingsService = {
     }
   },
 
+  async updateTaxRate(id: string, rateData: any) {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error('Usuario no autenticado');
+
+      const { data, error } = await supabase
+        .from('tax_rates')
+        .update(rateData)
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating tax rate:', error);
+      throw error;
+    }
+  },
+
+  async deleteTaxRate(id: string) {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error('Usuario no autenticado');
+
+      const { error } = await supabase
+        .from('tax_rates')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error deleting tax rate:', error);
+      throw error;
+    }
+  }, // <--- Added comma here
+
   // Inventory Settings
   async getInventorySettings() {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return null;
+
       const { data, error } = await supabase
         .from('inventory_settings')
         .select('*')
+        .eq('user_id', user.id)
         .limit(1)
         .maybeSingle();
 
@@ -5878,13 +6012,20 @@ export const settingsService = {
 
   async saveInventorySettings(settings: any) {
     try {
-      const normalized = {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error('Usuario no autenticado');
+
+      const normalized: any = {
         ...settings,
-        default_warehouse: settings.default_warehouse || null
+        user_id: user.id,
+        default_warehouse: settings.default_warehouse || null,
       };
+
       const { data, error } = await supabase
         .from('inventory_settings')
-        .upsert(normalized)
+        .upsert(normalized, { onConflict: 'user_id' })
         .select()
         .single();
 
@@ -6094,9 +6235,16 @@ export const settingsService = {
   // Warehouses
   async getWarehouses() {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.id) return [];
+
       const { data, error } = await supabase
         .from('warehouses')
         .select('*')
+        .eq('user_id', user.id)
         .order('name');
 
       if (error) throw error;
@@ -6169,10 +6317,17 @@ export const settingsService = {
   // Payroll Settings
   async getPayrollSettings() {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return null;
+
       const { data, error } = await supabase
         .from('payroll_settings')
         .select('*')
-        .single();
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle();
 
       if (error && error.code !== 'PGRST116') throw error;
       return data ?? null;
@@ -6184,9 +6339,22 @@ export const settingsService = {
 
   async savePayrollSettings(settings: any) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error('Usuario no autenticado');
+
+      const payload: any = {
+        ...settings,
+        user_id: user.id,
+      };
+
+      // Evitar conflicto con la PK de payroll_settings
+      delete payload.id;
+
       const { data, error } = await supabase
         .from('payroll_settings')
-        .upsert(settings)
+        .upsert(payload, { onConflict: 'user_id' })
         .select()
         .single();
 
@@ -6198,12 +6366,17 @@ export const settingsService = {
     }
   },
 
-  // Payroll Concepts
   async getPayrollConcepts() {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return [];
+
       const { data, error } = await supabase
         .from('payroll_concepts')
         .select('*')
+        .eq('user_id', user.id)
         .order('name');
 
       if (error) throw error;
@@ -6216,6 +6389,11 @@ export const settingsService = {
 
   async createPayrollConcept(conceptData: any) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error('Usuario no autenticado');
+
       const safeName = (conceptData.name || 'CONCEPTO')
         .toString()
         .trim()
@@ -6226,6 +6404,7 @@ export const settingsService = {
       const payload = {
         ...conceptData,
         code: conceptData.code || generatedCode,
+        user_id: user.id,
       };
       const { data, error } = await supabase
         .from('payroll_concepts')

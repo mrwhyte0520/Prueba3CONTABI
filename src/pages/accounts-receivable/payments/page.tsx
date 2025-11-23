@@ -229,13 +229,6 @@ export default function PaymentsPage() {
     }
   };
 
-  const handlePrintPayment = (paymentId: string) => {
-    const payment = payments.find(pay => pay.id === paymentId);
-    if (payment) {
-      alert(`Imprimiendo recibo de pago ${payment.reference}...`);
-    }
-  };
-
   const handleSavePayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!user) return;
@@ -498,13 +491,6 @@ export default function PaymentsPage() {
                           title="Ver detalles"
                         >
                           <i className="ri-eye-line"></i>
-                        </button>
-                        <button 
-                          onClick={() => handlePrintPayment(payment.id)}
-                          className="text-purple-600 hover:text-purple-900"
-                          title="Imprimir recibo"
-                        >
-                          <i className="ri-printer-line"></i>
                         </button>
                       </div>
                     </td>

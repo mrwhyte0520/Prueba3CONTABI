@@ -45,7 +45,16 @@ export default function InventorySettingsPage() {
     try {
       const data = await settingsService.getInventorySettings();
       if (data) {
-        setSettings(data);
+        setSettings({
+          id: data.id,
+          valuation_method: data.valuation_method || 'fifo',
+          auto_reorder: data.auto_reorder ?? true,
+          reorder_point: typeof data.reorder_point === 'number' ? data.reorder_point : 10,
+          default_warehouse: data.default_warehouse || '',
+          track_serial_numbers: data.track_serial_numbers ?? false,
+          track_expiration: data.track_expiration ?? false,
+          negative_stock_allowed: data.negative_stock_allowed ?? false,
+        });
       }
     } catch (error) {
       console.error('Error loading inventory settings:', error);
@@ -138,7 +147,7 @@ export default function InventorySettingsPage() {
                   Método de Valuación *
                 </label>
                 <select
-                  value={settings.valuation_method}
+                  value={settings.valuation_method || 'fifo'}
                   onChange={(e) => handleInputChange('valuation_method', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
@@ -153,7 +162,7 @@ export default function InventorySettingsPage() {
                   Almacén Predeterminado
                 </label>
                 <select
-                  value={settings.default_warehouse}
+                  value={settings.default_warehouse || ''}
                   onChange={(e) => handleInputChange('default_warehouse', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >

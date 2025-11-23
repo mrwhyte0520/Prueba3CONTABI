@@ -35,7 +35,12 @@ export default function TaxSettingsPage() {
   });
   const [taxRates, setTaxRates] = useState<TaxRate[]>([]);
   const [showModal, setShowModal] = useState(false);
-  const [newRate, setNewRate] = useState({ name: '', rate: 0, type: 'itbis' as const });
+  const [newRate, setNewRate] = useState<{ name: string; rate: number; type: TaxRate['type'] }>({
+    name: '',
+    rate: 0,
+    type: 'itbis',
+  });
+  const [editingRate, setEditingRate] = useState<TaxRate | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -79,18 +84,45 @@ export default function TaxSettingsPage() {
     }
   };
 
-  const handleCreateTaxRate = async (e: React.FormEvent) => {
+  const handleCreateOrUpdateTaxRate = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      await settingsService.createTaxRate(newRate);
-      setMessage({ type: 'success', text: 'Tasa de impuesto creada exitosamente' });
+      if (editingRate) {
+        await settingsService.updateTaxRate(editingRate.id, newRate);
+        setMessage({ type: 'success', text: 'Tasa de impuesto actualizada exitosamente' });
+      } else {
+        await settingsService.createTaxRate(newRate);
+        setMessage({ type: 'success', text: 'Tasa de impuesto creada exitosamente' });
+      }
       setShowModal(false);
+      setEditingRate(null);
       setNewRate({ name: '', rate: 0, type: 'itbis' });
       loadTaxRates();
     } catch (error) {
-      setMessage({ type: 'error', text: 'Error al crear la tasa de impuesto' });
+      setMessage({ type: 'error', text: 'Error al guardar la tasa de impuesto' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditClick = (rate: TaxRate) => {
+    setEditingRate(rate);
+    setNewRate({ name: rate.name, rate: rate.rate, type: rate.type });
+    setShowModal(true);
+  };
+
+  const handleDeleteClick = async (rate: TaxRate) => {
+    if (!confirm(`¿Eliminar la tasa "${rate.name}"?`)) return;
+    setLoading(true);
+    setMessage(null);
+    try {
+      await settingsService.deleteTaxRate(rate.id);
+      setMessage({ type: 'success', text: 'Tasa de impuesto eliminada exitosamente' });
+      loadTaxRates();
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Error al eliminar la tasa de impuesto' });
     } finally {
       setLoading(false);
     }
@@ -237,7 +269,7 @@ export default function TaxSettingsPage() {
                       Secuencia NCF
                     </label>
                     <select
-                      value={settings.ncf_sequence}
+                      value={settings.ncf_sequence || 'B01'}
                       onChange={(e) => handleInputChange('ncf_sequence', e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
@@ -252,7 +284,7 @@ export default function TaxSettingsPage() {
                       Período de Declaración
                     </label>
                     <select
-                      value={settings.tax_period}
+                      value={settings.tax_period || 'monthly'}
                       onChange={(e) => handleInputChange('tax_period', e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
@@ -289,7 +321,11 @@ export default function TaxSettingsPage() {
           <div className="p-6 border-b border-gray-200 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">Tasas de Impuestos Personalizadas</h2>
             <button
-              onClick={() => setShowModal(true)}
+              onClick={() => {
+                setEditingRate(null);
+                setNewRate({ name: '', rate: 0, type: 'itbis' });
+                setShowModal(true);
+              }}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2"
             >
               <i className="ri-add-line"></i>
@@ -344,10 +380,18 @@ export default function TaxSettingsPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex items-center space-x-2">
-                        <button className="text-blue-600 hover:text-blue-900">
+                        <button
+                          type="button"
+                          onClick={() => handleEditClick(rate)}
+                          className="text-blue-600 hover:text-blue-900"
+                        >
                           <i className="ri-edit-line"></i>
                         </button>
-                        <button className="text-red-600 hover:text-red-900">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteClick(rate)}
+                          className="text-red-600 hover:text-red-900"
+                        >
                           <i className="ri-delete-bin-line"></i>
                         </button>
                       </div>
@@ -358,84 +402,84 @@ export default function TaxSettingsPage() {
             </table>
           </div>
         </div>
-      </div>
 
-      {/* New Tax Rate Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">Nueva Tasa de Impuesto</h3>
-              <button
-                onClick={() => setShowModal(false)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <i className="ri-close-line text-xl"></i>
-              </button>
-            </div>
-            <form onSubmit={handleCreateTaxRate} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nombre *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newRate.name}
-                  onChange={(e) => setNewRate(prev => ({ ...prev, name: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tipo *
-                </label>
-                <select
-                  required
-                  value={newRate.type}
-                  onChange={(e) => setNewRate(prev => ({ ...prev, type: e.target.value as any }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="itbis">ITBIS</option>
-                  <option value="isr">ISR</option>
-                  <option value="other">Otro</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tasa (%) *
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="100"
-                  required
-                  value={newRate.rate}
-                  onChange={(e) => setNewRate(prev => ({ ...prev, rate: parseFloat(e.target.value) }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div className="flex justify-end space-x-3 pt-4">
+        {/* New Tax Rate Modal */}
+        {showModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">{editingRate ? 'Editar Tasa' : 'Nueva Tasa'}</h3>
                 <button
-                  type="button"
                   onClick={() => setShowModal(false)}
-                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                  className="text-gray-400 hover:text-gray-600"
                 >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {loading ? 'Creando...' : 'Crear Tasa'}
+                  <i className="ri-close-line text-xl"></i>
                 </button>
               </div>
-            </form>
+              <form onSubmit={handleCreateOrUpdateTaxRate} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nombre *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newRate.name}
+                    onChange={(e) => setNewRate(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Tipo *
+                  </label>
+                  <select
+                    required
+                    value={newRate.type}
+                    onChange={(e) => setNewRate(prev => ({ ...prev, type: e.target.value as any }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="itbis">ITBIS</option>
+                    <option value="isr">ISR</option>
+                    <option value="other">Otro</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Tasa (%) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    required
+                    value={newRate.rate}
+                    onChange={(e) => setNewRate(prev => ({ ...prev, rate: parseFloat(e.target.value) }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                <div className="flex justify-end space-x-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {loading ? (editingRate ? 'Guardando...' : 'Creando...') : (editingRate ? 'Guardar Cambios' : 'Crear Tasa')}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </DashboardLayout>
   );
 }
