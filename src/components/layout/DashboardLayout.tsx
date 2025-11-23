@@ -140,6 +140,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       icon: 'ri-dashboard-line',
       current: location.pathname === '/dashboard'
     },
+    // 1. Contabilidad
     {
       name: 'Contabilidad',
       href: '/accounting',
@@ -147,8 +148,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       current: location.pathname.startsWith('/accounting'),
       submenu: [
         { name: 'Catálogo de Cuentas', href: '/accounting/chart-accounts' },
-        { name: 'Bancos', href: '/accounting/banks' },
-        { name: 'Conciliación Bancaria', href: '/accounting/bank-reconciliation' },
+        { name: 'Conciliación Bancaria', href: '/accounting/reconciliation' },
         { name: 'Caja Chica', href: '/accounting/petty-cash' },
         { name: 'Estados Financieros', href: '/accounting/financial-statements' },
         { name: 'Diario General', href: '/accounting/general-journal' },
@@ -156,12 +156,91 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Períodos Contables', href: '/accounting/periods' }
       ]
     },
+    // 2. Bancos (módulo independiente)
+    {
+      name: 'Bancos',
+      href: '/banks-module',
+      icon: 'ri-bank-line',
+      current: location.pathname.startsWith('/banks-module'),
+      submenu: [
+        { name: 'Depósitos Bancarios', href: '/banks-module/deposits' },
+        { name: 'Solicitudes de Pago', href: '/banks-module/payment-requests' },
+        { name: 'Cheques', href: '/banks-module/checks' },
+        { name: 'Transferencias Bancarias', href: '/banks-module/transfers' },
+        { name: 'Créditos Bancarios', href: '/banks-module/credits' },
+        { name: 'Cargos Bancarios', href: '/banks-module/charges' },
+        { name: 'Crear Moneda', href: '/banks-module/currencies' },
+        { name: 'Tasas Cambiarias', href: '/banks-module/exchange-rates' },
+        { name: 'Reporte Bancario', href: '/banks-module/reports' },
+        { name: 'Conciliación Bancaria', href: '/banks-module/reconciliation' },
+        { name: 'Historial de Conciliaciones', href: '/banks-module/reconciliations-history' },
+      ]
+    },
+    // 3. Cuentas por cobrar
+    {
+      name: 'Cuentas por Cobrar',
+      href: '/accounts-receivable',
+      icon: 'ri-money-dollar-circle-line',
+      current: location.pathname.startsWith('/accounts-receivable')
+    },
+    // 4. Cuentas por pagar
+    {
+      name: 'Cuentas por Pagar',
+      href: '/accounts-payable',
+      icon: 'ri-file-list-3-line',
+      current: location.pathname.startsWith('/accounts-payable'),
+      submenu: [
+        { name: 'Reportes CxP', href: '/accounts-payable/reports' },
+        { name: 'Suplidores', href: '/accounts-payable/suppliers' },
+        { name: 'Emisión de Pagos', href: '/accounts-payable/payments' },
+        { name: 'Órdenes de Compra', href: '/accounts-payable/purchase-orders' },
+        { name: 'Cotizaciones', href: '/accounts-payable/quotes' }
+      ]
+    },
+    // 5. Facturación
+    {
+      name: 'Facturación',
+      href: '/billing',
+      icon: 'ri-file-text-line',
+      current: location.pathname.startsWith('/billing'),
+      submenu: [
+        { name: 'Reporte de Ventas', href: '/billing/sales-reports' },
+        { name: 'Facturación', href: '/billing/invoicing' },
+        { name: 'Pre-facturación', href: '/billing/pre-invoicing' },
+        { name: 'Facturación Recurrente', href: '/billing/recurring' },
+        { name: 'Cierre de Caja', href: '/billing/cash-closing' },
+        { name: 'Cotizaciones', href: '/billing/quotes' }
+      ]
+    },
+    // 6. Punto de ventas
     {
       name: 'Punto de Ventas',
       href: '/pos',
       icon: 'ri-shopping-cart-line',
       current: location.pathname.startsWith('/pos')
     },
+    // 7. Inventario
+    {
+      name: 'Inventario',
+      href: '/inventory',
+      icon: 'ri-archive-line',
+      current: location.pathname.startsWith('/inventory')
+    },
+    // 8. Activos fijos
+    {
+      name: 'Activos Fijos',
+      href: '/fixed-assets',
+      icon: 'ri-building-line',
+      current: location.pathname.startsWith('/fixed-assets'),
+      submenu: [
+        { name: 'Registro de Activos', href: '/fixed-assets/register' },
+        { name: 'Tipos de Activos', href: '/fixed-assets/types' },
+        { name: 'Depreciación', href: '/fixed-assets/depreciation' },
+        { name: 'Revalorización', href: '/fixed-assets/revaluation' },
+        { name: 'Retiro de Activos', href: '/fixed-assets/disposal' }
+      ]
+    },
+    // 9. Nóminas
     {
       name: 'Nóminas',
       href: '/payroll',
@@ -182,76 +261,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Bonificaciones', href: '/payroll/bonuses' }
       ]
     },
-    {
-      name: 'Productos',
-      href: '/products',
-      icon: 'ri-product-hunt-line',
-      current: location.pathname.startsWith('/products')
-    },
-    {
-      name: 'Clientes',
-      href: '/customers',
-      icon: 'ri-user-line',
-      current: location.pathname.startsWith('/customers')
-    },
-    {
-      name: 'Usuarios',
-      href: '/users',
-      icon: 'ri-shield-user-line',
-      current: location.pathname.startsWith('/users')
-    },
-    {
-      name: 'Inventario',
-      href: '/inventory',
-      icon: 'ri-archive-line',
-      current: location.pathname.startsWith('/inventory')
-    },
-    {
-      name: 'Activos Fijos',
-      href: '/fixed-assets',
-      icon: 'ri-building-line',
-      current: location.pathname.startsWith('/fixed-assets'),
-      submenu: [
-        { name: 'Registro de Activos', href: '/fixed-assets/register' },
-        { name: 'Tipos de Activos', href: '/fixed-assets/types' },
-        { name: 'Depreciación', href: '/fixed-assets/depreciation' },
-        { name: 'Revalorización', href: '/fixed-assets/revaluation' },
-        { name: 'Retiro de Activos', href: '/fixed-assets/disposal' }
-      ]
-    },
-    {
-      name: 'Cuentas por Cobrar',
-      href: '/accounts-receivable',
-      icon: 'ri-money-dollar-circle-line',
-      current: location.pathname.startsWith('/accounts-receivable')
-    },
-    {
-      name: 'Cuentas por Pagar',
-      href: '/accounts-payable',
-      icon: 'ri-file-list-3-line',
-      current: location.pathname.startsWith('/accounts-payable'),
-      submenu: [
-        { name: 'Reportes CxP', href: '/accounts-payable/reports' },
-        { name: 'Suplidores', href: '/accounts-payable/suppliers' },
-        { name: 'Emisión de Pagos', href: '/accounts-payable/payments' },
-        { name: 'Órdenes de Compra', href: '/accounts-payable/purchase-orders' },
-        { name: 'Cotizaciones', href: '/accounts-payable/quotes' }
-      ]
-    },
-    {
-      name: 'Facturación',
-      href: '/billing',
-      icon: 'ri-file-text-line',
-      current: location.pathname.startsWith('/billing'),
-      submenu: [
-        { name: 'Reporte de Ventas', href: '/billing/sales-reports' },
-        { name: 'Facturación', href: '/billing/invoicing' },
-        { name: 'Pre-facturación', href: '/billing/pre-invoicing' },
-        { name: 'Facturación Recurrente', href: '/billing/recurring' },
-        { name: 'Cierre de Caja', href: '/billing/cash-closing' },
-        { name: 'Cotizaciones', href: '/billing/quotes' }
-      ]
-    },
+    // 10. Impuestos
     {
       name: 'Impuestos',
       href: '/taxes',
@@ -268,18 +278,28 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Reporte IR-17', href: '/taxes/report-ir17' }
       ]
     },
+    // 11. Planes
     {
       name: 'Planes',
       href: '/plans',
       icon: 'ri-vip-crown-line',
       current: location.pathname.startsWith('/plans')
     },
+    // 12. Referidos
     {
       name: 'Referidos',
       href: '/referrals',
       icon: 'ri-share-forward-line',
       current: location.pathname.startsWith('/referrals')
     },
+    // 13. Usuarios
+    {
+      name: 'Usuarios',
+      href: '/users',
+      icon: 'ri-shield-user-line',
+      current: location.pathname.startsWith('/users')
+    },
+    // 14. Configuración
     {
       name: 'Configuración',
       href: '/settings',

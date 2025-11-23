@@ -84,7 +84,8 @@ export default function AccountingSettingsPage() {
 
   const loadSettings = async () => {
     try {
-      const data = await settingsService.getAccountingSettings();
+      if (!user) return;
+      const data = await settingsService.getAccountingSettings(user.id);
       if (data) {
         setSettings(data);
       }
@@ -95,11 +96,12 @@ export default function AccountingSettingsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
     setLoading(true);
     setMessage(null);
 
     try {
-      await settingsService.saveAccountingSettings(settings);
+      await settingsService.saveAccountingSettings(settings, user.id);
       setMessage({ type: 'success', text: 'Configuración contable guardada exitosamente' });
     } catch (error) {
       setMessage({ type: 'error', text: 'Error al guardar la configuración' });

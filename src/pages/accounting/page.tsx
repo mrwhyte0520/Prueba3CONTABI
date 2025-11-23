@@ -76,6 +76,13 @@ export default function AccountingPage() {
       setJournalEntries(entriesData);
     } catch (error) {
       console.error('Error loading data:', error);
+      console.error('Error details:', {
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        userId: user?.id,
+        errorType: typeof error,
+        errorKeys: error ? Object.keys(error) : []
+      });
     } finally {
       setLoading(false);
     }

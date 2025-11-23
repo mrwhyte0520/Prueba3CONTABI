@@ -109,6 +109,24 @@ const DepreciationPage = lazy(() => import('../pages/fixed-assets/depreciation/p
 const RevaluationPage = lazy(() => import('../pages/fixed-assets/revaluation/page'));
 const AssetDisposalPage = lazy(() => import('../pages/fixed-assets/disposal/page'));
 
+// Banks independent module pages
+const BanksModuleHomePage = lazy(() => import('../pages/banks-module/index'));
+const BankAccountsPage = lazy(() => import('../pages/banks-module/bank-accounts'));
+const BankAccountTypesPage = lazy(() => import('../pages/banks-module/account-types'));
+const BankDepositsPage = lazy(() => import('../pages/banks-module/deposits'));
+const BankPaymentRequestsPage = lazy(() => import('../pages/banks-module/payment-requests'));
+const BankChecksPage = lazy(() => import('../pages/banks-module/checks'));
+const BankTransfersPage = lazy(() => import('../pages/banks-module/transfers'));
+const BankCreditsPage = lazy(() => import('../pages/banks-module/credits'));
+const BankChargesPage = lazy(() => import('../pages/banks-module/charges'));
+const BankCurrenciesPage = lazy(() => import('../pages/banks-module/currencies'));
+const BankExchangeRatesPage = lazy(() => import('../pages/banks-module/exchange-rates'));
+const BankReportsPage = lazy(() => import('../pages/banks-module/reports'));
+const BankReconciliationModulePage = lazy(() => import('../pages/banks-module/reconciliation'));
+const BankReconciliationsHistoryPage = lazy(
+  () => import('../pages/banks-module/reconciliations-history'),
+);
+
 const routes: RouteObject[] = [
   {
     path: '/',
@@ -162,6 +180,63 @@ const routes: RouteObject[] = [
   {
     path: '/accounting/periods',
     element: <ProtectedRoute><AccountingPeriodsPage /></ProtectedRoute>
+  },
+  // Banks independent module
+  {
+    path: '/banks-module',
+    element: <ProtectedRoute><BankAccountsPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/bank-accounts',
+    element: <ProtectedRoute><BankAccountsPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/account-types',
+    element: <ProtectedRoute><BankAccountTypesPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/deposits',
+    element: <ProtectedRoute><BankDepositsPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/payment-requests',
+    element: <ProtectedRoute><BankPaymentRequestsPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/checks',
+    element: <ProtectedRoute><BankChecksPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/transfers',
+    element: <ProtectedRoute><BankTransfersPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/credits',
+    element: <ProtectedRoute><BankCreditsPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/charges',
+    element: <ProtectedRoute><BankChargesPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/currencies',
+    element: <ProtectedRoute><BankCurrenciesPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/exchange-rates',
+    element: <ProtectedRoute><BankExchangeRatesPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/reports',
+    element: <ProtectedRoute><BankReportsPage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/reconciliation',
+    element: <ProtectedRoute><BankReconciliationModulePage /></ProtectedRoute>
+  },
+  {
+    path: '/banks-module/reconciliations-history',
+    element: <ProtectedRoute><BankReconciliationsHistoryPage /></ProtectedRoute>
   },
   {
     path: '/payroll',

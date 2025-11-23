@@ -255,16 +255,30 @@ export default function PaymentsPage() {
       return;
     }
 
-    const bankAccount = bankAccounts.find(b => b.id === bankAccountId);
-    if (!bankAccount) {
-      alert('Debe seleccionar una cuenta de banco');
+    const balance = invoice.balance;
+    if (amount <= 0) {
+      alert('El monto del pago debe ser mayor que cero');
       return;
+    }
+    if (amount > balance) {
+      const confirmOver = confirm(
+        `El monto del pago (${amount.toLocaleString('es-DO')}) es mayor que el saldo de la factura (${balance.toLocaleString('es-DO')}). ¿Desea continuar de todos modos?`
+      );
+      if (!confirmOver) return;
+    }
+
+    const bankAccount = bankAccounts.find(b => b.id === bankAccountId);
+    if (paymentMethod !== 'cash') {
+      if (!bankAccount) {
+        alert('Debe seleccionar una cuenta de banco para este método de pago');
+        return;
+      }
     }
 
     const payload: any = {
       customer_id: invoice.customerId,
       invoice_id: invoiceId,
-      bank_account_id: bankAccountId,
+      bank_account_id: bankAccountId || null,
       amount,
       payment_method: paymentMethod,
       payment_date: paymentDate,
@@ -298,41 +312,66 @@ export default function PaymentsPage() {
         // Necesitamos la cuenta contable del banco (chart_account_id)
         const { chart_account_id: bankAccountAccountId } = created.bank_accounts || {};
 
-        if (arAccountId && bankAccountAccountId) {
-          const paymentAmount = Number(created.amount) || amount;
-
-          const lines: any[] = [
-            {
-              account_id: bankAccountAccountId,
-              description: 'Cobro de cliente - Banco',
-              debit_amount: paymentAmount,
-              credit_amount: 0,
-              line_number: 1,
-            },
-            {
-              account_id: arAccountId,
-              description: 'Cobro de cliente - Cuentas por Cobrar',
-              debit_amount: 0,
-              credit_amount: paymentAmount,
-              line_number: 2,
-            },
-          ];
-
-          const entryPayload = {
-            entry_number: created.id,
-            entry_date: created.payment_date || paymentDate,
-            description: `Pago factura ${mapped.invoiceNumber}`,
-            reference: created.id,
-            total_debit: paymentAmount,
-            total_credit: paymentAmount,
-            status: 'posted',
-          };
-
-          await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+        if (!arAccountId) {
+          alert('Pago registrado, pero no se pudo crear el asiento: falta configurar la Cuenta de Cuentas por Cobrar en Ajustes Contables.');
+          return;
         }
+
+        if (!bankAccountAccountId) {
+          if (paymentMethod === 'cash') {
+            alert('Pago registrado en efectivo sin cuenta de banco ni cuenta de caja configurada; no se generó asiento automático.');
+          } else {
+            alert('Pago registrado, pero no se pudo crear el asiento: la cuenta de banco seleccionada no tiene cuenta contable asociada.');
+          }
+          return;
+        }
+
+        const paymentAmount = Number(created.amount) || amount;
+
+        const lines: any[] = [
+          {
+            account_id: bankAccountAccountId,
+            description: 'Cobro de cliente - Banco',
+            debit_amount: paymentAmount,
+            credit_amount: 0,
+            line_number: 1,
+          },
+          {
+            account_id: arAccountId,
+            description: 'Cobro de cliente - Cuentas por Cobrar',
+            debit_amount: 0,
+            credit_amount: paymentAmount,
+            line_number: 2,
+          },
+        ];
+
+        const customerName = mapped.customerName || created.customers?.name || '';
+        const description = customerName
+          ? `Pago factura ${mapped.invoiceNumber} - ${customerName}`
+          : `Pago factura ${mapped.invoiceNumber}`;
+
+        const refText = created.reference || reference || '';
+        const entryReference = refText
+          ? `Pago:${created.id} Ref:${refText}`
+          : `Pago:${created.id}`;
+
+        const paymentDateForEntry = created.payment_date || paymentDate;
+
+        const entryPayload = {
+          entry_number: created.id,
+          entry_date: paymentDateForEntry,
+          description,
+          reference: entryReference,
+          total_debit: paymentAmount,
+          total_credit: paymentAmount,
+          status: 'posted' as const,
+        };
+
+        await journalEntriesService.createWithLines(user.id, entryPayload, lines);
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('Error posting customer payment to ledger:', err);
+        alert('Pago registrado, pero ocurrió un error al crear el asiento contable. Revise el libro diario y la configuración.');
       }
     } catch (error) {
       console.error('Error saving customer payment:', error);

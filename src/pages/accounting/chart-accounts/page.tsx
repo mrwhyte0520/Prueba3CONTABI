@@ -1011,7 +1011,8 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
 
     return (
       <div key={account.id}>
-        <div className="flex items-center px-4 py-2 border-b border-gray-100 hover:bg-gray-50">
+        {/* Desktop View */}
+        <div className="hidden md:flex items-center px-2 sm:px-4 py-2 border-b border-gray-100 hover:bg-gray-50">
           <div
             className="flex items-center flex-1"
             style={{ paddingLeft: `${(account.level - 1) * 16}px` }}
@@ -1024,7 +1025,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                 <i className={`ri-arrow-${isExpanded ? 'down' : 'right'}-s-line`}></i>
               </button>
             )}
-            <div className="flex-1 grid grid-cols-8 gap-4 items-center text-sm">
+            <div className="flex-1 grid grid-cols-8 gap-1 items-center text-sm">
               <div className="flex items-center">
                 <input
                   type="checkbox"
@@ -1033,7 +1034,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                 />
               </div>
               <div className="font-semibold text-gray-900 tabular-nums">{account.code}</div>
-              <div className="text-gray-900 truncate">{account.name}</div>
+              <div className="text-gray-900 break-words" title={account.name}>{account.name}</div>
               <div className="flex justify-center">
                 <span
                   className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${getAccountTypeColor(
@@ -1044,7 +1045,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                 </span>
               </div>
               <div className="flex justify-center">
-                <span className="inline-flex items-center justify-center rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700">
+                <span className="inline-flex items-center justify-center rounded-full bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-700 min-w-[2rem]">
                   {account.level}
                 </span>
               </div>
@@ -1081,6 +1082,75 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
             </div>
           </div>
         </div>
+        
+        {/* Mobile View */}
+        <div className="md:hidden border-b border-gray-100 hover:bg-gray-50">
+          <div className="p-3 space-y-2" style={{ paddingLeft: `${(account.level - 1) * 12 + 12}px` }}>
+            <div className="flex items-start justify-between">
+              <div className="flex items-start space-x-2 flex-1">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(account.id)}
+                  onChange={() => toggleSelectOne(account.id)}
+                  className="mt-1"
+                />
+                {hasChildren && (
+                  <button
+                    onClick={() => toggleExpanded(account.id)}
+                    className="text-gray-400 hover:text-gray-600 mt-1"
+                  >
+                    <i className={`ri-arrow-${isExpanded ? 'down' : 'right'}-s-line`}></i>
+                  </button>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-gray-900 text-sm">{account.code}</div>
+                  <div className="text-gray-900 text-sm break-words">{account.name}</div>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${getAccountTypeColor(
+                        account.type
+                      )}`}
+                    >
+                      {getAccountTypeName(account.type)}
+                    </span>
+                    <span className="inline-flex items-center justify-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-700">
+                      Nv.{account.level}
+                    </span>
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                        account.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}
+                    >
+                      {account.isActive ? 'Activa' : 'Inactiva'}
+                    </span>
+                  </div>
+                  <div className="text-right text-gray-900 text-sm font-semibold mt-1">
+                    RD${Math.abs(account.balance).toLocaleString()}
+                    {account.balance < 0 && ' (Cr)'}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-start gap-2 text-base ml-2">
+                <button
+                  onClick={() => {
+                    setEditingAccount(account);
+                    setShowEditModal(true);
+                  }}
+                  className="text-blue-600 hover:text-blue-900"
+                >
+                  <i className="ri-edit-line"></i>
+                </button>
+                <button
+                  onClick={() => handleDeleteAccount(account.id)}
+                  className="text-red-600 hover:text-red-900"
+                >
+                  <i className="ri-delete-bin-line"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
         {hasChildren && isExpanded && children.map(child => renderAccountRow(child))}
       </div>
     );
@@ -1182,8 +1252,8 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
 
         {/* Chart of Accounts */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
-            <div className="grid grid-cols-8 gap-4 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          <div className="px-2 sm:px-4 py-2 border-b border-gray-200 bg-gray-50 hidden md:block">
+            <div className="grid grid-cols-8 gap-1 text-xs font-semibold text-gray-500 uppercase tracking-wide">
               <div className="flex items-center">
                 <input
                   type="checkbox"
@@ -1194,7 +1264,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
               <div className="text-left">Código</div>
               <div className="text-left">Nombre de la cuenta</div>
               <div className="text-center">Tipo</div>
-              <div className="text-center">Nivel</div>
+              <div className="text-center w-6">Nivel</div>
               <div className="text-right">Saldo</div>
               <div className="text-center">Estado</div>
               <div className="text-center">Acciones</div>

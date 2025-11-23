@@ -179,6 +179,781 @@ export const referralsService = {
 };
 
 /* ==========================================================
+   Bank Charges Service
+   Tabla: bank_charges
+========================================================== */
+export const bankChargesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bank_charges')
+        .select('*')
+        .eq('user_id', userId)
+        .order('charge_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, charge: {
+    bank_id: string;
+    currency: string;
+    amount: number;
+    charge_date: string;
+    ncf: string;
+    description: string;
+    expense_account_code: string;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...charge,
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('bank_charges')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+
+      // Asiento contable automático: Debe gasto financiero / Haber banco
+      try {
+        const amount = Number(charge.amount) || 0;
+        if (amount > 0) {
+          // Buscar cuenta de gasto por código
+          const { data: expenseAccount, error: expenseError } = await supabase
+            .from('chart_accounts')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('code', charge.expense_account_code)
+            .maybeSingle();
+
+          // Buscar banco y su cuenta contable
+          const { data: bank, error: bankError } = await supabase
+            .from('bank_accounts')
+            .select('chart_account_id, bank_name')
+            .eq('id', charge.bank_id)
+            .maybeSingle();
+
+          if (!expenseError && !bankError && expenseAccount?.id && bank?.chart_account_id) {
+            const entryPayload = {
+              entry_number: `BCG-${new Date(charge.charge_date).toISOString().slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
+              entry_date: String(charge.charge_date),
+              description: charge.description || `Cargo bancario ${bank.bank_name || ''}`.trim(),
+              reference: data.id ? String(data.id) : null,
+              status: 'posted' as const,
+            };
+
+            const lines = [
+              {
+                account_id: expenseAccount.id as string,
+                description: charge.description || 'Cargo bancario - Gastos financieros',
+                debit_amount: amount,
+                credit_amount: 0,
+              },
+              {
+                account_id: bank.chart_account_id as string,
+                description: `Cargo bancario - Banco ${bank.bank_name || ''}`.trim(),
+                debit_amount: 0,
+                credit_amount: amount,
+              },
+            ];
+
+            await journalEntriesService.createWithLines(userId, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        // No interrumpir si falla la parte contable
+        console.error('bankChargesService.create journal entry error', jeError);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('bankChargesService.create error', error);
+      throw error;
+    }
+  },
+};
+
+export const bankReconciliationsListService = {
+  async getAllByUser(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bank_reconciliations')
+        .select('*')
+        .eq('user_id', userId)
+        .order('reconciliation_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+};
+
+/* ==========================================================
+   Journal Entries Service
+   Tablas: journal_entries, journal_entry_lines
+========================================================== */
+export const journalEntriesService = {
+  async createWithLines(userId: string, entry: {
+    entry_number: string;
+    entry_date: string;
+    description: string;
+    reference?: string | null;
+    status?: 'draft' | 'posted' | 'reversed';
+  }, lines: Array<{
+    account_id: string;
+    description?: string;
+    debit_amount?: number;
+    credit_amount?: number;
+    line_number?: number;
+  }>) {
+    if (!userId) throw new Error('userId required');
+    if (!lines || lines.length === 0) throw new Error('journal entry lines required');
+
+    const normalizedLines = lines.map((l, idx) => ({
+      account_id: l.account_id,
+      description: l.description ?? entry.description,
+      debit_amount: Number(l.debit_amount || 0),
+      credit_amount: Number(l.credit_amount || 0),
+      line_number: l.line_number ?? idx + 1,
+    }));
+
+    const totalDebit = normalizedLines.reduce((sum, l) => sum + (l.debit_amount || 0), 0);
+    const totalCredit = normalizedLines.reduce((sum, l) => sum + (l.credit_amount || 0), 0);
+
+    if (Number(totalDebit.toFixed(2)) !== Number(totalCredit.toFixed(2))) {
+      throw new Error('El asiento contable no está balanceado entre débitos y créditos');
+    }
+
+    const now = new Date().toISOString();
+
+    const entryPayload = {
+      user_id: userId,
+      entry_number: entry.entry_number,
+      entry_date: entry.entry_date,
+      description: entry.description,
+      reference: entry.reference ?? null,
+      status: entry.status ?? 'posted',
+      total_debit: totalDebit,
+      total_credit: totalCredit,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { data: createdEntry, error: entryError } = await supabase
+      .from('journal_entries')
+      .insert(entryPayload)
+      .select('*')
+      .single();
+
+    if (entryError) {
+      console.error('journalEntriesService.createWithLines entry error', entryError);
+      throw entryError;
+    }
+
+    const linesPayload = normalizedLines.map((l) => ({
+      ...l,
+      journal_entry_id: createdEntry.id,
+      created_at: now,
+    }));
+
+    const { error: linesError } = await supabase
+      .from('journal_entry_lines')
+      .insert(linesPayload);
+
+    if (linesError) {
+      console.error('journalEntriesService.createWithLines lines error', linesError);
+      throw linesError;
+    }
+
+    return createdEntry;
+  },
+
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('journal_entries')
+        .select('*')
+        .eq('user_id', userId)
+        .order('entry_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+};
+
+/* ==========================================================
+   Bank Credits Service
+   Tabla: bank_credits
+========================================================== */
+export const bankCreditsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bank_credits')
+        .select('*')
+        .eq('user_id', userId)
+        .order('start_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, credit: {
+    bank_id: string;
+    bank_account_code: string;
+    credit_number: string;
+    currency: string;
+    amount: number;
+    start_date: string;
+    interest_rate?: number | null;
+    description: string;
+    loan_account_code?: string;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...credit,
+        status: 'active',
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('bank_credits')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+
+      // Asiento contable automático: Debe banco / Haber pasivo del préstamo
+      try {
+        const amount = Number(credit.amount) || 0;
+        if (amount > 0 && credit.loan_account_code) {
+          // Cuenta de pasivo (préstamo) por código
+          const { data: loanAccount, error: loanError } = await supabase
+            .from('chart_accounts')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('code', credit.loan_account_code)
+            .maybeSingle();
+
+          // Cuenta del banco (activo)
+          const { data: bank, error: bankError } = await supabase
+            .from('bank_accounts')
+            .select('chart_account_id, bank_name')
+            .eq('id', credit.bank_id)
+            .maybeSingle();
+
+          if (!loanError && !bankError && loanAccount?.id && bank?.chart_account_id) {
+            const entryPayload = {
+              entry_number: `CRD-${new Date(credit.start_date).toISOString().slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
+              entry_date: String(credit.start_date),
+              description: credit.description || `Crédito bancario ${credit.credit_number || ''}`.trim(),
+              reference: data.id ? String(data.id) : null,
+              status: 'posted' as const,
+            };
+
+            const lines = [
+              {
+                account_id: bank.chart_account_id as string,
+                description: `Crédito recibido - Banco ${bank.bank_name || ''}`.trim(),
+                debit_amount: amount,
+                credit_amount: 0,
+              },
+              {
+                account_id: loanAccount.id as string,
+                description: credit.description || 'Pasivo por préstamo bancario',
+                debit_amount: 0,
+                credit_amount: amount,
+              },
+            ];
+
+            await journalEntriesService.createWithLines(userId, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        console.error('bankCreditsService.create journal entry error', jeError);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('bankCreditsService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Bank Transfers Service
+   Tabla: bank_transfers
+========================================================== */
+export const bankTransfersService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bank_transfers')
+        .select('*')
+        .eq('user_id', userId)
+        .order('transfer_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, transfer: {
+    from_bank_id: string;
+    from_bank_account_code: string;
+    to_bank_id?: string | null;
+    to_bank_account_code?: string | null;
+    currency: string;
+    amount: number;
+    transfer_date: string;
+    reference: string;
+    description: string;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...transfer,
+        status: 'issued',
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('bank_transfers')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+
+      // Asiento contable automático para transferencias internas: Debe banco destino / Haber banco origen
+      try {
+        const amount = Number(transfer.amount) || 0;
+        if (amount > 0 && transfer.to_bank_id) {
+          const { data: originBank, error: originError } = await supabase
+            .from('bank_accounts')
+            .select('chart_account_id, bank_name')
+            .eq('id', transfer.from_bank_id)
+            .maybeSingle();
+
+          const { data: destBank, error: destError } = await supabase
+            .from('bank_accounts')
+            .select('chart_account_id, bank_name')
+            .eq('id', transfer.to_bank_id)
+            .maybeSingle();
+
+          if (!originError && !destError && originBank?.chart_account_id && destBank?.chart_account_id) {
+            const entryPayload = {
+              entry_number: `TRF-${new Date(transfer.transfer_date).toISOString().slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
+              entry_date: String(transfer.transfer_date),
+              description: transfer.description || 'Transferencia bancaria interna',
+              reference: data.id ? String(data.id) : null,
+              status: 'posted' as const,
+            };
+
+            const lines = [
+              {
+                account_id: destBank.chart_account_id as string,
+                description: `Transferencia recibida - Banco ${destBank.bank_name || ''}`.trim(),
+                debit_amount: amount,
+                credit_amount: 0,
+              },
+              {
+                account_id: originBank.chart_account_id as string,
+                description: `Transferencia enviada - Banco ${originBank.bank_name || ''}`.trim(),
+                debit_amount: 0,
+                credit_amount: amount,
+              },
+            ];
+
+            await journalEntriesService.createWithLines(userId, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        console.error('bankTransfersService.create journal entry error', jeError);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('bankTransfersService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Bank Checks Service
+   Tabla: bank_checks
+========================================================== */
+export const bankChecksService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bank_checks')
+        .select('*')
+        .eq('user_id', userId)
+        .order('check_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, check: {
+    bank_id: string;
+    bank_account_code: string;
+    check_number: string;
+    payee_name: string;
+    currency: string;
+    amount: number;
+    check_date: string;
+    description: string;
+    expense_account_code?: string;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...check,
+        status: 'issued',
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('bank_checks')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+
+      // Asiento contable automático: Debe gasto/proveedor / Haber banco
+      try {
+        const amount = Number(check.amount) || 0;
+        if (amount > 0 && check.expense_account_code) {
+          // Buscar cuenta de gasto/proveedor por código
+          const { data: expenseAccount, error: expenseError } = await supabase
+            .from('chart_accounts')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('code', check.expense_account_code)
+            .maybeSingle();
+
+          // Buscar banco y su cuenta contable
+          const { data: bank, error: bankError } = await supabase
+            .from('bank_accounts')
+            .select('chart_account_id, bank_name')
+            .eq('id', check.bank_id)
+            .maybeSingle();
+
+          if (!expenseError && !bankError && expenseAccount?.id && bank?.chart_account_id) {
+            const entryPayload = {
+              entry_number: `CHK-${new Date(check.check_date).toISOString().slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
+              entry_date: String(check.check_date),
+              description: check.description || `Cheque a ${check.payee_name}`.trim(),
+              reference: data.id ? String(data.id) : null,
+              status: 'posted' as const,
+            };
+
+            const lines = [
+              {
+                account_id: expenseAccount.id as string,
+                description: check.description || 'Pago mediante cheque',
+                debit_amount: amount,
+                credit_amount: 0,
+              },
+              {
+                account_id: bank.chart_account_id as string,
+                description: `Cheque bancario - Banco ${bank.bank_name || ''}`.trim(),
+                debit_amount: 0,
+                credit_amount: amount,
+              },
+            ];
+
+            await journalEntriesService.createWithLines(userId, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        console.error('bankChecksService.create journal entry error', jeError);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('bankChecksService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Bank Payment Requests Service
+   Tabla: bank_payment_requests
+========================================================== */
+export const paymentRequestsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bank_payment_requests')
+        .select('*')
+        .eq('user_id', userId)
+        .order('request_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, request: {
+    bank_id: string;
+    bank_account_code: string;
+    payee_name: string;
+    currency: string;
+    amount: number;
+    request_date: string;
+    description: string;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...request,
+        status: 'pending',
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('bank_payment_requests')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('paymentRequestsService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Bank Deposits Service
+   Tabla: bank_deposits
+========================================================== */
+export const bankDepositsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bank_deposits')
+        .select('*')
+        .eq('user_id', userId)
+        .order('deposit_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, deposit: {
+    bank_id: string;
+    bank_account_code: string;
+    currency: string;
+    amount: number;
+    deposit_date: string;
+    reference: string;
+    description: string;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...deposit,
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('bank_deposits')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('bankDepositsService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Bank Currencies Service
+   Tabla: bank_currencies
+========================================================== */
+export const bankCurrenciesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bank_currencies')
+        .select('*')
+        .eq('user_id', userId)
+        .order('is_base', { ascending: false })
+        .order('code');
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, currency: {
+    code: string;
+    name: string;
+    symbol: string;
+    is_base?: boolean;
+    is_active?: boolean;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...currency,
+        is_base: currency.is_base ?? false,
+        is_active: currency.is_active ?? true,
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('bank_currencies')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('bankCurrenciesService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Bank Exchange Rates Service
+   Tabla: bank_exchange_rates
+========================================================== */
+export const bankExchangeRatesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('bank_exchange_rates')
+        .select('*')
+        .eq('user_id', userId)
+        .order('valid_from', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, rate: {
+    base_currency_code: string;
+    target_currency_code: string;
+    rate: number;
+    valid_from: string;
+    valid_to?: string | null;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...rate,
+        valid_to: rate.valid_to || null,
+        user_id: userId,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('bank_exchange_rates')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('bankExchangeRatesService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
    Cash Closing Service (Daily Cash Register Closings)
    Tabla: cash_closings
 ========================================================== */
@@ -1061,7 +1836,7 @@ export const financialReportsService = {
           debit_amount,
           credit_amount,
           journal_entries (entry_date, user_id),
-          chart_accounts (code, name, type, normal_balance)
+          chart_accounts (id, user_id, code, name, type, normal_balance)
         `)
         .eq('journal_entries.user_id', userId)
         .gte('journal_entries.entry_date', fromDate)
@@ -1076,7 +1851,8 @@ export const financialReportsService = {
 
       (data || []).forEach((line: any) => {
         const account = line.chart_accounts;
-        if (!account) return;
+        // Multi-tenant fuerte: ignorar líneas cuya cuenta no pertenezca al mismo user_id
+        if (!account || account.user_id !== userId) return;
 
         const accountId = line.account_id as string;
         const debit = Number(line.debit_amount) || 0;
@@ -1223,246 +1999,6 @@ export const financialStatementsService = {
       console.error('financialStatementsService.create error', error);
       throw error;
     }
-   /**
-    * Servicio para gestionar asientos contables.
-    */
-  }
-};
-
-/**
- * Servicio para gestionar asientos contables.
- */
-export const journalEntriesService = {
-  async getAll(userId: string) {
-    try {
-      if (!userId) return [];
-      const { data, error } = await supabase
-        .from('journal_entries')
-        .select(`
-          *,
-          journal_entry_lines (
-            *,
-            chart_accounts (code, name)
-          )
-        `)
-        .eq('user_id', userId)
-        .order('entry_date', { ascending: false });
-      
-      if (error) {
-        console.error('Error in journalEntriesService.getAll:', error);
-        return [];
-      }
-      
-      return data ?? [];
-    } catch (error) {
-      console.error('Error in journalEntriesService.getAll:', error);
-      return [];
-    }
-  },
-
-  async create(userId: string, entry: any) {
-    try {
-      const entryData = {
-        ...entry,
-        user_id: userId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-
-      const { data, error } = await supabase
-        .from('journal_entries')
-        .insert(entryData)
-        .select()
-        .single();
-      
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error creating journal entry:', error);
-      throw error;
-    }
-  },
-
-  async createWithLines(userId: string, entry: any, lines: any[]) {
-    try {
-      // Validar que los débitos y créditos estén balanceados
-      const totalDebit = lines.reduce((sum, line) => sum + (line.debit_amount || 0), 0);
-      const totalCredit = lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
-      
-      if (Math.abs(totalDebit - totalCredit) > 0.01) {
-        throw new Error('Los débitos y créditos deben estar balanceados');
-      }
-
-      const entryData = {
-        ...entry,
-        user_id: userId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-
-      const { data: entryData_result, error: entryError } = await supabase
-        .from('journal_entries')
-        .insert(entryData)
-        .select()
-        .single();
-
-      if (entryError) throw entryError;
-
-      const linesWithEntry = lines.map((line, index) => ({
-        ...line,
-        journal_entry_id: entryData_result.id,
-        line_number: index + 1,
-        created_at: new Date().toISOString(),
-      }));
-
-      const { data: linesData, error: linesError } = await supabase
-        .from('journal_entry_lines')
-        .insert(linesWithEntry)
-        .select();
-
-      if (linesError) throw linesError;
-
-      // Actualizar los balances de las cuentas afectadas
-      await this.updateAccountBalances(lines);
-
-      return { entry: entryData_result, lines: linesData };
-    } catch (error) {
-      console.error('Error creating journal entry with lines:', error);
-      throw error;
-    }
-  },
-
-  async updateAccountBalances(lines: any[]) {
-    try {
-      for (const line of lines) {
-        const { account_id, debit_amount, credit_amount } = line;
-        
-        // Obtener la cuenta para determinar el balance normal
-        const { data: account, error: accountError } = await supabase
-          .from('chart_accounts')
-          .select('balance, normal_balance')
-          .eq('id', account_id)
-          .single();
-
-        if (accountError) {
-          console.error('Error getting account:', accountError);
-          continue;
-        }
-
-        let balanceChange = 0;
-        if (account.normal_balance === 'debit') {
-          balanceChange = (debit_amount || 0) - (credit_amount || 0);
-        } else {
-          balanceChange = (credit_amount || 0) - (debit_amount || 0);
-        }
-
-        const newBalance = (account.balance || 0) + balanceChange;
-
-        const { error: updateError } = await supabase
-          .from('chart_accounts')
-          .update({ 
-            balance: newBalance,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', account_id);
-
-        if (updateError) {
-          console.error('Error updating account balance:', updateError);
-        }
-      }
-    } catch (error) {
-      console.error('Error updating account balances:', error);
-    }
-  },
-
-  async update(id: string, entry: any) {
-    try {
-      const updateData = {
-        ...entry,
-        updated_at: new Date().toISOString()
-      };
-
-      const { data, error } = await supabase
-        .from('journal_entries')
-        .update(updateData)
-        .eq('id', id)
-        .select()
-        .single();
-      
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error updating journal entry:', error);
-      throw error;
-    }
-  },
-
-  async delete(id: string) {
-    try {
-      // Primero eliminar las líneas del asiento
-      const { error: linesError } = await supabase
-        .from('journal_entry_lines')
-        .delete()
-        .eq('journal_entry_id', id);
-
-      if (linesError) throw linesError;
-
-      // Luego eliminar el asiento
-      const { error: entryError } = await supabase
-        .from('journal_entries')
-        .delete()
-        .eq('id', id);
-
-      if (entryError) throw entryError;
-    } catch (error) {
-      console.error('Error deleting journal entry:', error);
-      throw error;
-    }
-  },
-
-  async getById(id: string) {
-    try {
-      const { data, error } = await supabase
-        .from('journal_entries')
-        .select(`
-          *,
-          journal_entry_lines (
-            *,
-            chart_accounts (code, name)
-          )
-        `)
-        .eq('id', id)
-        .single();
-
-      if (error) throw error;
-      return data;
-    } catch (error) {
-      console.error('Error getting journal entry by id:', error);
-      throw error;
-    }
-  },
-
-  async getByDateRange(_userId: string, fromDate: string, toDate: string) {
-    try {
-      const { data, error } = await supabase
-        .from('journal_entries')
-        .select(`
-          *,
-          journal_entry_lines (
-            *,
-            chart_accounts (code, name)
-          )
-        `)
-        .gte('entry_date', fromDate)
-        .lte('entry_date', toDate)
-        .order('entry_date', { ascending: false });
-
-      if (error) throw error;
-      return data ?? [];
-    } catch (error) {
-      console.error('Error getting journal entries by date range:', error);
-      throw error;
-    }
   },
 };
 
@@ -1470,7 +2006,13 @@ export const journalEntriesService = {
    Bank Reconciliation Service
 ========================================================== */
 export const bankReconciliationService = {
-  async getOrCreateReconciliation(userId: string, bankAccountId: string, reconciliationDate: string) {
+  async getOrCreateReconciliation(
+    userId: string,
+    bankAccountId: string,
+    reconciliationDate: string,
+    bankStatementBalance: number,
+    bookBalance: number,
+  ) {
     try {
       if (!userId || !bankAccountId) throw new Error('User and bank account are required');
 
@@ -1497,7 +2039,10 @@ export const bankReconciliationService = {
         user_id: userId,
         bank_account_id: bankAccountId,
         reconciliation_date: reconciliationDate,
-        status: 'open',
+        bank_statement_balance: bankStatementBalance,
+        book_balance: bookBalance,
+        adjusted_balance: null,
+        status: 'pending',
         created_at: new Date().toISOString(),
       };
 
@@ -1609,6 +2154,73 @@ export const bankReconciliationService = {
       return data;
     } catch (error) {
       console.error('bankReconciliationService.addBankItem error', error);
+      throw error;
+    }
+  },
+
+  async upsertItemsFromBankMovements(
+    reconciliationId: string,
+    userId: string,
+    movements: Array<{
+      id: string;
+      date: string;
+      type: string;
+      amount: number;
+      reference?: string | null;
+      description?: string | null;
+    }>,
+    reconciledIds: Set<string>,
+  ) {
+    try {
+      if (!reconciliationId || !userId || !movements?.length) return;
+
+      // Eliminar items anteriores de esta conciliación para evitar duplicados
+      const { error: deleteError } = await supabase
+        .from('bank_reconciliation_items')
+        .delete()
+        .eq('reconciliation_id', reconciliationId)
+        .eq('user_id', userId);
+
+      if (deleteError) {
+        console.error(
+          'bankReconciliationService.upsertItemsFromBankMovements delete error',
+          deleteError,
+        );
+        throw deleteError;
+      }
+
+      const itemsPayload = movements.map((m) => {
+        const positiveTypes = ['deposit', 'credit'];
+        const sign = positiveTypes.includes(m.type) ? 1 : -1;
+        const signedAmount = sign * (Number(m.amount) || 0);
+
+        const descBase = m.description || '';
+        const refPart = m.reference ? ` Ref: ${m.reference}` : '';
+        const description = descBase || refPart ? `${descBase}${refPart}`.trim() : 'Movimiento bancario';
+
+        return {
+          reconciliation_id: reconciliationId,
+          user_id: userId,
+          transaction_type: 'book',
+          description,
+          amount: signedAmount,
+          transaction_date: m.date,
+          is_reconciled: reconciledIds.has(m.id),
+          journal_entry_id: null,
+          // Optional: store movement id in notes/description if needed in future
+        };
+      });
+
+      const { error } = await supabase
+        .from('bank_reconciliation_items')
+        .insert(itemsPayload);
+
+      if (error) {
+        console.error('bankReconciliationService.upsertItemsFromBankMovements insert error', error);
+        throw error;
+      }
+    } catch (error) {
+      console.error('bankReconciliationService.upsertItemsFromBankMovements unexpected error', error);
       throw error;
     }
   },
@@ -2568,11 +3180,17 @@ export const payrollService = {
 export const accountingSettingsService = {
   async get(userId?: string) {
     try {
-      const { data, error } = await supabase
+      const query = supabase
         .from('accounting_settings')
-        .select('*')
-        .limit(1)
-        .maybeSingle();
+        .select('*');
+
+      if (userId) {
+        query.eq('user_id', userId).limit(1);
+      } else {
+        query.limit(1);
+      }
+
+      const { data, error } = await query.maybeSingle();
 
       if (error) throw error;
       return data ?? null;
@@ -2671,13 +3289,11 @@ export const invoicesService = {
           }
 
           const entryPayload = {
-            entry_number: invoiceData.invoice_number || null,
-            entry_date: invoiceData.invoice_date,
+            entry_number: String(invoiceData.invoice_number || ''),
+            entry_date: String(invoiceData.invoice_date),
             description: `Factura ${invoiceData.invoice_number || ''}`.trim(),
-            reference: invoiceData.id,
-            total_debit: totalAmount,
-            total_credit: totalAmount,
-            status: 'posted',
+            reference: invoiceData.id ? String(invoiceData.id) : null,
+            status: 'posted' as const,
           };
 
           await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
@@ -2747,15 +3363,11 @@ export const invoicesService = {
 
               if (cogsLines.length > 0) {
                 const cogsEntryPayload = {
-                  entry_number: invoiceData.invoice_number
-                    ? `${invoiceData.invoice_number}-COGS`
-                    : null,
-                  entry_date: invoiceData.invoice_date,
+                  entry_number: `${String(invoiceData.invoice_number || '')}-COGS`,
+                  entry_date: String(invoiceData.invoice_date),
                   description: `Costo de ventas factura ${invoiceData.invoice_number || ''}`.trim(),
                   reference: invoiceData.id,
-                  total_debit: totalCost,
-                  total_credit: totalCost,
-                  status: 'posted',
+                  status: 'posted' as const,
                 };
 
                 await journalEntriesService.createWithLines(userId, cogsEntryPayload, cogsLines);
@@ -3689,13 +4301,11 @@ export const supplierPaymentsService = {
             ];
 
             const entryPayload = {
-              entry_number: data.reference || data.id,
-              entry_date: data.payment_date,
+              entry_number: String(data.invoice_number || ''),
+              entry_date: String(data.payment_date),
               description: `Pago a proveedor ${data.invoice_number || ''}`.trim(),
-              reference: data.id,
-              total_debit: amount,
-              total_credit: amount,
-              status: 'posted',
+              reference: data.id ? String(data.id) : null,
+              status: 'posted' as const,
             };
 
             await journalEntriesService.createWithLines(data.user_id, entryPayload, lines);
@@ -5119,12 +5729,19 @@ export const settingsService = {
   },
 
   // Accounting Settings
-  async getAccountingSettings() {
+  async getAccountingSettings(userId?: string) {
     try {
-      const { data, error } = await supabase
+      const query = supabase
         .from('accounting_settings')
-        .select('*')
-        .single();
+        .select('*');
+
+      if (userId) {
+        query.eq('user_id', userId).limit(1);
+      } else {
+        query.limit(1);
+      }
+
+      const { data, error } = await query.maybeSingle();
 
       if (error && error.code !== 'PGRST116') throw error;
       return data ?? null;
@@ -5134,11 +5751,20 @@ export const settingsService = {
     }
   },
 
-  async saveAccountingSettings(settings: any) {
+  async saveAccountingSettings(settings: any, userId?: string) {
     try {
+      const payload = {
+        ...settings,
+        user_id: userId ?? settings.user_id ?? null,
+      };
+
+      // Nunca enviar el id en el upsert para evitar conflictos con la PK
+      // y permitir que cada usuario tenga su propio registro según user_id
+      delete (payload as any).id;
+
       const { data, error } = await supabase
         .from('accounting_settings')
-        .upsert(settings)
+        .upsert(payload, { onConflict: 'user_id' })
         .select()
         .single();
 
@@ -5180,6 +5806,24 @@ export const settingsService = {
     } catch (error) {
       console.error('Error saving tax settings:', error);
       throw error;
+    }
+  },
+
+  // User helpers
+  async getUserCompanyName(userId: string): Promise<string | null> {
+    try {
+      if (!userId) return null;
+      const { data, error } = await supabase
+        .from('users')
+        .select('company')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      return (data as any)?.company || null;
+    } catch (error) {
+      console.error('Error getting user company name:', error);
+      return null;
     }
   },
 
