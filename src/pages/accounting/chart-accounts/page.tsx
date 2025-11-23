@@ -30,6 +30,8 @@ interface ImportData {
   balance?: number;
   category?: string;
   subCategory?: string;
+  allowPosting?: boolean; // true = Detalle, false = General (según columna "Tipo" del Excel)
+  level?: number; // Nivel de la cuenta si viene en el archivo
 }
 
 interface ImportFormat {
@@ -56,6 +58,7 @@ export default function ChartAccountsPage() {
   const [expandedAccounts, setExpandedAccounts] = useState<string[]>([]);
   const [importProgress, setImportProgress] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -100,6 +103,10 @@ export default function ChartAccountsPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getChildAccounts = (parentId: string) => {
+    return filteredAccounts.filter(account => account.parentId === parentId);
   };
 
   const importFormats: ImportFormat[] = [
@@ -149,6 +156,7 @@ export default function ChartAccountsPage() {
     if (selectedIds.length === 0) return;
     const confirmMsg = `¿Eliminar ${selectedIds.length} cuenta(s)?\nLas cuentas con saldo o con subcuentas no podrán eliminarse.`;
     if (!confirm(confirmMsg)) return;
+    setIsDeleting(true);
     let deleted = 0;
     const failed: Array<{ code: string; reason: string }> = [];
     try {
@@ -165,6 +173,16 @@ export default function ChartAccountsPage() {
           continue;
         }
         try {
+          const relations = await chartAccountsService.checkRelations(id);
+          if (relations.hasAccountingSettings) {
+            failed.push({ code: acc.code, reason: 'Usada en configuración contable' });
+            continue;
+          }
+          if (relations.hasJournalEntries) {
+            failed.push({ code: acc.code, reason: 'Tiene asientos contables registrados' });
+            continue;
+          }
+
           await chartAccountsService.delete(id);
           deleted++;
         } catch (e) {
@@ -187,6 +205,8 @@ export default function ChartAccountsPage() {
     } catch (err) {
       console.error('Bulk delete error:', err);
       alert('Error al eliminar las cuentas seleccionadas.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -218,151 +238,16 @@ export default function ChartAccountsPage() {
     return ['asset', 'cost', 'expense'].includes(type) ? 'debit' : 'credit';
   };
 
-  const getParentAccounts = (type: string) => {
-    // Permitir cualquier cuenta del mismo tipo como posible padre, sin restringir nivel ni allowPosting
-    return accounts.filter(account => account.type === type);
+  const inferLevelFromCode = (code: string): number => {
+    const trimmed = (code || '').trim();
+    if (!trimmed) return 1;
+
+    // Normalizar separadores: tratar punto, guion y espacios como separadores de nivel
+    const normalized = trimmed.replace(/[\-\s]+/g, '.');
+
+    // Contar segmentos no vacíos
+    return normalized.split('.').filter(Boolean).length || 1;
   };
-
-  const calculateLevel = (parentId: string): number => {
-    if (!parentId) return 1;
-    const parent = accounts.find(acc => acc.id === parentId);
-    return parent ? parent.level + 1 : 1;
-  };
-
-  const generateNextCode = () => {
-    if (accounts.length === 0) return '1000';
-
-    // Tomar todos los códigos numéricos, ordenar y sumar 1 al mayor
-    const numericCodes = accounts
-      .map(acc => acc.code.trim())
-      .filter(code => /^\d+$/.test(code))
-      .map(code => parseInt(code, 10))
-      .sort((a, b) => a - b);
-
-    if (numericCodes.length === 0) return '1000';
-
-    const last = numericCodes[numericCodes.length - 1];
-    return String(last + 1);
-  };
-
-  const toggleExpanded = (accountId: string) => {
-    setExpandedAccounts(prev =>
-      prev.includes(accountId)
-        ? prev.filter(id => id !== accountId)
-        : [...prev, accountId]
-    );
-  };
-
-  const getChildAccounts = (parentId: string) => {
-    return filteredAccounts.filter(account => account.parentId === parentId);
-  };
-
-  const handleFormatSelection = (format: ImportFormat) => {
-    setSelectedFormat(format);
-    setShowFormatModal(false);
-    setShowImportModal(true);
-  };
-
-  const mapSpanishTypeToInternal = (type: string): string => {
-    const normalized = type.trim().toLowerCase();
-    switch (normalized) {
-      case 'activo':
-        return 'asset';
-      case 'pasivo':
-        return 'liability';
-      case 'patrimonio':
-        return 'equity';
-      case 'ingreso':
-        return 'income';
-      case 'costo':
-      case 'costos':
-        return 'cost';
-      case 'gasto':
-      case 'gastos':
-        return 'expense';
-      default:
-        return normalized || 'asset';
-    }
-  };
-
-  // const parseCSVContent = (content: string): ImportData[] => {
-  //   const lines = content.split('\n');
-  //   const importedData: ImportData[] = [];
-
-  //   const cleanText = (value: string) =>
-  //     value.replace(/[\u0000-\u001F\u007F]/g, '').trim();
-
-  //   for (let i = 1; i < lines.length; i++) {
-  //     const line = lines[i].trim();
-  //     if (!line) continue;
-
-  //     // Detect separator: comma or semicolon
-  //     const sep = (line.match(/;/g)?.length || 0) > (line.match(/,/g)?.length || 0) ? ';' : ',';
-  //     const columns = line.split(sep).map(col => cleanText(col.replace(/"/g, '')));
-  //     if (columns.length >= 3) {
-  //       const rawType = columns[2];
-  //       const mappedType = mapSpanishTypeToInternal(rawType);
-
-  //       // Reconstruir balance en caso de tener separadores de miles con coma (ej: 35,000)
-  //       let balance = 0;
-  //       if (columns.length >= 6) {
-  //         const rawBalanceJoined = columns.slice(5).join('');
-  //         // Normalizar separadores: quitar miles y usar punto como decimal
-  //         // 1) quitar espacios
-  //         let s = rawBalanceJoined.replace(/\s/g, '');
-  //         // 2) si contiene ambos '.' y ',', asumir '.' miles y ',' decimal => quitar '.' y convertir ',' a '.'
-  //         if (s.includes('.') && s.includes(',')) {
-  //           s = s.replace(/\./g, '').replace(/,/g, '.');
-  //         } else if (s.includes(',')) {
-  //           // Solo comas: considerar coma decimal
-  //           s = s.replace(/,/g, '.');
-  //         } else {
-  //           // Solo puntos o dígitos: eliminar separadores no numéricos salvo '.' y '-'
-  //           s = s.replace(/[^0-9.\-]/g, '');
-  //         }
-  //         // Finalmente, mantener solo dígitos, punto y signo
-  //         s = s.replace(/[^0-9.\-]/g, '');
-  //         balance = s ? parseFloat(s) : 0;
-  //       }
-
-  //       importedData.push({
-  //         code: columns[0],
-  //         name: columns[1],
-  //         type: mappedType.toLowerCase(),
-  //         parentCode: columns[3] || undefined,
-  //         description: columns[4] || undefined,
-  //         balance
-  //       });
-  //     }
-  //   }
-
-  //   return importedData;
-  // };
-
-  // const parseQuickBooksIIF = (content: string): ImportData[] => {
-  //   const lines = content.split('\n');
-  //   const importedData: ImportData[] = [];
-
-  //   for (const line of lines) {
-  //     if (line.startsWith('ACCNT')) {
-  //       const parts = line.split('\t');
-  //       if (parts.length >= 4) {
-  //         const accountType = parts[2]?.toLowerCase();
-  //         const mappedType = mapQuickBooksType(accountType);
-          
-  //         importedData.push({
-  //           code: parts[1] || '',
-  //           name: parts[1] || '',
-  //           type: mappedType,
-  //           description: parts[3] || '',
-  //           balance: parts[4] ? parseFloat(parts[4]) : 0
-  //         });
-  //       }
-  //     }
-  //   }
-
-  //   return importedData;
-  // };
 
   const parseExcelData = async (file: File): Promise<ImportData[]> => {
     try {
@@ -373,38 +258,57 @@ export default function ChartAccountsPage() {
       const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
       const importedData: ImportData[] = [];
-
       if (!rows || rows.length === 0) return importedData;
 
-      // Buscar la fila de encabezados donde la primera columna sea "Codigo" o "Código"
       let headerRowIndex = rows.findIndex((row) => {
         const first = String((row && row[0]) ?? '').trim().toLowerCase();
         return first === 'codigo' || first === 'código';
       });
+      if (headerRowIndex === -1) headerRowIndex = 0;
 
-      if (headerRowIndex === -1) {
-        headerRowIndex = 0; // fallback
-      }
+      const headerRow = rows[headerRowIndex] || [];
+      const tipoColIndex = headerRow.findIndex((cell) => {
+        const text = String(cell ?? '').trim().toLowerCase();
+        if (!text) return false;
+        if (!text.includes('tipo')) return false;
+        if (text.includes('grupo')) return false;
+        return true;
+      });
+      const nivelColIndex = headerRow.findIndex((cell) => {
+        const text = String(cell ?? '').trim().toLowerCase();
+        if (!text) return false;
+        return text.includes('nivel');
+      });
 
-      // Datos a partir de la fila siguiente al encabezado
       for (let i = headerRowIndex + 1; i < rows.length; i++) {
         const row = rows[i] || [];
-        // Formato esperado idealmente:
-        // [Codigo, Nombre, Grupo, Tipo, Nivel, Cuenta Madre, Descripcion]
-        // Pero permitimos archivos simples con solo [Codigo, Nombre]
         const code = String(row[0] ?? '').trim();
         const name = String(row[1] ?? '').trim();
-        const group = String(row[2] ?? '').trim(); // Activo, Pasivo, etc. (puede venir vacío)
-        // const detailType = String(row[3] ?? '').trim(); // General / Detalle (por ahora no se usa)
-        // const levelRaw = row[4]; // Nivel (podemos recalcular por la jerarquía)
+        const group = String(row[2] ?? '').trim();
+        const detailType = tipoColIndex >= 0 ? String(row[tipoColIndex] ?? '').trim() : '';
+        const levelRaw = nivelColIndex >= 0 ? row[nivelColIndex] : undefined;
         const parentCode = String(row[5] ?? '').trim();
         const description = String(row[6] ?? '').trim();
 
         if (!code || !name) continue;
 
-        // Si la columna de grupo/tipo viene vacía, dejamos type en '' para que
-        // luego processImportedData lo infiera según el primer dígito del código.
         const mappedType = group ? mapSpanishTypeToInternal(group).toLowerCase() : '';
+
+        let allowPosting: boolean | undefined = undefined;
+        if (tipoColIndex >= 0 && detailType) {
+          const normalized = detailType.trim().toLowerCase();
+          if (['detalle', 'detail', 'd'].includes(normalized)) {
+            allowPosting = true;
+          } else if (['general', 'control', 'g'].includes(normalized)) {
+            allowPosting = false;
+          }
+        }
+
+        const level = typeof levelRaw === 'number'
+          ? levelRaw
+          : (typeof levelRaw === 'string' && levelRaw.trim() !== '' && !isNaN(Number(levelRaw)))
+            ? Number(levelRaw)
+            : undefined;
 
         importedData.push({
           code,
@@ -412,6 +316,8 @@ export default function ChartAccountsPage() {
           type: mappedType,
           parentCode: parentCode || undefined,
           description: description || undefined,
+          allowPosting,
+          level,
         });
       }
 
@@ -422,68 +328,10 @@ export default function ChartAccountsPage() {
     }
   };
 
-  // const parseXMLContent = (content: string): ImportData[] => {
-  //   const parser = new DOMParser();
-  //   const xmlDoc = parser.parseFromString(content, 'text/xml');
-  //   const accounts = xmlDoc.getElementsByTagName('account');
-  //   const importedData: ImportData[] = [];
-
-  //   for (let i = 0; i < accounts.length; i++) {
-  //     const account = accounts[i];
-  //     const code = account.getAttribute('code') || '';
-  //     const name = account.getAttribute('name') || account.textContent || '';
-  //     const type = account.getAttribute('type')?.toLowerCase() || 'asset';
-  //     const parentCode = account.getAttribute('parent') || undefined;
-  //     const description = account.getAttribute('description') || undefined;
-
-  //     importedData.push({
-  //       code,
-  //       name,
-  //       type,
-  //       parentCode,
-  //       description
-  //     });
-  //   }
-
-  //   return importedData;
-  // };
-
-  // const parseJSONContent = (content: string): ImportData[] => {
-  //   try {
-  //     const data = JSON.parse(content);
-  //     if (Array.isArray(data)) {
-  //       return data.map(item => ({
-  //         code: item.code || item.accountCode || '',
-  //         name: item.name || item.accountName || '',
-  //         type: (item.type || item.accountType || 'asset').toLowerCase(),
-  //         parentCode: item.parentCode || item.parent || undefined,
-  //         description: item.description || undefined,
-  //         balance: item.balance || 0
-  //       }));
-  //     }
-  //   } catch (error) {
-  //     console.error('Error parsing JSON:', error);
-  //   }
-  //   return [];
-  // };
-
-  const mapQuickBooksType = (qbType: string): string => {
-    const typeMap: { [key: string]: string } = {
-      'bank': 'asset',
-      'accounts receivable': 'asset',
-      'other current asset': 'asset',
-      'fixed asset': 'asset',
-      'accounts payable': 'liability',
-      'credit card': 'liability',
-      'other current liability': 'liability',
-      'long term liability': 'liability',
-      'equity': 'equity',
-      'income': 'income',
-      'expense': 'expense',
-      'cost of goods sold': 'expense'
-    };
-    
-    return typeMap[qbType] || 'asset';
+  const handleFormatSelection = (format: ImportFormat) => {
+    setSelectedFormat(format);
+    setShowFormatModal(false);
+    setShowImportModal(true);
   };
 
   const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -539,11 +387,12 @@ export default function ChartAccountsPage() {
     if (!user) return { created: 0, updated: 0, skippedDuplicates: 0, failed: [] };
 
     const codeToIdMap: { [key: string]: string } = {};
-    // Traer cuentas existentes para evitar duplicados por (user_id, code)
     const existing = await chartAccountsService.getAll(user.id);
     const existingCodes = new Set(existing.map(acc => acc.code));
     const existingByCode: Record<string, typeof existing[number]> = {};
     existing.forEach(acc => { existingByCode[acc.code] = acc; });
+
+    const fileHasExplicitTipo = importedData.some(d => d.allowPosting !== undefined);
 
     let created = 0;
     let updated = 0;
@@ -552,15 +401,27 @@ export default function ChartAccountsPage() {
 
     for (const data of importedData) {
       if (!data.code || !data.name) continue;
+
       if (existingCodes.has(data.code)) {
-        // Actualizar saldo y descripción de la cuenta existente
         try {
           const existingAcc = existingByCode[data.code];
           if (existingAcc) {
-            await chartAccountsService.update(existingAcc.id, {
+            const updatePayload: any = {
               balance: data.balance || 0,
-              description: data.description ?? existingAcc.description
-            });
+              description: data.description ?? existingAcc.description,
+            };
+
+            if (!fileHasExplicitTipo) {
+              // Archivo sin Tipo: recalcular allow_posting según nivel.
+              const levelSource = typeof data.level === 'number' && data.level > 0
+                ? data.level
+                : (existingAcc.level || inferLevelFromCode(data.code));
+              updatePayload.allow_posting = levelSource > 1; // nivel 1 => General, >=2 => Detalle
+            } else if (data.allowPosting !== undefined) {
+              updatePayload.allow_posting = data.allowPosting;
+            }
+
+            await chartAccountsService.update(existingAcc.id, updatePayload);
             updated++;
           } else {
             skippedDuplicates++;
@@ -574,14 +435,11 @@ export default function ChartAccountsPage() {
 
       try {
         const rawType = (data.type || '').toLowerCase().trim();
-
         let inferredType = rawType;
 
-        // 1) Si viene texto en el tipo, normalizarlo ("activo", "pasivo", etc.)
         if (inferredType) {
           inferredType = mapSpanishTypeToInternal(inferredType).toLowerCase();
         } else if (data.code) {
-          // 2) Si no viene texto, inferir por el primer dígito del código
           const first = data.code.trim()[0];
           if (first === '1') inferredType = 'asset';
           else if (first === '2') inferredType = 'liability';
@@ -594,18 +452,35 @@ export default function ChartAccountsPage() {
         const validTypes = new Set(['asset', 'liability', 'equity', 'income', 'cost', 'expense']);
         const safeType = (validTypes.has(inferredType) ? inferredType : 'asset') as any;
 
-        const account = {
+        const levelFinal = typeof data.level === 'number' && data.level > 0
+          ? data.level
+          : inferLevelFromCode(data.code);
+
+        const account: any = {
           code: data.code,
           name: data.name,
           type: (safeType || 'asset') as any,
-          level: 1,
+          level: levelFinal,
           balance: data.balance || 0,
           is_active: true,
           description: data.description,
           normal_balance: getNormalBalance(safeType || 'asset'),
-          allow_posting: true,
-          parent_id: null
+          parent_id: null,
         };
+
+        // Determinar allow_posting para nuevas cuentas
+        let allowPostingToSet: boolean | undefined = undefined;
+        if (fileHasExplicitTipo && data.allowPosting !== undefined) {
+          // Archivo con Tipo explícito: respetar el valor
+          allowPostingToSet = data.allowPosting;
+        } else if (!fileHasExplicitTipo) {
+          // Archivo sin Tipo: usar regla por nivel
+          allowPostingToSet = levelFinal > 1; // nivel 1 => General(false), >=2 => Detalle(true)
+        }
+
+        if (allowPostingToSet !== undefined) {
+          account.allow_posting = allowPostingToSet;
+        }
 
         const createdAcc = await chartAccountsService.create(user.id, account);
         codeToIdMap[data.code] = createdAcc.id;
@@ -616,7 +491,7 @@ export default function ChartAccountsPage() {
         failed.push({ code: data.code, errorMessage: (error as any)?.message || 'Error al crear' });
       }
     }
-    // Segunda pasada: asignar parent_id y nivel usando parentCode
+
     try {
       const refreshed = await chartAccountsService.getAll(user.id);
       const refreshedByCode: Record<string, typeof refreshed[number]> = {};
@@ -630,7 +505,6 @@ export default function ChartAccountsPage() {
 
         const desiredLevel = (parent.level || 1) + 1;
 
-        // Solo actualizar si cambian parent o nivel
         if (child.parentId !== parent.id || child.level !== desiredLevel) {
           try {
             await chartAccountsService.update(child.id, {
@@ -840,6 +714,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
     }
 
     try {
+      setIsDeleting(true);
       // Verificar si la cuenta tiene movimientos
       const account = accounts.find(acc => acc.id === accountId);
       if (account && account.balance !== 0) {
@@ -851,6 +726,16 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
       const hasChildren = accounts.some(acc => acc.parentId === accountId);
       if (hasChildren) {
         alert('No se puede eliminar una cuenta que tiene subcuentas. Primero elimine o reasigne las subcuentas.');
+        return;
+      }
+
+      const relations = await chartAccountsService.checkRelations(accountId);
+      if (relations.hasAccountingSettings) {
+        alert('No se puede eliminar esta cuenta porque está usada en la configuración contable.\nActualice la configuración para usar otra cuenta antes de eliminarla.');
+        return;
+      }
+      if (relations.hasJournalEntries) {
+        alert('No se puede eliminar esta cuenta porque tiene asientos contables registrados.\nConsidere inactivarla en lugar de eliminarla.');
         return;
       }
 
@@ -867,6 +752,8 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
       } else {
         alert('Error al eliminar la cuenta. Verifique que no tenga movimientos ni relaciones asociadas.');
       }
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -1025,7 +912,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                 <i className={`ri-arrow-${isExpanded ? 'down' : 'right'}-s-line`}></i>
               </button>
             )}
-            <div className="flex-1 grid grid-cols-8 gap-1 items-center text-sm">
+            <div className="flex-1 grid grid-cols-9 gap-1 items-center text-sm">
               <div className="flex items-center">
                 <input
                   type="checkbox"
@@ -1047,6 +934,11 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
               <div className="flex justify-center">
                 <span className="inline-flex items-center justify-center rounded-full bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-700 min-w-[2rem]">
                   {account.level}
+                </span>
+              </div>
+              <div className="flex justify-center">
+                <span className="text-xs text-gray-600">
+                  {account.allowPosting ? 'Detalle' : 'General'}
                 </span>
               </div>
               <div className="text-right text-gray-900 tabular-nums">
@@ -1221,6 +1113,13 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
           </div>
         </div>
 
+        {isDeleting && (
+          <div className="mb-4 flex items-center gap-2 text-sm text-blue-700 bg-blue-50 border border-blue-100 px-3 py-2 rounded-lg">
+            <span className="inline-block h-4 w-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></span>
+            <span>Eliminando cuentas... Por favor espere.</span>
+          </div>
+        )}
+
         {/* Filters */}
         <div className="flex flex-col md:flex-row gap-4 mb-6">
           <div className="flex-1">
@@ -1253,7 +1152,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
         {/* Chart of Accounts */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="px-2 sm:px-4 py-2 border-b border-gray-200 bg-gray-50 hidden md:block">
-            <div className="grid grid-cols-8 gap-1 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            <div className="grid grid-cols-9 gap-1 text-xs font-semibold text-gray-500 uppercase tracking-wide">
               <div className="flex items-center">
                 <input
                   type="checkbox"
@@ -1263,8 +1162,9 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
               </div>
               <div className="text-left">Código</div>
               <div className="text-left">Nombre de la cuenta</div>
-              <div className="text-center">Tipo</div>
+              <div className="text-center">Grupos</div>
               <div className="text-center w-6">Nivel</div>
+              <div className="text-center">Tipo</div>
               <div className="text-right">Saldo</div>
               <div className="text-center">Estado</div>
               <div className="text-center">Acciones</div>

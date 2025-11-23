@@ -148,7 +148,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       current: location.pathname.startsWith('/accounting'),
       submenu: [
         { name: 'Catálogo de Cuentas', href: '/accounting/chart-accounts' },
-        { name: 'Conciliación Bancaria', href: '/accounting/reconciliation' },
         { name: 'Caja Chica', href: '/accounting/petty-cash' },
         { name: 'Estados Financieros', href: '/accounting/financial-statements' },
         { name: 'Diario General', href: '/accounting/general-journal' },
