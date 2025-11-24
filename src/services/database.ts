@@ -4702,7 +4702,7 @@ export const bankAccountsService = {
     try {
       const { error } = await supabase
         .from('bank_accounts')
-        .update({ is_deleted: true, is_active: false })
+        .update({ is_deleted: true, is_active: false, chart_account_id: null })
         .eq('id', id);
       if (error) throw error;
     } catch (error) {
