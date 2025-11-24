@@ -41,6 +41,7 @@ export default function AccountingPage() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [selectedReport, setSelectedReport] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
+  const [trialBalanceMode, setTrialBalanceMode] = useState<'detail' | 'summary'>('detail');
 
   const [journalForm, setJournalForm] = useState({
     entry_number: '',
@@ -262,23 +263,82 @@ export default function AccountingPage() {
           {
             const data = await chartAccountsService.generateTrialBalance(user.id, today);
             filename = `balanza_comprobacion_${today}.xlsx`;
-            const headers = [
-              { key: 'code', title: 'Código' },
-              { key: 'name', title: 'Nombre' },
-              { key: 'debit', title: 'Débito' },
-              { key: 'credit', title: 'Crédito' },
-            ];
             const rows: any[] = [];
-            (data.accounts || []).forEach((acc: any) => rows.push({ code: acc.code, name: acc.name, debit: acc.debitBalance || 0, credit: acc.creditBalance || 0 }));
-            rows.push({ code: 'TOTALES', name: '', debit: data.totalDebits || 0, credit: data.totalCredits || 0 });
-            rows.push({ code: 'BALANCEADO', name: '', debit: data.isBalanced ? 'SÍ' : 'NO', credit: '' });
+            const allAccounts = (data.accounts || []) as any[];
+
+            const accountsToExport = trialBalanceMode === 'summary'
+              ? allAccounts.filter((acc: any) =>
+                  acc.allow_posting === false || (typeof acc.level === 'number' && acc.level <= 2)
+                )
+              : allAccounts;
+
+            accountsToExport.forEach((acc: any) => {
+              const level = typeof acc.level === 'number' ? acc.level : '';
+              const code = acc.code || '';
+              const name = acc.name || '';
+
+              const totalDebit = acc.total_debit ?? acc.debit ?? acc.debitBalance ?? 0;
+              const totalCredit = acc.total_credit ?? acc.credit ?? acc.creditBalance ?? 0;
+
+              // Por ahora consideramos todo como "movimientos" del período
+              const prevDebit = 0;
+              const prevCredit = 0;
+              const movDebit = totalDebit;
+              const movCredit = totalCredit;
+
+              // Saldo final según balance normal
+              const normal = acc.normal_balance || 'debit';
+              const balance = acc.balance ?? (normal === 'credit' ? (totalCredit - totalDebit) : (totalDebit - totalCredit));
+              const finalDebit = balance > 0 && normal === 'debit' ? balance : 0;
+              const finalCredit = balance > 0 && normal === 'credit' ? balance : 0;
+
+              rows.push({
+                level,
+                number: code,
+                name,
+                prev_debit: prevDebit,
+                prev_credit: prevCredit,
+                mov_debit: movDebit,
+                mov_credit: movCredit,
+                final_debit: finalDebit,
+                final_credit: finalCredit,
+              });
+            });
+
+            rows.push({
+              level: '',
+              number: '',
+              name: 'TOTALES',
+              prev_debit: 0,
+              prev_credit: 0,
+              mov_debit: data.totalDebits || 0,
+              mov_credit: data.totalCredits || 0,
+              final_debit: 0,
+              final_credit: 0,
+            });
+            rows.push({
+              level: '',
+              number: '',
+              name: 'BALANCEADO',
+              prev_debit: '',
+              prev_credit: '',
+              mov_debit: data.isBalanced ? 'SÍ' : 'NO',
+              mov_credit: '',
+              final_debit: '',
+              final_credit: '',
+            });
             await exportToExcelStyled(
               rows,
               [
-                { key: 'code', title: 'Código', width: 12 },
-                { key: 'name', title: 'Nombre', width: 40 },
-                { key: 'debit', title: 'Débito', width: 16, numFmt: '#,##0.00' },
-                { key: 'credit', title: 'Crédito', width: 16, numFmt: '#,##0.00' },
+                { key: 'level', title: 'Nivel', width: 6 },
+                { key: 'number', title: 'Número de cuenta', width: 16 },
+                { key: 'name', title: 'Cuenta contable', width: 40 },
+                { key: 'prev_debit', title: 'Saldo anterior Débito', width: 18, numFmt: '#,##0.00' },
+                { key: 'prev_credit', title: 'Saldo anterior Crédito', width: 18, numFmt: '#,##0.00' },
+                { key: 'mov_debit', title: 'Movimientos Débito', width: 18, numFmt: '#,##0.00' },
+                { key: 'mov_credit', title: 'Movimientos Crédito', width: 18, numFmt: '#,##0.00' },
+                { key: 'final_debit', title: 'Saldo final Débito', width: 18, numFmt: '#,##0.00' },
+                { key: 'final_credit', title: 'Saldo final Crédito', width: 18, numFmt: '#,##0.00' },
               ],
               filename.replace('.xlsx',''),
               'Balanza de Comprobación'
@@ -820,39 +880,6 @@ export default function AccountingPage() {
           </div>
         )}
 
-        {activeTab === 'ledger' && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h3 className="text-lg font-medium text-gray-900">Mayor General</h3>
-            </div>
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {['asset', 'liability', 'equity', 'income', 'expense'].map((type) => (
-                  <div key={type} className="border border-gray-200 rounded-lg p-4">
-                    <h4 className="font-medium text-gray-900 mb-3 capitalize">
-                      {type === 'asset' ? 'Activos' : 
-                       type === 'liability' ? 'Pasivos' :
-                       type === 'equity' ? 'Patrimonio' :
-                       type === 'income' ? 'Ingresos' : 'Gastos'}
-                    </h4>
-                    <div className="space-y-2">
-                      {getAccountsByType(type).slice(0, 5).map((account) => (
-                        <div key={account.id} className="flex justify-between text-sm">
-                          <span className="text-gray-600">{account.code} - {account.name}</span>
-                          <span className="font-medium">RD${(account.balance || 0).toLocaleString()}</span>
-                        </div>
-                      ))}
-                      {getAccountsByType(type).length === 0 && (
-                        <p className="text-sm text-gray-500">No hay cuentas registradas</p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
         {activeTab === 'reports' && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="px-6 py-4 border-b border-gray-200">
@@ -878,6 +905,21 @@ export default function AccountingPage() {
                         <p className="text-sm text-gray-500">{report.description}</p>
                       </div>
                     </div>
+                    {report.id === 'trial-balance' && (
+                      <div className="mb-3">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Modo de balanza
+                        </label>
+                        <select
+                          value={trialBalanceMode}
+                          onChange={(e) => setTrialBalanceMode(e.target.value as 'detail' | 'summary')}
+                          className="w-full px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="detail">Con detalle (todas las cuentas)</option>
+                          <option value="summary">Sin detalle (solo cuentas de grupo)</option>
+                        </select>
+                      </div>
+                    )}
                     <button
                       onClick={() => handleGenerateReport(report.id)}
                       disabled={reportLoading}
@@ -898,6 +940,28 @@ export default function AccountingPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'ledger' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-900">Mayor General</h3>
+              <button
+                onClick={() => navigate('/accounting/general-ledger')}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+              >
+                <i className="ri-book-open-line mr-2"></i>
+                Ir al Mayor General
+              </button>
+            </div>
+            <div className="p-6 text-sm text-gray-600">
+              <p>
+                Desde esta pestaña puedes acceder al detalle del Mayor General.
+                Usa el botón "Ir al Mayor General" para ver los movimientos por cuenta
+                con filtros de fechas y exportación a Excel.
+              </p>
             </div>
           </div>
         )}

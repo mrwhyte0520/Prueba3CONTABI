@@ -43,7 +43,8 @@ const GeneralJournalPage: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFilter, setDateFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
   // Formulario para nuevo asiento
@@ -354,7 +355,9 @@ const GeneralJournalPage: React.FC = () => {
                          entry.entry_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          entry.reference.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const matchesDate = !dateFilter || entry.entry_date.startsWith(dateFilter);
+    const matchesFrom = !dateFrom || entry.entry_date >= dateFrom;
+    const matchesTo = !dateTo || entry.entry_date <= dateTo;
+    const matchesDate = matchesFrom && matchesTo;
     const matchesStatus = statusFilter === 'all' || entry.status === statusFilter;
     
     return matchesSearch && matchesDate && matchesStatus;
@@ -484,9 +487,15 @@ const GeneralJournalPage: React.FC = () => {
               </div>
               
               <input
-                type="month"
-                value={dateFilter}
-                onChange={(e) => setDateFilter(e.target.value)}
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
                 className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               

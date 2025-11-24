@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { suppliersService } from '../../../services/database';
+import { suppliersService, chartAccountsService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -20,6 +20,7 @@ export default function SuppliersPage() {
   const [selectedSupplier, setSelectedSupplier] = useState<any>(null);
 
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -31,7 +32,8 @@ export default function SuppliersPage() {
     creditLimit: '',
     paymentTerms: '30 días',
     contact: '',
-    status: 'Activo'
+    status: 'Activo',
+    apAccountId: '',
   });
 
   const categories = ['Materiales', 'Distribución', 'Servicios', 'Construcción', 'Tecnología'];
@@ -58,14 +60,27 @@ export default function SuppliersPage() {
         contact: '',
         status: s.is_active === false ? 'Inactivo' : 'Activo',
         balance: typeof s.current_balance === 'number' ? s.current_balance : 0,
+        apAccountId: s.ap_account_id || '',
       }));
       setSuppliers(mapped);
+
+      // Cargar catálogo de cuentas para seleccionar cuentas por pagar específicas
+      const accs = await chartAccountsService.getAll(user.id);
+      setAccounts(accs || []);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error loading suppliers from DB, keeping local list empty', error);
       setSuppliers([]);
     }
   };
+
+  // Cuentas por pagar permitidas para proveedores: pasivo posteable con 'cuentas por pagar' en el nombre
+  const payableAccounts = accounts.filter((acc) => {
+    if (!acc.allowPosting) return false;
+    if (acc.type !== 'liability') return false;
+    const name = String(acc.name || '').toLowerCase();
+    return name.includes('cuentas por pagar');
+  });
 
   useEffect(() => {
     loadSuppliers();
@@ -89,7 +104,7 @@ export default function SuppliersPage() {
       return;
     }
 
-    const payload = {
+    const payload: any = {
       // Columnas reales de la tabla suppliers
       name: formData.name,
       tax_id: formData.rnc,
@@ -104,6 +119,13 @@ export default function SuppliersPage() {
         : 0,
       is_active: formData.status === 'Activo',
     };
+
+    // Cuenta por pagar específica (opcional)
+    if (formData.apAccountId) {
+      payload.ap_account_id = formData.apAccountId;
+    } else {
+      payload.ap_account_id = null;
+    }
 
     try {
       if (editingSupplier?.id) {
@@ -132,7 +154,8 @@ export default function SuppliersPage() {
       creditLimit: '',
       paymentTerms: '30 días',
       contact: '',
-      status: 'Activo'
+      status: 'Activo',
+      apAccountId: '',
     });
     setEditingSupplier(null);
     setShowModal(false);
@@ -150,7 +173,8 @@ export default function SuppliersPage() {
       creditLimit: supplier.creditLimit.toString(),
       paymentTerms: supplier.paymentTerms,
       contact: supplier.contact,
-      status: supplier.status || 'Activo'
+      status: supplier.status || 'Activo',
+      apAccountId: supplier.apAccountId || '',
     });
     setShowModal(true);
   };
@@ -683,6 +707,27 @@ export default function SuppliersPage() {
                       <option value="Inactivo">Inactivo</option>
                     </select>
                   </div>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta por Pagar (opcional)
+                  </label>
+                  <select
+                    value={formData.apAccountId}
+                    onChange={(e) => setFormData({ ...formData, apAccountId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="">Usar cuenta por defecto</option>
+                    {payableAccounts.map((acc: any) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Si no seleccionas una cuenta, se usará la cuenta por pagar configurada por defecto.
+                  </p>
                 </div>
                 <div className="flex justify-end space-x-3 pt-4">
                   <button 

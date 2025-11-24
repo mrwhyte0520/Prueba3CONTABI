@@ -171,9 +171,30 @@ const PettyCashPage: React.FC = () => {
     }
   };
 
-  const pettyCashAccounts = accounts.filter(acc => acc.allowPosting && acc.type === 'asset');
-  const bankAccounts = accounts.filter(acc => acc.allowPosting && acc.type === 'asset');
-  const expenseAccounts = accounts.filter(acc => acc.allowPosting && acc.type === 'expense');
+  const pettyCashAccounts = accounts.filter(
+    acc => acc.allowPosting && acc.type === 'asset' && !acc.isBankAccount
+  );
+
+  const bankAccounts = accounts.filter(
+    acc => acc.allowPosting && acc.type === 'asset' && acc.isBankAccount
+  );
+
+  // Cuentas permitidas para gastos de Caja Chica:
+  // - Cuentas por cobrar Accionistas
+  // - Cuentas por cobrar funcionarios y empleados
+  // - Categoría 5 (Costos) -> type 'cost'
+  // - Categoría 6 (Gastos) -> type 'expense'
+  const expenseAccounts = accounts.filter((acc) => {
+    if (!acc.allowPosting) return false;
+
+    if (acc.type === 'expense' || acc.type === 'cost') return true;
+
+    const name = String(acc.name || '').toLowerCase();
+    if (name.includes('cuentas por cobrar accionistas')) return true;
+    if (name.includes('cuentas por cobrar funcionarios') || name.includes('cuentas por cobrar empleados')) return true;
+
+    return false;
+  });
 
   const handleCreateExpense = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService } from '../../../services/database';
+import { customersService, chartAccountsService } from '../../../services/database';
 
 interface Customer {
   id: string;
@@ -24,6 +24,7 @@ export default function CustomersPage() {
   const [showCustomerDetails, setShowCustomerDetails] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(false);
+  const [accounts, setAccounts] = useState<any[]>([]);
 
   const loadCustomers = async () => {
     if (!user?.id) return;
@@ -37,9 +38,23 @@ export default function CustomersPage() {
   };
 
   useEffect(() => {
-    loadCustomers();
+    const run = async () => {
+      await loadCustomers();
+      if (!user?.id) return;
+      const accs = await chartAccountsService.getAll(user.id);
+      setAccounts(accs || []);
+    };
+    run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Cuentas por cobrar permitidas para clientes: cuentas de activo posteables que contengan "Cuentas por Cobrar" en el nombre
+  const receivableAccounts = accounts.filter((acc) => {
+    if (!acc.allowPosting) return false;
+    if (acc.type !== 'asset') return false;
+    const name = String(acc.name || '').toLowerCase();
+    return name.includes('cuentas por cobrar');
+  });
 
   const getCustomerStatusColor = (status: string) => {
     switch (status) {
@@ -195,6 +210,7 @@ export default function CustomersPage() {
       address: String(formData.get('address') || ''),
       creditLimit: Number(formData.get('creditLimit') || 0),
       status: String(formData.get('status') || 'active') as Customer['status'],
+      arAccountId: String(formData.get('arAccountId') || ''),
     };
     try {
       if (selectedCustomer) {
@@ -484,6 +500,27 @@ export default function CustomersPage() {
                       <option value="blocked">Bloqueado</option>
                     </select>
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta por Cobrar (opcional)
+                  </label>
+                  <select
+                    name="arAccountId"
+                    defaultValue={(selectedCustomer as any)?.arAccountId || ''}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="">Usar cuenta por defecto</option>
+                    {receivableAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Si no seleccionas una cuenta, se usará la cuenta por cobrar configurada por defecto.
+                  </p>
                 </div>
                 
                 <div className="flex space-x-3 pt-4">

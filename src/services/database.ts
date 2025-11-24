@@ -1118,13 +1118,14 @@ export const customersService = {
         creditLimit: Number(c.credit_limit) || 0,
         currentBalance: Number(c.current_balance) || 0,
         status: (c.status as 'active' | 'inactive' | 'blocked') || 'active',
+        arAccountId: c.ar_account_id || null,
       }));
     } catch (error) {
       return handleDatabaseError(error, []);
     }
   },
 
-  async create(userId: string, customer: { name: string; document: string; phone: string; email: string; address: string; creditLimit: number; status: 'active' | 'inactive' | 'blocked' }) {
+  async create(userId: string, customer: { name: string; document: string; phone: string; email: string; address: string; creditLimit: number; status: 'active' | 'inactive' | 'blocked'; arAccountId?: string }) {
     try {
       const payload = {
         user_id: userId,
@@ -1136,6 +1137,7 @@ export const customersService = {
         credit_limit: customer.creditLimit,
         current_balance: 0,
         status: customer.status,
+        ar_account_id: customer.arAccountId || null,
       };
       const { data, error } = await supabase
         .from('customers')
@@ -1156,7 +1158,7 @@ export const customersService = {
     }
   },
 
-  async update(id: string, customer: { name: string; document: string; phone: string; email: string; address: string; creditLimit: number; status: 'active' | 'inactive' | 'blocked' }) {
+  async update(id: string, customer: { name: string; document: string; phone: string; email: string; address: string; creditLimit: number; status: 'active' | 'inactive' | 'blocked'; arAccountId?: string }) {
     try {
       const payload = {
         name: customer.name,
@@ -1166,6 +1168,7 @@ export const customersService = {
         address: customer.address,
         credit_limit: customer.creditLimit,
         status: customer.status,
+        ar_account_id: customer.arAccountId || null,
         updated_at: new Date().toISOString(),
       };
       const { data, error } = await supabase
@@ -1921,7 +1924,7 @@ export const financialReportsService = {
           debit_amount,
           credit_amount,
           journal_entries (entry_date, user_id),
-          chart_accounts (id, user_id, code, name, type, normal_balance)
+          chart_accounts (id, user_id, code, name, type, normal_balance, level, allow_posting, parent_id)
         `)
         .eq('journal_entries.user_id', userId)
         .gte('journal_entries.entry_date', fromDate)
@@ -1950,6 +1953,9 @@ export const financialReportsService = {
             name: account.name,
             type: account.type,
             normal_balance: account.normal_balance,
+            level: account.level,
+            allow_posting: account.allow_posting,
+            parent_id: account.parent_id,
             total_debit: 0,
             total_credit: 0,
             balance: 0,
