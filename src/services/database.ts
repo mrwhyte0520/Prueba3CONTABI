@@ -1119,13 +1119,46 @@ export const customersService = {
         currentBalance: Number(c.current_balance) || 0,
         status: (c.status as 'active' | 'inactive' | 'blocked') || 'active',
         arAccountId: c.ar_account_id || null,
+        advanceAccountId: c.advance_account_id || null,
+        documentType: c.document_type || null,
+        contactName: c.contact_name || '',
+        contactPhone: c.contact_phone || '',
+        contactEmail: c.contact_email || '',
+        customerType: c.customer_type || '',
+        paymentTerms: c.payment_terms || '',
+        invoiceType: c.invoice_type || '',
+        ncfType: c.ncf_type || '',
+        salesperson: c.salesperson || '',
+        salesRepId: c.sales_rep_id || null,
+        paymentTermId: c.payment_term_id || null,
       }));
     } catch (error) {
       return handleDatabaseError(error, []);
     }
   },
 
-  async create(userId: string, customer: { name: string; document: string; phone: string; email: string; address: string; creditLimit: number; status: 'active' | 'inactive' | 'blocked'; arAccountId?: string }) {
+  async create(userId: string, customer: { 
+    name: string; 
+    document: string; 
+    phone: string; 
+    email: string; 
+    address: string; 
+    creditLimit: number; 
+    status: 'active' | 'inactive' | 'blocked'; 
+    arAccountId?: string; 
+    advanceAccountId?: string; 
+    documentType?: string; 
+    contactName?: string; 
+    contactPhone?: string; 
+    contactEmail?: string; 
+    customerType?: string; 
+    paymentTerms?: string; 
+    invoiceType?: string; 
+    ncfType?: string; 
+    salesperson?: string; 
+    salesRepId?: string | null;
+    paymentTermId?: string | null 
+  }) {
     try {
       const payload = {
         user_id: userId,
@@ -1138,6 +1171,18 @@ export const customersService = {
         current_balance: 0,
         status: customer.status,
         ar_account_id: customer.arAccountId || null,
+        advance_account_id: customer.advanceAccountId || null,
+        document_type: customer.documentType || null,
+        contact_name: customer.contactName || null,
+        contact_phone: customer.contactPhone || null,
+        contact_email: customer.contactEmail || null,
+        customer_type: customer.customerType || null,
+        payment_terms: customer.paymentTerms || null,
+        invoice_type: customer.invoiceType || null,
+        ncf_type: customer.ncfType || null,
+        salesperson: customer.salesperson || null,
+        sales_rep_id: customer.salesRepId || null,
+        payment_term_id: customer.paymentTermId || null,
       };
       const { data, error } = await supabase
         .from('customers')
@@ -1158,7 +1203,27 @@ export const customersService = {
     }
   },
 
-  async update(id: string, customer: { name: string; document: string; phone: string; email: string; address: string; creditLimit: number; status: 'active' | 'inactive' | 'blocked'; arAccountId?: string }) {
+  async update(id: string, customer: { 
+    name: string; 
+    document: string; 
+    phone: string; 
+    email: string; 
+    address: string; 
+    creditLimit: number; 
+    status: 'active' | 'inactive' | 'blocked'; 
+    arAccountId?: string; 
+    advanceAccountId?: string; 
+    documentType?: string; 
+    contactName?: string; 
+    contactPhone?: string; 
+    contactEmail?: string; 
+    customerType?: string; 
+    paymentTerms?: string; 
+    invoiceType?: string; 
+    ncfType?: string; 
+    salesperson?: string; 
+    paymentTermId?: string | null 
+  }) {
     try {
       const payload = {
         name: customer.name,
@@ -1169,6 +1234,17 @@ export const customersService = {
         credit_limit: customer.creditLimit,
         status: customer.status,
         ar_account_id: customer.arAccountId || null,
+        advance_account_id: customer.advanceAccountId || null,
+        document_type: customer.documentType || null,
+        contact_name: customer.contactName || null,
+        contact_phone: customer.contactPhone || null,
+        contact_email: customer.contactEmail || null,
+        customer_type: customer.customerType || null,
+        payment_terms: customer.paymentTerms || null,
+        invoice_type: customer.invoiceType || null,
+        ncf_type: customer.ncfType || null,
+        salesperson: customer.salesperson || null,
+        payment_term_id: customer.paymentTermId || null,
         updated_at: new Date().toISOString(),
       };
       const { data, error } = await supabase
@@ -1187,6 +1263,122 @@ export const customersService = {
       return data;
     } catch (error) {
       console.error('customersService.update error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Customer Types Service
+========================================================== */
+export const customerTypesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('customer_types')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name');
+      if (error) return handleDatabaseError(error, []);
+      return (data || []).map((t: any) => ({
+        id: t.id as string,
+        name: t.name || '',
+        description: t.description || '',
+        fixedDiscount: Number(t.fixed_discount) || 0,
+        creditLimit: Number(t.credit_limit) || 0,
+        allowedDelayDays: Number(t.allowed_delay_days) || 0,
+        noTax: Boolean(t.no_tax),
+        arAccountId: t.ar_account_id || null,
+        arAccountCode: t.ar_account_code || null,
+      }));
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: { name: string; description?: string; fixedDiscount?: number; creditLimit?: number; allowedDelayDays?: number; noTax?: boolean; arAccountId?: string }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+
+      // Intentamos obtener el código de cuenta si se pasa arAccountId
+      let arAccountCode: string | null = null;
+      if (payload.arAccountId) {
+        const { data: acc, error: accErr } = await supabase
+          .from('chart_accounts')
+          .select('code')
+          .eq('id', payload.arAccountId)
+          .maybeSingle();
+        if (!accErr && acc?.code) {
+          arAccountCode = String(acc.code);
+        }
+      }
+
+      const body = {
+        user_id: userId,
+        name: payload.name,
+        description: payload.description || null,
+        fixed_discount: typeof payload.fixedDiscount === 'number' ? payload.fixedDiscount : 0,
+        credit_limit: typeof payload.creditLimit === 'number' ? payload.creditLimit : 0,
+        allowed_delay_days: typeof payload.allowedDelayDays === 'number' ? payload.allowedDelayDays : 0,
+        no_tax: Boolean(payload.noTax),
+        ar_account_id: payload.arAccountId || null,
+        ar_account_code: arAccountCode,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('customer_types')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('customerTypesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: { name: string; description?: string; fixedDiscount?: number; creditLimit?: number; allowedDelayDays?: number; noTax?: boolean; arAccountId?: string }) {
+    try {
+      const patch: any = {
+        name: payload.name,
+        description: payload.description || null,
+        fixed_discount: typeof payload.fixedDiscount === 'number' ? payload.fixedDiscount : 0,
+        credit_limit: typeof payload.creditLimit === 'number' ? payload.creditLimit : 0,
+        allowed_delay_days: typeof payload.allowedDelayDays === 'number' ? payload.allowedDelayDays : 0,
+        no_tax: Boolean(payload.noTax),
+        ar_account_id: payload.arAccountId || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Actualizar código de cuenta si cambia arAccountId
+      if (payload.arAccountId) {
+        const { data: acc, error: accErr } = await supabase
+          .from('chart_accounts')
+          .select('code')
+          .eq('id', payload.arAccountId)
+          .maybeSingle();
+        if (!accErr && acc?.code) {
+          patch.ar_account_code = String(acc.code);
+        }
+      } else {
+        patch.ar_account_code = null;
+      }
+
+      const { data, error } = await supabase
+        .from('customer_types')
+        .update(patch)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('customerTypesService.update error', error);
       throw error;
     }
   },
@@ -1753,6 +1945,92 @@ export const chartAccountsService = {
 };
 
 /* ==========================================================
+   Payment Terms Service
+========================================================== */
+export const paymentTermsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('payment_terms')
+        .select('*')
+        .eq('user_id', userId)
+        .order('days');
+      if (error) return handleDatabaseError(error, []);
+      return (data || []).map((t: any) => ({
+        id: t.id as string,
+        name: t.name || '',
+        description: t.description || '',
+        days: Number(t.days) || 0,
+      }));
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: { name: string; days: number; description?: string }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const body = {
+        user_id: userId,
+        name: payload.name,
+        days: Number(payload.days) || 0,
+        description: payload.description || null,
+        created_at: now,
+        updated_at: now,
+      };
+      const { data, error } = await supabase
+        .from('payment_terms')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('paymentTermsService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: { name?: string; days?: number; description?: string | null }) {
+    try {
+      const body: any = {
+        updated_at: new Date().toISOString(),
+      };
+      if (typeof payload.name === 'string') body.name = payload.name;
+      if (typeof payload.days === 'number') body.days = Number(payload.days) || 0;
+      if (payload.description !== undefined) body.description = payload.description;
+
+      const { data, error } = await supabase
+        .from('payment_terms')
+        .update(body)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('paymentTermsService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('payment_terms')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('supplierTypesService.delete error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
    Petty Cash Service
 ========================================================== */
 export const pettyCashService = {
@@ -1892,12 +2170,99 @@ export const pettyCashService = {
         ...reimbursement,
         user_id: userId,
       };
+
       const { data, error } = await supabase
         .from('petty_cash_reimbursements')
         .insert(payload)
         .select('*')
         .single();
+
       if (error) throw error;
+
+      // Best-effort: crear solicitud de autorización
+      try {
+        await supabase.from('approval_requests').insert({
+          user_id: userId,
+          entity_type: 'petty_cash_reimbursement',
+          entity_id: data.id,
+          status: 'pending',
+          notes: reimbursement.description || null,
+        });
+      } catch (approvalError) {
+        console.error('Error creating approval request for petty cash reimbursement:', approvalError);
+      }
+
+      const fundId = reimbursement.fund_id;
+      const amount = Number(reimbursement.amount) || 0;
+
+      // Actualizar saldo del fondo (sumar el reembolso al current_balance)
+      try {
+        const { data: fundData, error: fundError } = await supabase
+          .from('petty_cash_funds')
+          .select('id, petty_cash_account_id, current_balance')
+          .eq('id', fundId)
+          .single();
+
+        if (fundError || !fundData) {
+          console.error('Error obteniendo fondo de caja chica para reposición:', fundError);
+        } else {
+          const newBalance = Number(fundData.current_balance || 0) + amount;
+          const { error: updateError } = await supabase
+            .from('petty_cash_funds')
+            .update({ current_balance: newBalance })
+            .eq('id', fundId);
+
+          if (updateError) {
+            console.error('Error actualizando saldo del fondo de caja chica:', updateError);
+          }
+
+          // Generar asiento contable automático: Debe Caja Chica / Haber Banco
+          try {
+            if (amount > 0 && fundData.petty_cash_account_id && reimbursement.bank_account_id) {
+              const { data: bankData, error: bankError } = await supabase
+                .from('bank_accounts')
+                .select('chart_account_id, bank_name')
+                .eq('id', reimbursement.bank_account_id)
+                .maybeSingle();
+
+              if (!bankError && bankData?.chart_account_id) {
+                const entryDate = reimbursement.reimbursement_date || new Date().toISOString().split('T')[0];
+                const entryPayload = {
+                  entry_number: `PCT-${String(entryDate).slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
+                  entry_date: String(entryDate),
+                  description:
+                    reimbursement.description ||
+                    `Reposición de caja chica fondo ${fundData.id}`,
+                  reference: data.id ? String(data.id) : null,
+                  status: 'posted' as const,
+                };
+
+                const lines = [
+                  {
+                    account_id: fundData.petty_cash_account_id as string,
+                    description: 'Reposición de Caja Chica',
+                    debit_amount: amount,
+                    credit_amount: 0,
+                  },
+                  {
+                    account_id: bankData.chart_account_id as string,
+                    description: `Banco ${bankData.bank_name || ''}`.trim(),
+                    debit_amount: 0,
+                    credit_amount: amount,
+                  },
+                ];
+
+                await journalEntriesService.createWithLines(userId, entryPayload, lines);
+              }
+            }
+          } catch (jeError) {
+            console.error('Error creando asiento de reposición de caja chica:', jeError);
+          }
+        }
+      } catch (fundUpdateError) {
+        console.error('Error en actualización de fondo de caja chica:', fundUpdateError);
+      }
+
       return data;
     } catch (error) {
       console.error('pettyCashService.createReimbursement error', error);
@@ -1907,7 +2272,83 @@ export const pettyCashService = {
 };
 
 /* ==========================================================
-   Financial Reports Service (Trial Balance / Statements)
+   Petty Cash Categories Service
+========================================================== */
+export const pettyCashCategoriesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('petty_cash_categories')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, category: any) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const payload = {
+        ...category,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('petty_cash_categories')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('pettyCashCategoriesService.create error', error);
+      throw error;
+    }
+  },
+ 
+  async update(id: string, patch: any) {
+    try {
+      const payload = {
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await supabase
+        .from('petty_cash_categories')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('pettyCashCategoriesService.update error', error);
+      throw error;
+    }
+  },
+
+  async toggleActive(id: string, isActive: boolean) {
+    try {
+      const { data, error } = await supabase
+        .from('petty_cash_categories')
+        .update({ is_active: isActive, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('pettyCashCategoriesService.toggleActive error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Financial Reports Service
 ========================================================== */
 /**
  * Servicio para generar reportes financieros, incluyendo el balance de prueba y los estados financieros.
@@ -3916,6 +4357,112 @@ export const suppliersService = {
       throw error;
     }
   }
+}
+
+/**
+ * Supplier Types Service
+ * Tabla: supplier_types
+========================================================== */
+export const supplierTypesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('supplier_types')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name');
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: {
+    name: string;
+    description?: string;
+    affects_itbis?: boolean;
+    affects_isr?: boolean;
+    is_rst?: boolean;
+    is_ong?: boolean;
+    is_non_taxpayer?: boolean;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const body = {
+        user_id: userId,
+        name: payload.name,
+        description: payload.description || null,
+        affects_itbis: payload.affects_itbis !== false,
+        affects_isr: payload.affects_isr !== false,
+        is_rst: !!payload.is_rst,
+        is_ong: !!payload.is_ong,
+        is_non_taxpayer: !!payload.is_non_taxpayer,
+        created_at: now,
+        updated_at: now,
+      };
+      const { data, error } = await supabase
+        .from('supplier_types')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('supplierTypesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: {
+    name?: string;
+    description?: string;
+    affects_itbis?: boolean;
+    affects_isr?: boolean;
+    is_rst?: boolean;
+    is_ong?: boolean;
+    is_non_taxpayer?: boolean;
+  }) {
+    try {
+      const body: any = {
+        updated_at: new Date().toISOString(),
+      };
+      if (typeof payload.name === 'string') body.name = payload.name;
+      if (payload.description !== undefined) body.description = payload.description;
+      if (typeof payload.affects_itbis === 'boolean') body.affects_itbis = payload.affects_itbis;
+      if (typeof payload.affects_isr === 'boolean') body.affects_isr = payload.affects_isr;
+      if (typeof payload.is_rst === 'boolean') body.is_rst = payload.is_rst;
+      if (typeof payload.is_ong === 'boolean') body.is_ong = payload.is_ong;
+      if (typeof payload.is_non_taxpayer === 'boolean') body.is_non_taxpayer = payload.is_non_taxpayer;
+
+      const { data, error } = await supabase
+        .from('supplier_types')
+        .update(body)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('supplierTypesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('supplier_types')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('supplierTypesService.delete error', error);
+      throw error;
+    }
+  },
 };
 
 /* ==========================================================
@@ -4154,6 +4701,326 @@ export const apQuotesService = {
       console.error('apQuotesService.delete error', error);
       throw error;
     }
+  }
+};
+
+/* ==========================================================
+   Supplier Advances Service (Accounts Payable)
+   Tabla: ap_supplier_advances
+========================================================== */
+export const apSupplierAdvancesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('ap_supplier_advances')
+        .select(`
+          *,
+          suppliers (name)
+        `)
+        .eq('user_id', userId)
+        .order('advance_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: {
+    supplier_id: string;
+    advance_number: string;
+    advance_date: string;
+    amount: number;
+    reference?: string | null;
+    description?: string | null;
+    status?: string;
+    applied_amount?: number;
+    balance_amount?: number;
+  }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const body = {
+        user_id: userId,
+        supplier_id: payload.supplier_id,
+        advance_number: payload.advance_number,
+        advance_date: payload.advance_date,
+        currency: 'DOP',
+        amount: payload.amount,
+        reference: payload.reference ?? null,
+        description: payload.description ?? null,
+        applied_amount: typeof payload.applied_amount === 'number' ? payload.applied_amount : 0,
+        balance_amount: typeof payload.balance_amount === 'number' ? payload.balance_amount : payload.amount,
+        status: payload.status ?? 'pending',
+      };
+      const { data, error } = await supabase
+        .from('ap_supplier_advances')
+        .insert(body)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('apSupplierAdvancesService.create error', error);
+      throw error;
+    }
+  },
+
+  async updateStatus(
+    id: string,
+    status: string,
+    extra?: { appliedAmount?: number; balanceAmount?: number }
+  ) {
+    try {
+      const patch: any = { status, updated_at: new Date().toISOString() };
+      if (typeof extra?.appliedAmount === 'number') {
+        patch.applied_amount = extra.appliedAmount;
+      }
+      if (typeof extra?.balanceAmount === 'number') {
+        patch.balance_amount = extra.balanceAmount;
+      }
+
+      const { data, error } = await supabase
+        .from('ap_supplier_advances')
+        .update(patch)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('apSupplierAdvancesService.updateStatus error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('ap_supplier_advances')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('apSupplierAdvancesService.delete error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   AP Invoices Service (Facturas de Suplidor - CxP)
+========================================================== */
+export const apInvoicesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('ap_invoices')
+        .select(`
+          *,
+          suppliers (name)
+        `)
+        .eq('user_id', userId)
+        .order('invoice_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, invoice: any) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        ...invoice,
+        user_id: userId,
+        created_at: invoice.created_at || now,
+        updated_at: invoice.updated_at || now,
+      };
+      const { data, error } = await supabase
+        .from('ap_invoices')
+        .insert(payload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('apInvoicesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, patch: any) {
+    try {
+      const payload = {
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await supabase
+        .from('ap_invoices')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('apInvoicesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('ap_invoices')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('apInvoicesService.delete error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   AP Invoice Lines Service (Detalle de Facturas de Suplidor)
+========================================================== */
+export const apInvoiceLinesService = {
+  async getByInvoice(apInvoiceId: string) {
+    try {
+      if (!apInvoiceId) return [];
+      const { data, error } = await supabase
+        .from('ap_invoice_lines')
+        .select('*')
+        .eq('ap_invoice_id', apInvoiceId)
+        .order('created_at', { ascending: true });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async createMany(apInvoiceId: string, lines: any[]) {
+    try {
+      if (!apInvoiceId || !Array.isArray(lines) || lines.length === 0) return [];
+      const now = new Date().toISOString();
+      const payload = lines.map((l) => ({
+        ...l,
+        ap_invoice_id: apInvoiceId,
+        created_at: l.created_at || now,
+        updated_at: l.updated_at || now,
+      }));
+      const { data, error } = await supabase
+        .from('ap_invoice_lines')
+        .insert(payload)
+        .select('*');
+      if (error) throw error;
+      const insertedLines = data ?? [];
+
+      // Best-effort: registrar asiento contable para la factura de suplidor usando las cuentas de gasto
+      try {
+        // Obtener factura para conocer usuario, fechas y totales
+        const { data: invoice, error: invError } = await supabase
+          .from('ap_invoices')
+          .select('*')
+          .eq('id', apInvoiceId)
+          .maybeSingle();
+
+        if (!invError && invoice && invoice.user_id) {
+          const userId = invoice.user_id as string;
+
+          // Configuración contable: cuenta de CxP
+          const settings = await accountingSettingsService.get(userId);
+          const apAccountId = settings?.ap_account_id as string | undefined;
+
+          if (apAccountId) {
+            // Cargar líneas desde BD (asegurando tener expense_account_id y montos finales)
+            const { data: dbLines, error: dbLinesError } = await supabase
+              .from('ap_invoice_lines')
+              .select('expense_account_id,line_total,itbis_amount')
+              .eq('ap_invoice_id', apInvoiceId);
+
+            if (!dbLinesError && dbLines && dbLines.length > 0) {
+              const accountTotals: Record<string, number> = {};
+
+              dbLines.forEach((l: any) => {
+                const accountId = l.expense_account_id ? String(l.expense_account_id) : '';
+                if (!accountId) return;
+                const lineBase = Number(l.line_total) || 0;
+                const lineItbis = Number(l.itbis_amount) || 0;
+                const amount = lineBase + lineItbis; // Por ahora llevamos ITBIS al gasto/costo
+                if (amount <= 0) return;
+                accountTotals[accountId] = (accountTotals[accountId] || 0) + amount;
+              });
+
+              const expenseLines = Object.entries(accountTotals)
+                .filter(([_, amount]) => amount > 0)
+                .map(([accountId, amount]) => ({
+                  account_id: accountId,
+                  description: 'Gastos por compras a suplidor',
+                  debit_amount: amount,
+                  credit_amount: 0,
+                }));
+
+              if (expenseLines.length > 0) {
+                const totalDebit = expenseLines.reduce((sum, l) => sum + (l.debit_amount || 0), 0);
+                if (totalDebit > 0) {
+                  const linesForEntry = [
+                    ...expenseLines,
+                    {
+                      account_id: apAccountId,
+                      description: 'Cuentas por Pagar a Proveedores',
+                      debit_amount: 0,
+                      credit_amount: totalDebit,
+                    },
+                  ];
+
+                  const entryPayload = {
+                    entry_number: String(invoice.invoice_number || ''),
+                    entry_date: String(invoice.invoice_date || new Date().toISOString().slice(0, 10)),
+                    description: `Factura suplidor ${invoice.invoice_number || ''}`.trim() || 'Factura suplidor',
+                    reference: invoice.id ? String(invoice.id) : null,
+                    status: 'posted' as const,
+                  };
+
+                  await journalEntriesService.createWithLines(userId, entryPayload, linesForEntry);
+                }
+              }
+            }
+          }
+        }
+      } catch (jeError) {
+        // eslint-disable-next-line no-console
+        console.error('Error posting AP invoice to ledger:', jeError);
+      }
+
+      return insertedLines;
+    } catch (error) {
+      console.error('apInvoiceLinesService.createMany error', error);
+      throw error;
+    }
+  },
+
+  async deleteByInvoice(apInvoiceId: string) {
+    try {
+      if (!apInvoiceId) return;
+      const { error } = await supabase
+        .from('ap_invoice_lines')
+        .delete()
+        .eq('ap_invoice_id', apInvoiceId);
+      if (error) throw error;
+    } catch (error) {
+      console.error('apInvoiceLinesService.deleteByInvoice error', error);
+      throw error;
+    }
   },
 };
 
@@ -4367,6 +5234,19 @@ export const supplierPaymentsService = {
         .select('*')
         .single();
       if (error) throw error;
+      // Best-effort: crear solicitud de autorización para pago a proveedor
+      try {
+        await supabase.from('approval_requests').insert({
+          user_id: userId,
+          entity_type: 'supplier_payment',
+          entity_id: data.id,
+          status: 'pending',
+          notes: payload.description ?? null,
+        });
+      } catch (approvalError) {
+        console.error('Error creating approval request for supplier payment:', approvalError);
+      }
+
       return data;
     } catch (error) {
       console.error('supplierPaymentsService.create error', error);
@@ -4499,6 +5379,19 @@ export const customerPaymentsService = {
         `)
         .single();
       if (error) throw error;
+      // Best-effort: crear solicitud de autorización para pago de cliente
+      try {
+        await supabase.from('approval_requests').insert({
+          user_id: userId,
+          entity_type: 'customer_payment',
+          entity_id: data.id,
+          status: 'pending',
+          notes: body.reference || null,
+        });
+      } catch (approvalError) {
+        console.error('Error creating approval request for customer payment:', approvalError);
+      }
+
       return data;
     } catch (error) {
       console.error('customerPaymentsService.create error', error);
@@ -4532,11 +5425,6 @@ export const recurringSubscriptionsService = {
         ...payload,
         user_id: userId,
       };
-      const { data, error } = await supabase
-        .from('recurring_subscriptions')
-        .insert(body)
-        .select('*')
-        .single();
       if (error) throw error;
       return data;
     } catch (error) {
@@ -4652,8 +5540,82 @@ export const recurringSubscriptionsService = {
 };
 
 /* ==========================================================
-   Bank Accounts Service
+   Sales Reps Service (Vendedores)
+   Tabla: sales_reps
 ========================================================== */
+export const salesRepsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('sales_reps')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name', { ascending: true });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, rep: { name: string; code?: string; email?: string; phone?: string; commission_rate?: number | null }) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const now = new Date().toISOString();
+      const payload = {
+        user_id: userId,
+        name: rep.name,
+        code: rep.code || null,
+        email: rep.email || null,
+        phone: rep.phone || null,
+        commission_rate: typeof rep.commission_rate === 'number' ? rep.commission_rate : null,
+        is_active: true,
+        created_at: now,
+        updated_at: now,
+      };
+
+      const { data, error } = await supabase
+        .from('sales_reps')
+        .insert(payload)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('salesRepsService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, patch: Partial<{ name: string; code: string; email: string; phone: string; commission_rate: number | null; is_active: boolean }>) {
+    try {
+      const body = {
+        ...patch,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data, error } = await supabase
+        .from('sales_reps')
+        .update(body)
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('salesRepsService.update error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Bank Accounts Service
+  ========================================================== */
 export const bankAccountsService = {
   async getAll(userId: string) {
     try {

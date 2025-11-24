@@ -6,43 +6,43 @@ export default function AccountsPayablePage() {
 
   const modules = [
     {
-      title: 'A/P Reports',
-      description: 'Comprehensive accounts payable reports with filters',
+      title: 'Reportes CxP',
+      description: 'Reportes de cuentas por pagar con filtros avanzados',
       icon: 'ri-file-chart-line',
       href: '/accounts-payable/reports',
       color: 'blue'
     },
     {
-      title: 'Supplier Management',
-      description: 'Vendor database and maintenance',
+      title: 'Gestión de Proveedores',
+      description: 'Base de datos y mantenimiento de proveedores',
       icon: 'ri-truck-line',
       href: '/accounts-payable/suppliers',
       color: 'green'
     },
     {
-      title: 'Payment Processing',
-      description: 'Check, transfer, and cash payments',
+      title: 'Procesamiento de Pagos',
+      description: 'Pagos por cheque, transferencia y efectivo',
       icon: 'ri-bank-card-line',
       href: '/accounts-payable/payments',
       color: 'purple'
     },
     {
-      title: 'Purchase Orders',
-      description: 'Purchase order management and tracking',
+      title: 'Órdenes de Compra',
+      description: 'Gestión y seguimiento de órdenes de compra',
       icon: 'ri-shopping-cart-line',
       href: '/accounts-payable/purchase-orders',
       color: 'orange'
     },
     {
-      title: 'Quote Requests',
-      description: 'Quotation requests and comparisons',
+      title: 'Solicitudes de Cotización',
+      description: 'Solicitudes de cotización y comparaciones',
       icon: 'ri-file-list-line',
       href: '/accounts-payable/quotes',
       color: 'red'
     },
     {
-      title: 'A/P Advances',
-      description: 'Supplier advance payments',
+      title: 'Anticipos CxP',
+      description: 'Pagos anticipados a proveedores',
       icon: 'ri-money-dollar-circle-line',
       href: '/accounts-payable/advances',
       color: 'indigo'
@@ -51,28 +51,28 @@ export default function AccountsPayablePage() {
 
   const apStats = [
     {
-      title: 'Total A/P Balance',
+      title: 'Balance total CxP',
       value: 'RD$ 0',
       change: '0%',
       icon: 'ri-file-list-3-line',
       color: 'red'
     },
     {
-      title: 'Due This Week',
+      title: 'Vence esta semana',
       value: 'RD$ 0',
       change: '0%',
       icon: 'ri-calendar-line',
       color: 'orange'
     },
     {
-      title: 'Overdue Payments',
+      title: 'Pagos vencidos',
       value: 'RD$ 0',
       change: '0%',
       icon: 'ri-alert-line',
       color: 'red'
     },
     {
-      title: 'Active Suppliers',
+      title: 'Proveedores activos',
       value: '0',
       change: '0',
       icon: 'ri-truck-line',
@@ -114,8 +114,8 @@ export default function AccountsPayablePage() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Accounts Payable Module</h1>
-          <p className="text-gray-600">Complete supplier and payment management system</p>
+          <h1 className="text-2xl font-bold text-gray-900">Módulo de Cuentas por Pagar</h1>
+          <p className="text-gray-600">Sistema completo de gestión de proveedores y pagos</p>
         </div>
 
         {/* A/P Stats */}
@@ -135,7 +135,7 @@ export default function AccountsPayablePage() {
                 <span className={`text-sm font-medium ${stat.change.startsWith('+') ? 'text-green-600' : 'text-red-600'}`}>
                   {stat.change}
                 </span>
-                <span className="text-sm text-gray-500 ml-1">vs last month</span>
+                <span className="text-sm text-gray-500 ml-1">vs mes anterior</span>
               </div>
             </div>
           ))}
@@ -156,7 +156,7 @@ export default function AccountsPayablePage() {
                 onClick={() => handleAccessModule(module.href)}
                 className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
               >
-                Access
+                Acceder
               </button>
             </div>
           ))}
@@ -166,7 +166,7 @@ export default function AccountsPayablePage() {
           {/* Top Suppliers */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Top Suppliers by Balance</h3>
+              <h3 className="text-lg font-semibold text-gray-900">Principales proveedores por balance</h3>
             </div>
             <div className="p-6">
               <div className="space-y-4">
@@ -175,7 +175,7 @@ export default function AccountsPayablePage() {
                     <div>
                       <p className="font-medium text-gray-900">{supplier.name}</p>
                       <p className="text-sm text-gray-600">RNC: {supplier.rnc}</p>
-                      <p className="text-xs text-gray-500">Due: {supplier.dueDate}</p>
+                      <p className="text-xs text-gray-500">Vence: {supplier.dueDate}</p>
                     </div>
                     <div className="text-right">
                       <p className="font-semibold text-gray-900">{supplier.balance}</p>
@@ -184,7 +184,7 @@ export default function AccountsPayablePage() {
                         supplier.status === 'Due Soon' ? 'bg-orange-100 text-orange-800' :
                         'bg-red-100 text-red-800'
                       }`}>
-                        {supplier.status}
+                        {supplier.status === 'Current' ? 'Actual' : supplier.status === 'Due Soon' ? 'Próximo vencimiento' : 'Vencido'}
                       </span>
                     </div>
                   </div>
@@ -197,12 +197,12 @@ export default function AccountsPayablePage() {
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900">Recent Activity</h3>
+                <h3 className="text-lg font-semibold text-gray-900">Actividad reciente</h3>
                 <button 
-                  onClick={() => handleViewAll('recent activity')}
+                  onClick={() => handleViewAll('actividad reciente')}
                   className="text-blue-600 hover:text-blue-700 text-sm font-medium whitespace-nowrap"
                 >
-                  View All
+                  Ver todo
                 </button>
               </div>
             </div>
@@ -244,7 +244,7 @@ export default function AccountsPayablePage() {
         {/* Pending Approvals */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="p-6 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">Pending Approvals</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Aprobaciones pendientes</h3>
           </div>
           <div className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -253,7 +253,7 @@ export default function AccountsPayablePage() {
                   <div>
                     <p className="font-medium text-gray-900">{approval.type}</p>
                     <p className="text-sm text-gray-600">{approval.supplier}</p>
-                    <p className="text-xs text-gray-500">Requested by: {approval.requestedBy}</p>
+                    <p className="text-xs text-gray-500">Solicitado por: {approval.requestedBy}</p>
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-gray-900">{approval.amount}</p>
@@ -262,13 +262,13 @@ export default function AccountsPayablePage() {
                         onClick={() => handleApproveRequest(approval.type, approval.supplier, approval.amount)}
                         className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 whitespace-nowrap"
                       >
-                        Approve
+                        Aprobar
                       </button>
                       <button 
                         onClick={() => handleRejectRequest(approval.type, approval.supplier, approval.amount)}
                         className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700 whitespace-nowrap"
                       >
-                        Reject
+                        Rechazar
                       </button>
                     </div>
                   </div>

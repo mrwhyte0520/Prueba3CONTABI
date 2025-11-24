@@ -3,7 +3,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { exportToPdf } from '../../../../src/utils/exportImportUtils';
 import { toast } from 'sonner';
 import { useAuth } from '../../../hooks/useAuth';
-import { quotesService, invoicesService, customersService, inventoryService } from '../../../services/database';
+import { quotesService, invoicesService, customersService, inventoryService, paymentTermsService } from '../../../services/database';
 
 interface UiQuoteItem {
   description: string;
@@ -36,10 +36,12 @@ export default function PreInvoicingPage() {
   const [loading, setLoading] = useState(false);
   const [customers, setCustomers] = useState<Array<{ id: string; name: string; email?: string }>>([]);
   const [products, setProducts] = useState<Array<{ id: string; name: string; price: number }>>([]);
+  const [paymentTerms, setPaymentTerms] = useState<Array<{ id: string; name: string; days?: number }>>([]);
 
   const [newQuoteCustomerId, setNewQuoteCustomerId] = useState('');
   const [newQuoteValidUntil, setNewQuoteValidUntil] = useState('');
   const [newQuoteTerms, setNewQuoteTerms] = useState('');
+  const [newQuotePaymentTermId, setNewQuotePaymentTermId] = useState<string | null>(null);
   const [quoteItems, setQuoteItems] = useState<UiQuoteItem[]>([{
     description: '',
     quantity: 1,
@@ -231,6 +233,22 @@ export default function PreInvoicingPage() {
     }
   };
 
+  const loadPaymentTerms = async () => {
+    if (!user?.id) return;
+    try {
+      const terms = await paymentTermsService.getAll(user.id);
+      const mapped = (terms || []).map((t: any) => ({
+        id: t.id as string,
+        name: t.name as string,
+        days: typeof t.days === 'number' ? t.days : undefined,
+      }));
+      setPaymentTerms(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading payment terms for quotes:', error);
+    }
+  };
+
   const loadProducts = async () => {
     if (!user?.id) return;
     try {
@@ -253,6 +271,7 @@ export default function PreInvoicingPage() {
       loadQuotes();
       loadCustomers();
       loadProducts();
+      loadPaymentTerms();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -269,6 +288,7 @@ export default function PreInvoicingPage() {
     setNewQuoteCustomerId('');
     setNewQuoteValidUntil('');
     setNewQuoteTerms('');
+    setNewQuotePaymentTermId(null);
     setQuoteItems([{ description: '', quantity: 1, price: 0, total: 0 }]);
     setQuoteSubtotal(0);
     setQuoteTax(0);
@@ -548,6 +568,7 @@ export default function PreInvoicingPage() {
     try {
       const quotePayload = {
         customer_id: newQuoteCustomerId,
+        payment_term_id: newQuotePaymentTermId || null,
         subtotal,
         tax_amount: tax,
         total_amount: total,
@@ -882,6 +903,21 @@ export default function PreInvoicingPage() {
                     {clientError && (
                       <p className="mt-1 text-xs text-red-600">{clientError}</p>
                     )}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Condición de pago</label>
+                    <select
+                      value={newQuotePaymentTermId ?? ''}
+                      onChange={(e) => setNewQuotePaymentTermId(e.target.value || null)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Sin condición específica</option>
+                      {paymentTerms.map(term => (
+                        <option key={term.id} value={term.id}>
+                          {term.name}{typeof term.days === 'number' ? ` (${term.days} días)` : ''}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Válida Hasta</label>

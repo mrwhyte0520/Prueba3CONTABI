@@ -3,7 +3,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { exportToPdf } from '../../../utils/exportImportUtils';
 import { toast } from 'sonner';
 import { useAuth } from '../../../hooks/useAuth';
-import { quotesService, customersService } from '../../../services/database';
+import { quotesService, customersService, invoicesService, paymentTermsService } from '../../../services/database';
 
 // Tipos de datos
 type StatusType = 'pending' | 'approved' | 'under_review' | 'rejected' | 'expired';
@@ -17,16 +17,18 @@ interface QuoteItem {
 
 interface NewQuoteFormProps {
   customers: Array<{ id: string; name: string; email: string; phone: string }>;
+  paymentTerms: Array<{ id: string; name: string; days?: number }>;
   onCancel: () => void;
   onSaved: () => void;
   userId?: string;
 }
 
-function NewQuoteForm({ customers, onCancel, onSaved, userId }: NewQuoteFormProps) {
+function NewQuoteForm({ customers, paymentTerms, onCancel, onSaved, userId }: NewQuoteFormProps) {
   const [customerId, setCustomerId] = useState('');
   const [project, setProject] = useState('');
   const [validUntil, setValidUntil] = useState<string>(new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
   const [probability, setProbability] = useState<number>(50);
+  const [paymentTermId, setPaymentTermId] = useState<string | null>(null);
   const [items, setItems] = useState<QuoteItem[]>([
     { description: '', quantity: 1, price: 0, total: 0 }
   ]);
@@ -55,8 +57,7 @@ function NewQuoteForm({ customers, onCancel, onSaved, userId }: NewQuoteFormProp
   const save = async () => {
     try {
       if (!userId) {
-        toast.info('Sesión no iniciada. Guardado local de demostración.');
-        onSaved();
+        toast.error('Debes iniciar sesión para crear una cotización');
         return;
       }
       if (!customerId) {
@@ -73,6 +74,7 @@ function NewQuoteForm({ customers, onCancel, onSaved, userId }: NewQuoteFormProp
         customer_id: customerId,
         customer_name: customer?.name || '',
         customer_email: customer?.email || '',
+        payment_term_id: paymentTermId || null,
         project,
         date: new Date().toISOString().slice(0, 10),
         valid_until: validUntil,
@@ -120,6 +122,21 @@ function NewQuoteForm({ customers, onCancel, onSaved, userId }: NewQuoteFormProp
             placeholder="Nombre descriptivo del proyecto"
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Condición de pago</label>
+          <select
+            value={paymentTermId ?? ''}
+            onChange={e => setPaymentTermId(e.target.value || null)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+          >
+            <option value="">Sin condición específica</option>
+            {paymentTerms.map(term => (
+              <option key={term.id} value={term.id}>
+                {term.name}{typeof term.days === 'number' ? ` (${term.days} días)` : ''}
+              </option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Válida Hasta</label>
@@ -294,10 +311,12 @@ export default function QuotesPage() {
   const [loading, setLoading] = useState(true);
   const [customers, setCustomers] = useState<Array<{id: string, name: string, email: string, phone: string}>>([]);
   const [services, setServices] = useState<Array<{id: string, name: string, description: string, price: number}>>([]);
+  const [paymentTerms, setPaymentTerms] = useState<Array<{ id: string; name: string; days?: number }>>([]);
 
   // Estado para las cotizaciones
   const [quotes, setQuotes] = useState<Array<{
     id: string;
+    customerId?: string;
     customer: string;
     customerEmail: string;
     project: string;
@@ -316,90 +335,74 @@ export default function QuotesPage() {
     }>;
   }>>([]);
 
-  // Datos de ejemplo
-  const exampleData = {
-    quotes: [{
-      id: 'ej-001',
-      customer: 'Cliente de Ejemplo',
-      customerEmail: 'ejemplo@cliente.com',
-      project: 'Proyecto de Ejemplo',
-      amount: 10000,
-      tax: 1800,
-      total: 11800,
-      status: 'pending' as const,
-      date: new Date().toISOString().split('T')[0],
-      validUntil: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      probability: 50,
-      items: [
-        { description: 'Servicio de Ejemplo', quantity: 1, price: 10000, total: 10000 }
-      ]
-    }],
-    customers: [
-      { id: '1', name: 'Cliente de Ejemplo', email: 'ejemplo@cliente.com', phone: '809-000-0000' }
-    ],
-    services: [
-      { id: '1', name: 'Servicio Básico', description: 'Servicio de ejemplo', price: 10000 }
-    ]
-  };
-
   // Cargar datos iniciales
   useEffect(() => {
     const loadInitialData = async () => {
       try {
         setLoading(true);
-        if (user?.id) {
-          const [cust, qts] = await Promise.all([
-            customersService.getAll(user.id),
-            quotesService.getAll(user.id)
-          ]);
-          // Map customers to expected shape
-          setCustomers((cust || []).map((c: any) => ({
-            id: c.id,
-            name: c.name || c.customer_name || c.full_name || c.fullname || c.company || c.company_name || 'Cliente',
-            email: c.email || c.contact_email || '',
-            phone: c.phone || c.contact_phone || ''
-          })));
-          // Map quotes to UI shape usando los campos reales de la tabla quotes
-          const mapped = (qts || []).map((q: any) => {
-            const subtotal = Number(q.subtotal) || 0;
-            const tax = Number(q.tax_amount) || 0;
-            const total = Number(q.total_amount) || subtotal + tax;
+        if (!user?.id) {
+          toast.error('Debes iniciar sesión para ver tus cotizaciones');
+          setQuotes([]);
+          setCustomers([]);
+          setServices([]);
+          setPaymentTerms([]);
+          return;
+        }
 
-            const items = (q.quote_lines || q.items || []).map((it: any) => {
-              const qty = Number(it.quantity) || 0;
-              const unitPrice = Number(it.unit_price) || 0;
-              const lineTotal = Number(it.line_total) || qty * unitPrice;
-              return {
-                description: it.description || '',
-                quantity: qty || 1,
-                price: unitPrice,
-                total: lineTotal,
-              };
-            });
+        const [cust, qts, terms] = await Promise.all([
+          customersService.getAll(user.id),
+          quotesService.getAll(user.id),
+          paymentTermsService.getAll(user.id),
+        ]);
 
+        setCustomers((cust || []).map((c: any) => ({
+          id: c.id,
+          name: c.name || c.customer_name || c.full_name || c.fullname || c.company || c.company_name || 'Cliente',
+          email: c.email || c.contact_email || '',
+          phone: c.phone || c.contact_phone || ''
+        })));
+
+        const mapped = (qts || []).map((q: any) => {
+          const subtotal = Number(q.subtotal) || 0;
+          const tax = Number(q.tax_amount) || 0;
+          const total = Number(q.total_amount) || subtotal + tax;
+
+          const items = (q.quote_lines || q.items || []).map((it: any) => {
+            const qty = Number(it.quantity) || 0;
+            const unitPrice = Number(it.unit_price) || 0;
+            const lineTotal = Number(it.line_total) || qty * unitPrice;
             return {
-              id: q.id,
-              customer: q.customer_name || q.customers?.name || 'Cliente',
-              customerEmail: q.customer_email || q.customers?.email || '',
-              project: q.project || '',
-              amount: subtotal,
-              tax,
-              total,
-              status: (q.status || 'pending') as StatusType,
-              date: q.date || q.created_at || new Date().toISOString(),
-              validUntil: q.valid_until || q.validUntil || new Date().toISOString(),
-              probability: q.probability || 0,
-              items,
+              description: it.description || '',
+              quantity: qty || 1,
+              price: unitPrice,
+              total: lineTotal,
             };
           });
-          setQuotes(mapped);
-        } else {
-          // Demo fallback
-          setQuotes(exampleData.quotes);
-          setCustomers(exampleData.customers);
-          setServices(exampleData.services);
-          toast.info('Usando datos de ejemplo. Inicia sesión para guardar en la base de datos.');
-        }
+
+          return {
+            id: q.id,
+            customerId: q.customer_id || q.customers?.id || undefined,
+            customer: q.customer_name || q.customers?.name || 'Cliente',
+            customerEmail: q.customer_email || q.customers?.email || '',
+            project: q.project || '',
+            amount: subtotal,
+            tax,
+            total,
+            status: (q.status || 'pending') as StatusType,
+            date: q.date || q.created_at || new Date().toISOString(),
+            validUntil: q.valid_until || q.validUntil || new Date().toISOString(),
+            probability: q.probability || 0,
+            items,
+          };
+        });
+        setQuotes(mapped);
+
+        const mappedTerms = (terms || []).map((t: any) => ({
+          id: t.id as string,
+          name: t.name as string,
+          days: typeof t.days === 'number' ? t.days : undefined,
+        }));
+        setPaymentTerms(mappedTerms);
       } catch (error) {
         console.error('Error al cargar datos:', error);
         toast.error('Error al cargar los datos');
@@ -409,42 +412,6 @@ export default function QuotesPage() {
     };
     loadInitialData();
   }, [user]);
-
-  // Función para guardar una nueva cotización
-  const saveQuote = async (quoteData: any) => {
-    try {
-      setLoading(true);
-      
-      // Crear un ID temporal para la cotización
-      const newQuote = {
-        ...quoteData,
-        id: `temp-${Date.now()}`,
-        created_at: new Date().toISOString()
-      };
-      
-      // Actualizar el estado local con la nueva cotización
-      setQuotes([newQuote, ...quotes]);
-      
-      toast.success('Cotización guardada localmente (modo demo)');
-      return true;
-      
-    } catch (error) {
-      console.error('Error al guardar la cotización:', error);
-      toast.error('Error al guardar la cotización');
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Datos de ejemplo (puedes eliminarlos una vez que la base de datos esté configurada)
-  const exampleServices = [
-    { id: '1', name: 'Sistema de Seguridad', basePrice: 450000 },
-    { id: '2', name: 'Infraestructura de Red', basePrice: 285000 },
-    { id: '3', name: 'Software de Gestión', basePrice: 650000 },
-    { id: '4', name: 'Sistema POS', basePrice: 125000 },
-    { id: '5', name: 'Equipamiento Tecnológico', basePrice: 380000 }
-  ];
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -564,9 +531,59 @@ export default function QuotesPage() {
   };
 
   const handleConvertToInvoice = (quoteId: string) => {
-    if (confirm(`¿Convertir cotización ${quoteId} en factura?`)) {
-      alert(`Cotización ${quoteId} convertida en factura`);
+    const quote = quotes.find(q => q.id === quoteId);
+    if (!quote) return;
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para convertir en factura');
+      return;
     }
+
+    if (!quote.customerId) {
+      toast.error('La cotización no tiene un cliente válido');
+      return;
+    }
+
+    if (!confirm(`¿Convertir cotización ${quoteId} en factura?`)) return;
+
+    (async () => {
+      try {
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const invoiceNumber = `FAC-${Date.now()}`;
+
+        const invoicePayload = {
+          customer_id: quote.customerId,
+          invoice_number: invoiceNumber,
+          invoice_date: todayStr,
+          due_date: quote.validUntil || todayStr,
+          currency: 'DOP',
+          subtotal: quote.amount,
+          tax_amount: quote.tax,
+          total_amount: quote.total,
+          paid_amount: 0,
+          status: 'pending',
+          notes: `Generada desde cotización ${quote.id}`,
+        };
+
+        const linesPayload = quote.items.map((item, index) => ({
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: item.price,
+          line_total: item.total,
+          line_number: index + 1,
+        }));
+
+        await invoicesService.create(user.id, invoicePayload, linesPayload);
+
+        await quotesService.update(quote.id, { status: 'approved' });
+        setQuotes(prev => prev.map(q => q.id === quote.id ? { ...q, status: 'approved' } : q));
+
+        toast.success(`Cotización ${quote.id} convertida en factura ${invoiceNumber}`);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error converting quote to invoice:', error);
+        toast.error('Error al convertir la cotización en factura');
+      }
+    })();
   };
 
   const handleDuplicateQuote = (quoteId: string) => {
@@ -892,6 +909,7 @@ export default function QuotesPage() {
                 {/* Form state for new quote */}
                 <NewQuoteForm
                   customers={customers}
+                  paymentTerms={paymentTerms}
                   onCancel={() => setShowNewQuoteModal(false)}
                   onSaved={async () => {
                     setShowNewQuoteModal(false);

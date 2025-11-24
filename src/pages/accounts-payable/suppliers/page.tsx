@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { suppliersService, chartAccountsService } from '../../../services/database';
+import { suppliersService, chartAccountsService, supplierTypesService, paymentTermsService, bankAccountsService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -21,10 +21,15 @@ export default function SuppliersPage() {
 
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [supplierTypes, setSupplierTypes] = useState<any[]>([]);
+  const [paymentTermsList, setPaymentTermsList] = useState<any[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
     name: '',
     rnc: '',
+    documentType: 'RNC',
+    legalName: '',
     phone: '',
     email: '',
     address: '',
@@ -34,10 +39,36 @@ export default function SuppliersPage() {
     contact: '',
     status: 'Activo',
     apAccountId: '',
+    expenseType606: '',
+    isPersonaFisica: false,
+    isServiceProvider: false,
+    isrRate: '',
+    itbisRate: '',
+    taxRegime: '',
+    defaultInvoiceType: '',
+    supplierTypeId: '',
+    paymentTermsId: '',
+    defaultBankAccountId: '',
   });
 
   const categories = ['Materiales', 'Distribución', 'Servicios', 'Construcción', 'Tecnología'];
   const paymentTermsOptions = ['15 días', '21 días', '30 días', '45 días', '60 días'];
+  const documentTypes = ['RNC', 'Cédula', 'Pasaporte', 'Otro'];
+  const expenseTypes606 = [
+    '01 - Gastos de personal',
+    '02 - Gastos por trabajo, suministros y servicios',
+    '03 - Arrendamientos',
+    '04 - Gastos de activos fijos',
+    '05 - Gastos de representación',
+    '06 - Otras deducciones admitidas',
+    '07 - Gastos financieros',
+    '08 - Gastos extraordinarios',
+    '09 - Compras y gastos que forman parte del costo',
+    '10 - Adquisiciones de activos',
+    '11 - Gastos no admitidos',
+  ];
+  const taxRegimes = ['Régimen Normal', 'RST', 'ONG', 'Fundación', 'Sin fines de lucro', 'Otro'];
+  const invoiceTypes = ['CREDITO_FISCAL', 'INFORMAL', 'INTERNACIONAL'];
 
   const loadSuppliers = async () => {
     if (!user?.id) {
@@ -53,20 +84,46 @@ export default function SuppliersPage() {
         phone: s.phone || '',
         email: s.email || '',
         address: s.address || '',
-        // Campos solo de UI (no existen como columnas):
+        // Campos solo de UI (no existen como columnas reales):
         category: 'Materiales',
-        creditLimit: typeof s.current_balance === 'number' ? s.current_balance : 0,
+        creditLimit: typeof s.credit_limit === 'number'
+          ? s.credit_limit
+          : (typeof s.current_balance === 'number' ? s.current_balance : 0),
         paymentTerms: '30 días',
         contact: '',
         status: s.is_active === false ? 'Inactivo' : 'Activo',
         balance: typeof s.current_balance === 'number' ? s.current_balance : 0,
         apAccountId: s.ap_account_id || '',
+        supplierTypeId: s.supplier_type_id || '',
+        paymentTermsId: s.payment_terms_id || '',
+        defaultBankAccountId: s.default_bank_account_id || '',
+        document_type: s.document_type || 'RNC',
+        legal_name: s.legal_name || s.name,
+        expense_type_606: s.expense_type_606 || '',
+        is_persona_fisica: s.is_persona_fisica,
+        is_service_provider: s.is_service_provider,
+        isr_withholding_rate: s.isr_withholding_rate,
+        itbis_withholding_rate: s.itbis_withholding_rate,
+        tax_regime: s.tax_regime,
+        default_invoice_type: s.default_invoice_type,
       }));
       setSuppliers(mapped);
 
       // Cargar catálogo de cuentas para seleccionar cuentas por pagar específicas
       const accs = await chartAccountsService.getAll(user.id);
       setAccounts(accs || []);
+
+      // Cargar tipos de suplidor
+      const types = await supplierTypesService.getAll(user.id);
+      setSupplierTypes(types || []);
+
+      // Cargar términos de pago reales
+      const terms = await paymentTermsService.getAll(user.id);
+      setPaymentTermsList(terms || []);
+
+      // Cargar cuentas bancarias para cuenta por defecto del proveedor
+      const banks = await bankAccountsService.getAll(user.id);
+      setBankAccounts(banks || []);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error loading suppliers from DB, keeping local list empty', error);
@@ -107,6 +164,8 @@ export default function SuppliersPage() {
     const payload: any = {
       // Columnas reales de la tabla suppliers
       name: formData.name,
+      legal_name: formData.legalName || formData.name,
+      document_type: formData.documentType,
       tax_id: formData.rnc,
       email: formData.email,
       phone: formData.phone,
@@ -117,7 +176,20 @@ export default function SuppliersPage() {
       current_balance: typeof formData.creditLimit === 'string' && formData.creditLimit !== ''
         ? parseFloat(formData.creditLimit)
         : 0,
+      credit_limit: typeof formData.creditLimit === 'string' && formData.creditLimit !== ''
+        ? parseFloat(formData.creditLimit)
+        : 0,
       is_active: formData.status === 'Activo',
+      expense_type_606: formData.expenseType606 || null,
+      is_persona_fisica: formData.isPersonaFisica,
+      is_service_provider: formData.isServiceProvider,
+      isr_withholding_rate: formData.isrRate ? Number(formData.isrRate) : null,
+      itbis_withholding_rate: formData.itbisRate ? Number(formData.itbisRate) : null,
+      tax_regime: formData.taxRegime || null,
+      default_invoice_type: formData.defaultInvoiceType || null,
+      supplier_type_id: formData.supplierTypeId || null,
+      payment_terms_id: formData.paymentTermsId || null,
+      default_bank_account_id: formData.defaultBankAccountId || null,
     };
 
     // Cuenta por pagar específica (opcional)
@@ -147,6 +219,8 @@ export default function SuppliersPage() {
     setFormData({
       name: '',
       rnc: '',
+      documentType: 'RNC',
+      legalName: '',
       phone: '',
       email: '',
       address: '',
@@ -156,6 +230,16 @@ export default function SuppliersPage() {
       contact: '',
       status: 'Activo',
       apAccountId: '',
+      expenseType606: '',
+      isPersonaFisica: false,
+      isServiceProvider: false,
+      isrRate: '',
+      itbisRate: '',
+      taxRegime: '',
+      defaultInvoiceType: '',
+      supplierTypeId: '',
+      paymentTermsId: '',
+      defaultBankAccountId: '',
     });
     setEditingSupplier(null);
     setShowModal(false);
@@ -166,6 +250,8 @@ export default function SuppliersPage() {
     setFormData({
       name: supplier.name,
       rnc: supplier.rnc,
+      documentType: supplier.document_type || 'RNC',
+      legalName: supplier.legal_name || supplier.name,
       phone: supplier.phone,
       email: supplier.email,
       address: supplier.address,
@@ -175,6 +261,16 @@ export default function SuppliersPage() {
       contact: supplier.contact,
       status: supplier.status || 'Activo',
       apAccountId: supplier.apAccountId || '',
+      expenseType606: supplier.expense_type_606 || '',
+      isPersonaFisica: Boolean(supplier.is_persona_fisica),
+      isServiceProvider: Boolean(supplier.is_service_provider),
+      isrRate: supplier.isr_withholding_rate ? String(supplier.isr_withholding_rate) : '',
+      itbisRate: supplier.itbis_withholding_rate ? String(supplier.itbis_withholding_rate) : '',
+      taxRegime: supplier.tax_regime || '',
+      defaultInvoiceType: supplier.default_invoice_type || '',
+      supplierTypeId: supplier.supplierTypeId || '',
+      paymentTermsId: supplier.paymentTermsId || '',
+      defaultBankAccountId: supplier.defaultBankAccountId || '',
     });
     setShowModal(true);
   };
@@ -627,12 +723,33 @@ export default function SuppliersPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">RNC *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de documento</label>
+                    <select
+                      value={formData.documentType}
+                      onChange={(e) => setFormData({ ...formData, documentType: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {documentTypes.map((dt) => (
+                        <option key={dt} value={dt}>{dt}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Número documento (RNC/Cédula) *</label>
                     <input 
                       type="text"
                       required
                       value={formData.rnc}
                       onChange={(e) => setFormData({...formData, rnc: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Razón Social</label>
+                    <input
+                      type="text"
+                      value={formData.legalName}
+                      onChange={(e) => setFormData({ ...formData, legalName: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -675,12 +792,112 @@ export default function SuppliersPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Términos de Pago</label>
                     <select 
-                      value={formData.paymentTerms}
-                      onChange={(e) => setFormData({...formData, paymentTerms: e.target.value})}
+                      value={formData.paymentTermsId}
+                      onChange={(e) => {
+                        const selected = paymentTermsList.find((t: any) => String(t.id) === e.target.value);
+                        setFormData({
+                          ...formData,
+                          paymentTermsId: e.target.value,
+                          paymentTerms: selected?.name || formData.paymentTerms,
+                        });
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
-                      {paymentTermsOptions.map(term => (
-                        <option key={term} value={term}>{term}</option>
+                      <option value="">Sin especificar</option>
+                      {paymentTermsList.map((term: any) => (
+                        <option key={term.id} value={term.id}>{term.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de gasto 606</label>
+                    <select
+                      value={formData.expenseType606}
+                      onChange={(e) => setFormData({ ...formData, expenseType606: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin especificar</option>
+                      {expenseTypes606.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center space-x-4">
+                    <label className="inline-flex items-center text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={formData.isPersonaFisica}
+                        onChange={(e) => setFormData({ ...formData, isPersonaFisica: e.target.checked })}
+                        className="mr-2"
+                      />
+                      Persona física
+                    </label>
+                    <label className="inline-flex items-center text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={formData.isServiceProvider}
+                        onChange={(e) => setFormData({ ...formData, isServiceProvider: e.target.checked })}
+                        className="mr-2"
+                      />
+                      Proveedor de servicios
+                    </label>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Retención ISR (%)</label>
+                    <input
+                      type="number"
+                      value={formData.isrRate}
+                      onChange={(e) => setFormData({ ...formData, isrRate: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Ej: 10"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Retención ITBIS (%)</label>
+                    <input
+                      type="number"
+                      value={formData.itbisRate}
+                      onChange={(e) => setFormData({ ...formData, itbisRate: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Ej: 30"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Régimen Tributario</label>
+                    <select
+                      value={formData.taxRegime}
+                      onChange={(e) => setFormData({ ...formData, taxRegime: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin especificar</option>
+                      {taxRegimes.map((reg) => (
+                        <option key={reg} value={reg}>{reg}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Factura Habitual</label>
+                    <select
+                      value={formData.defaultInvoiceType}
+                      onChange={(e) => setFormData({ ...formData, defaultInvoiceType: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin especificar</option>
+                      {invoiceTypes.map((it) => (
+                        <option key={it} value={it}>{it}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Suplidor</label>
+                    <select
+                      value={formData.supplierTypeId}
+                      onChange={(e) => setFormData({ ...formData, supplierTypeId: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin especificar</option>
+                      {supplierTypes.map((st: any) => (
+                        <option key={st.id} value={st.id}>{st.name}</option>
                       ))}
                     </select>
                   </div>
@@ -728,6 +945,23 @@ export default function SuppliersPage() {
                   <p className="mt-1 text-xs text-gray-500">
                     Si no seleccionas una cuenta, se usará la cuenta por pagar configurada por defecto.
                   </p>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta Bancaria Predeterminada (opcional)
+                  </label>
+                  <select
+                    value={formData.defaultBankAccountId}
+                    onChange={(e) => setFormData({ ...formData, defaultBankAccountId: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="">Sin cuenta predeterminada</option>
+                    {bankAccounts.map((ba: any) => (
+                      <option key={ba.id} value={ba.id}>
+                        {ba.bank_name} - {ba.account_number}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex justify-end space-x-3 pt-4">
                   <button 

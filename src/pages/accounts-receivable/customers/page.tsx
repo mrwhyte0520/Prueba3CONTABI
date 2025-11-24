@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, chartAccountsService } from '../../../services/database';
+import { customersService, chartAccountsService, salesRepsService } from '../../../services/database';
 
 interface Customer {
   id: string;
@@ -13,6 +13,18 @@ interface Customer {
   creditLimit: number;
   currentBalance: number;
   status: 'active' | 'inactive' | 'blocked';
+  arAccountId?: string | null;
+  advanceAccountId?: string | null;
+  documentType?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  customerType?: string | null;
+  paymentTerms?: string | null;
+  invoiceType?: string | null;
+  ncfType?: string | null;
+  salesperson?: string | null;
+  salesRepId?: string | null;
 }
 
 export default function CustomersPage() {
@@ -25,6 +37,7 @@ export default function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [salesReps, setSalesReps] = useState<Array<{ id: string; name: string; is_active: boolean }>>([]);
 
   const loadCustomers = async () => {
     if (!user?.id) return;
@@ -41,8 +54,12 @@ export default function CustomersPage() {
     const run = async () => {
       await loadCustomers();
       if (!user?.id) return;
-      const accs = await chartAccountsService.getAll(user.id);
+      const [accs, reps] = await Promise.all([
+        chartAccountsService.getAll(user.id),
+        salesRepsService.getAll(user.id),
+      ]);
       setAccounts(accs || []);
+      setSalesReps((reps || []).filter((r: any) => r.is_active));
     };
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -54,6 +71,15 @@ export default function CustomersPage() {
     if (acc.type !== 'asset') return false;
     const name = String(acc.name || '').toLowerCase();
     return name.includes('cuentas por cobrar');
+  });
+
+  // Cuentas de anticipos de clientes: cuentas de pasivo posteables (opcionalmente que contengan "anticipo" en el nombre)
+  const advanceAccounts = accounts.filter((acc) => {
+    if (!acc.allowPosting) return false;
+    if (acc.type !== 'liability') return false;
+    const name = String(acc.name || '').toLowerCase();
+    // Si el catálogo tiene nombres específicos, esto ayuda a filtrar; si no, al menos se limita a pasivos posteables
+    return name.includes('anticipo') || name.includes('anticipos') || true;
   });
 
   const getCustomerStatusColor = (status: string) => {
@@ -211,6 +237,17 @@ export default function CustomersPage() {
       creditLimit: Number(formData.get('creditLimit') || 0),
       status: String(formData.get('status') || 'active') as Customer['status'],
       arAccountId: String(formData.get('arAccountId') || ''),
+      advanceAccountId: String(formData.get('advanceAccountId') || ''),
+      documentType: String(formData.get('documentType') || ''),
+      contactName: String(formData.get('contactName') || ''),
+      contactPhone: String(formData.get('contactPhone') || ''),
+      contactEmail: String(formData.get('contactEmail') || ''),
+      customerType: String(formData.get('customerType') || ''),
+      paymentTerms: String(formData.get('paymentTerms') || ''),
+      invoiceType: String(formData.get('invoiceType') || ''),
+      ncfType: String(formData.get('ncfType') || ''),
+      salesperson: String(formData.get('salesperson') || ''),
+      salesRepId: String(formData.get('salesRepId') || '') || null,
     };
     try {
       if (selectedCustomer) {
@@ -304,6 +341,9 @@ export default function CustomersPage() {
                     Contacto
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Vendedor
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Límite Crédito
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -318,7 +358,9 @@ export default function CustomersPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredCustomers.map((customer) => (
+                {filteredCustomers.map((customer) => {
+                  const rep = salesReps.find((r) => r.id === customer.salesRepId);
+                  return (
                   <tr key={customer.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
@@ -330,10 +372,15 @@ export default function CustomersPage() {
                       {customer.document}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div>
-                        <div className="text-sm text-gray-900">{customer.phone}</div>
-                        <div className="text-sm text-gray-500">{customer.email}</div>
+                      <div className="text-sm text-gray-900">
+                        {customer.contactName || customer.phone}
                       </div>
+                      <div className="text-sm text-gray-500">
+                        {customer.contactPhone || ''}{customer.contactPhone && customer.contactEmail ? ' / ' : ''}{customer.contactEmail || customer.email}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {rep ? rep.name : '—'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       RD${customer.creditLimit.toLocaleString()}
@@ -372,7 +419,7 @@ export default function CustomersPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>
@@ -502,6 +549,105 @@ export default function CustomersPage() {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Tipo de Cliente
+                    </label>
+                    <select
+                      name="customerType"
+                      defaultValue={(selectedCustomer as any)?.customerType || ''}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">No especificado</option>
+                      <option value="retail">Detalle</option>
+                      <option value="wholesale">Mayorista</option>
+                      <option value="government">Gobierno</option>
+                      <option value="other">Otro</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Condición de Pago
+                    </label>
+                    <select
+                      name="paymentTerms"
+                      defaultValue={(selectedCustomer as any)?.paymentTerms || ''}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">No especificada</option>
+                      <option value="contado">Contado</option>
+                      <option value="15">15 días</option>
+                      <option value="30">30 días</option>
+                      <option value="45">45 días</option>
+                      <option value="60">60 días</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Tipo de Factura
+                    </label>
+                    <select
+                      name="invoiceType"
+                      defaultValue={(selectedCustomer as any)?.invoiceType || ''}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">No especificado</option>
+                      <option value="credit">Crédito</option>
+                      <option value="cash">Contado</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Tipo de NCF por defecto
+                    </label>
+                    <select
+                      name="ncfType"
+                      defaultValue={(selectedCustomer as any)?.ncfType || ''}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">No especificado</option>
+                      <option value="consumo">Consumidor final</option>
+                      <option value="credito_fiscal">Crédito fiscal</option>
+                      <option value="gubernamental">Gubernamental</option>
+                      <option value="especial">Régimen especial</option>
+                      <option value="exportacion">Exportación</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Vendedor asignado (opcional)
+                  </label>
+                  <select
+                    name="salesRepId"
+                    defaultValue={(selectedCustomer as any)?.salesRepId || ''}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="">Sin vendedor asignado</option>
+                    {salesReps.map((rep) => (
+                      <option key={rep.id} value={rep.id}>{rep.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Nombre del vendedor (texto opcional)
+                  </label>
+                  <input
+                    type="text"
+                    name="salesperson"
+                    defaultValue={(selectedCustomer as any)?.salesperson || ''}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Por ejemplo, para comentarios internos"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Cuenta por Cobrar (opcional)
@@ -520,6 +666,27 @@ export default function CustomersPage() {
                   </select>
                   <p className="mt-1 text-xs text-gray-500">
                     Si no seleccionas una cuenta, se usará la cuenta por cobrar configurada por defecto.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de Anticipos de Cliente (opcional)
+                  </label>
+                  <select
+                    name="advanceAccountId"
+                    defaultValue={selectedCustomer?.advanceAccountId || ''}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="">Sin cuenta de anticipos específica</option>
+                    {advanceAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Si no seleccionas una cuenta, los anticipos del cliente usarán solo la configuración global o generarán alertas al registrar el anticipo.
                   </p>
                 </div>
                 

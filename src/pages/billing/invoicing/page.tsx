@@ -5,7 +5,7 @@ import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { invoicesService } from '../../../services/database';
+import { invoicesService, paymentTermsService, salesRepsService } from '../../../services/database';
 
 interface UiInvoiceItem {
   description: string;
@@ -25,6 +25,7 @@ interface UiInvoice {
   date: string;
   dueDate: string;
   items: UiInvoiceItem[];
+  salesRepId?: string | null;
 }
 
 export default function InvoicingPage() {
@@ -38,6 +39,23 @@ export default function InvoicingPage() {
 
   const [showInvoiceDetailModal, setShowInvoiceDetailModal] = useState(false);
   const [isEditingInvoice, setIsEditingInvoice] = useState(false);
+
+  const [paymentTerms, setPaymentTerms] = useState<Array<{ id: string; name: string; days?: number }>>([]);
+  const [salesReps, setSalesReps] = useState<Array<{ id: string; name: string; is_active: boolean }>>([]);
+
+  const [newInvoiceCustomerId, setNewInvoiceCustomerId] = useState('');
+  const [newInvoiceDate, setNewInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [newInvoicePaymentTermId, setNewInvoicePaymentTermId] = useState<string | null>(null);
+  const [newInvoiceDueDate, setNewInvoiceDueDate] = useState(newInvoiceDate);
+  const [newInvoiceSalesRepId, setNewInvoiceSalesRepId] = useState<string | null>(null);
+
+  type NewItem = { description: string; quantity: number; price: number; total: number };
+  const [newInvoiceItems, setNewInvoiceItems] = useState<NewItem[]>([
+    { description: '', quantity: 1, price: 0, total: 0 },
+  ]);
+  const [newInvoiceSubtotal, setNewInvoiceSubtotal] = useState(0);
+  const [newInvoiceTax, setNewInvoiceTax] = useState(0);
+  const [newInvoiceTotal, setNewInvoiceTotal] = useState(0);
 
   const customers = [
     { id: '1', name: 'Empresa ABC SRL', email: 'contacto@empresaabc.com', phone: '809-555-0101' },
@@ -54,6 +72,15 @@ export default function InvoicingPage() {
     { id: '4', name: 'Teclado Mecánico RGB', price: 7500, stock: 67 },
     { id: '5', name: 'Mouse Inalámbrico', price: 5000, stock: 120 }
   ];
+
+  const recalcNewInvoiceTotals = (items: NewItem[]) => {
+    const subtotal = items.reduce((sum, it) => sum + (it.total || 0), 0);
+    const tax = subtotal * 0.18;
+    const total = subtotal + tax;
+    setNewInvoiceSubtotal(subtotal);
+    setNewInvoiceTax(tax);
+    setNewInvoiceTotal(total);
+  };
 
   const loadInvoices = async () => {
     if (!user?.id) return;
@@ -104,6 +131,7 @@ export default function InvoicingPage() {
           date: (inv.invoice_date as string) || new Date().toISOString().slice(0, 10),
           dueDate: (inv.due_date as string) || (inv.invoice_date as string) || new Date().toISOString().slice(0, 10),
           items,
+          salesRepId: (inv as any).sales_rep_id || null,
         };
       });
 
@@ -121,6 +149,29 @@ export default function InvoicingPage() {
       loadInvoices();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadPaymentTerms = async () => {
+      if (!user?.id) return;
+      try {
+        const [terms, reps] = await Promise.all([
+          paymentTermsService.getAll(user.id),
+          salesRepsService.getAll(user.id),
+        ]);
+        const mappedTerms = (terms || []).map((t: any) => ({
+          id: t.id as string,
+          name: t.name as string,
+          days: typeof t.days === 'number' ? t.days : undefined,
+        }));
+        setPaymentTerms(mappedTerms);
+        setSalesReps((reps || []).filter((r: any) => r.is_active));
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error cargando términos de pago para facturación:', error);
+      }
+    };
+    loadPaymentTerms();
   }, [user?.id]);
 
   const getStatusColor = (status: string) => {
@@ -151,6 +202,16 @@ export default function InvoicingPage() {
   });
 
   const handleCreateInvoice = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    setNewInvoiceCustomerId('');
+    setNewInvoiceDate(today);
+    setNewInvoicePaymentTermId(null);
+    setNewInvoiceSalesRepId(null);
+    setNewInvoiceDueDate(today);
+    setNewInvoiceItems([{ description: '', quantity: 1, price: 0, total: 0 }]);
+    setNewInvoiceSubtotal(0);
+    setNewInvoiceTax(0);
+    setNewInvoiceTotal(0);
     setShowNewInvoiceModal(true);
   };
 
@@ -280,11 +341,13 @@ export default function InvoicingPage() {
     const newId = `FAC-${new Date().getFullYear()}-${randomSuffix}`;
     const today = new Date().toISOString().split('T')[0];
 
-    const duplicated = {
+    const duplicated: UiInvoice = {
       ...original,
       id: newId,
       date: today,
-      status: 'draft'
+      status: 'draft',
+      dueDate: original.dueDate,
+      items: original.items,
     };
 
     setInvoices((prev) => [duplicated, ...prev]);
@@ -443,6 +506,65 @@ export default function InvoicingPage() {
     doc.save(`facturas_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
+  const handleSaveNewInvoice = async (mode: 'draft' | 'final') => {
+    if (!user?.id) {
+      alert('Debes iniciar sesión para crear facturas');
+      return;
+    }
+    if (!newInvoiceCustomerId) {
+      alert('Selecciona un cliente');
+      return;
+    }
+
+    const validItems = newInvoiceItems.filter(i => i.description && i.quantity > 0 && i.price > 0);
+    if (validItems.length === 0) {
+      alert('Agrega al menos una línea con cantidad y precio mayor que 0');
+      return;
+    }
+
+    const subtotal = newInvoiceSubtotal;
+    const tax = newInvoiceTax;
+    const total = newInvoiceTotal;
+
+    const invoiceNumber = `FAC-${Date.now()}`;
+    const status = mode === 'draft' ? 'draft' : 'pending';
+
+    const invoicePayload = {
+      customer_id: newInvoiceCustomerId,
+      invoice_number: invoiceNumber,
+      invoice_date: newInvoiceDate,
+      due_date: newInvoiceDueDate,
+      currency: 'DOP',
+      subtotal,
+      tax_amount: tax,
+      total_amount: total,
+      paid_amount: 0,
+      status,
+      payment_term_id: newInvoicePaymentTermId || null,
+      sales_rep_id: newInvoiceSalesRepId || null,
+      notes: null,
+    };
+
+    const linesPayload = validItems.map((item, index) => ({
+      description: item.description,
+      quantity: item.quantity,
+      unit_price: item.price,
+      line_total: item.total,
+      line_number: index + 1,
+    }));
+
+    try {
+      await invoicesService.create(user.id, invoicePayload, linesPayload);
+      await loadInvoices();
+      setShowNewInvoiceModal(false);
+      alert(mode === 'draft' ? 'Factura guardada como borrador' : 'Factura creada correctamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error creando factura:', error);
+      alert('Error al crear la factura');
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -597,6 +719,9 @@ export default function InvoicingPage() {
                     Cliente
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Vendedor
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Fecha
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -614,7 +739,9 @@ export default function InvoicingPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredInvoices.map((invoice) => (
+                {filteredInvoices.map((invoice) => {
+                  const rep = salesReps.find((r) => r.id === invoice.salesRepId);
+                  return (
                   <tr key={invoice.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{invoice.id}</div>
@@ -622,6 +749,9 @@ export default function InvoicingPage() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{invoice.customer}</div>
                       <div className="text-sm text-gray-500">{invoice.customerEmail}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {rep ? rep.name : '—'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {new Date(invoice.date).toLocaleDateString('es-DO')}
@@ -686,7 +816,7 @@ export default function InvoicingPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>
@@ -988,10 +1118,14 @@ export default function InvoicingPage() {
                 </div>
               </div>
               <div className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
-                    <select className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8">
+                    <select
+                      value={newInvoiceCustomerId}
+                      onChange={(e) => setNewInvoiceCustomerId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
                       <option value="">Seleccionar cliente...</option>
                       {customers.map((customer) => (
                         <option key={customer.id} value={customer.id}>{customer.name}</option>
@@ -999,9 +1133,49 @@ export default function InvoicingPage() {
                     </select>
                   </div>
                   <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Vendedor (opcional)</label>
+                    <select
+                      value={newInvoiceSalesRepId || ''}
+                      onChange={(e) => setNewInvoiceSalesRepId(e.target.value || null)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Sin vendedor asignado</option>
+                      {salesReps.map((rep) => (
+                        <option key={rep.id} value={rep.id}>{rep.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Condición de pago</label>
+                    <select
+                      value={newInvoicePaymentTermId ?? ''}
+                      onChange={(e) => {
+                        const termId = e.target.value || null;
+                        setNewInvoicePaymentTermId(termId);
+                        const term = paymentTerms.find(t => t.id === termId);
+                        if (term?.days != null) {
+                          const base = new Date(newInvoiceDate);
+                          const due = new Date(base);
+                          due.setDate(base.getDate() + term.days);
+                          setNewInvoiceDueDate(due.toISOString().slice(0, 10));
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Sin condición específica</option>
+                      {paymentTerms.map(term => (
+                        <option key={term.id} value={term.id}>
+                          {term.name}{typeof term.days === 'number' ? ` (${term.days} días)` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Fecha de Vencimiento</label>
                     <input
                       type="date"
+                      value={newInvoiceDueDate}
+                      onChange={(e) => setNewInvoiceDueDate(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -1021,34 +1195,89 @@ export default function InvoicingPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          <td className="px-4 py-3">
-                            <select className="w-full px-2 py-1 border border-gray-300 rounded text-sm pr-8">
-                              <option value="">Seleccionar producto...</option>
-                              {products.map((product) => (
-                                <option key={product.id} value={product.id}>{product.name}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-4 py-3">
-                            <input type="number" min="1" className="w-full px-2 py-1 border border-gray-300 rounded text-sm" />
-                          </td>
-                          <td className="px-4 py-3">
-                            <input type="number" className="w-full px-2 py-1 border border-gray-300 rounded text-sm" />
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className="text-sm font-medium">RD$ 0.00</span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <button className="text-red-600 hover:text-red-800">
-                              <i className="ri-delete-bin-line"></i>
-                            </button>
-                          </td>
-                        </tr>
+                        {newInvoiceItems.map((item, index) => (
+                          <tr key={index}>
+                            <td className="px-4 py-3">
+                              <input
+                                type="text"
+                                value={item.description}
+                                onChange={(e) => {
+                                  const desc = e.target.value;
+                                  setNewInvoiceItems(prev => {
+                                    const next = [...prev];
+                                    next[index] = { ...next[index], description: desc };
+                                    next[index].total = (next[index].quantity || 0) * (next[index].price || 0);
+                                    recalcNewInvoiceTotals(next);
+                                    return next;
+                                  });
+                                }}
+                                placeholder="Descripción del producto/servicio"
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="number"
+                                min="1"
+                                value={item.quantity}
+                                onChange={(e) => {
+                                  const qty = Number(e.target.value) || 0;
+                                  setNewInvoiceItems(prev => {
+                                    const next = [...prev];
+                                    next[index] = { ...next[index], quantity: qty, total: qty * (next[index].price || 0) };
+                                    recalcNewInvoiceTotals(next);
+                                    return next;
+                                  });
+                                }}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                type="number"
+                                min="0"
+                                value={item.price}
+                                onChange={(e) => {
+                                  const price = Number(e.target.value) || 0;
+                                  setNewInvoiceItems(prev => {
+                                    const next = [...prev];
+                                    next[index] = { ...next[index], price, total: price * (next[index].quantity || 0) };
+                                    recalcNewInvoiceTotals(next);
+                                    return next;
+                                  });
+                                }}
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="text-sm font-medium">RD$ {item.total.toLocaleString('es-DO')}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <button
+                                onClick={() => {
+                                  setNewInvoiceItems(prev => {
+                                    const next = prev.filter((_, i) => i !== index);
+                                    if (next.length === 0) {
+                                      next.push({ description: '', quantity: 1, price: 0, total: 0 });
+                                    }
+                                    recalcNewInvoiceTotals(next);
+                                    return next;
+                                  });
+                                }}
+                                className="text-red-600 hover:text-red-800"
+                              >
+                                <i className="ri-delete-bin-line"></i>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
-                  <button className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap">
+                  <button
+                    className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+                    onClick={() => setNewInvoiceItems(prev => [...prev, { description: '', quantity: 1, price: 0, total: 0 }])}
+                  >
                     <i className="ri-add-line mr-2"></i>
                     Agregar Producto
                   </button>
@@ -1067,16 +1296,16 @@ export default function InvoicingPage() {
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-sm text-gray-600">Subtotal:</span>
-                        <span className="text-sm font-medium">RD$ 0.00</span>
+                        <span className="text-sm font-medium">RD$ {newInvoiceSubtotal.toLocaleString('es-DO')}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-gray-600">ITBIS (18%):</span>
-                        <span className="text-sm font-medium">RD$ 0.00</span>
+                        <span className="text-sm font-medium">RD$ {newInvoiceTax.toLocaleString('es-DO')}</span>
                       </div>
                       <div className="border-t border-gray-200 pt-2">
                         <div className="flex justify-between">
                           <span className="text-base font-semibold">Total:</span>
-                          <span className="text-base font-semibold">RD$ 0.00</span>
+                          <span className="text-base font-semibold">RD$ {newInvoiceTotal.toLocaleString('es-DO')}</span>
                         </div>
                       </div>
                     </div>
@@ -1091,19 +1320,13 @@ export default function InvoicingPage() {
                   Cancelar
                 </button>
                 <button
-                  onClick={() => {
-                    alert('Guardando factura como borrador...');
-                    setShowNewInvoiceModal(false);
-                  }}
+                  onClick={() => handleSaveNewInvoice('draft')}
                   className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors whitespace-nowrap"
                 >
                   Guardar Borrador
                 </button>
                 <button
-                  onClick={() => {
-                    alert('Creando y enviando factura...');
-                    setShowNewInvoiceModal(false);
-                  }}
+                  onClick={() => handleSaveNewInvoice('final')}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                 >
                   Crear Factura

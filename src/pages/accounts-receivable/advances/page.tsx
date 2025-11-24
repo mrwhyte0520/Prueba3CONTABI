@@ -4,7 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, customerAdvancesService } from '../../../services/database';
+import { customersService, invoicesService, customerAdvancesService, bankAccountsService, journalEntriesService } from '../../../services/database';
 
 interface Advance {
   id: string;
@@ -22,6 +22,12 @@ interface Advance {
   appliedInvoices: string[];
 }
 
+interface BankAccountOption {
+  id: string;
+  name: string;
+  chartAccountId: string | null;
+}
+
 export default function AdvancesPage() {
   const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,6 +41,8 @@ export default function AdvancesPage() {
   const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
   const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number }>>([]);
   const [loadingSupport, setLoadingSupport] = useState(false);
+  const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
+  const [customerAdvanceAccounts, setCustomerAdvanceAccounts] = useState<Record<string, string>>({});
 
   const getPaymentMethodName = (method: string) => {
     switch (method) {
@@ -78,9 +86,10 @@ export default function AdvancesPage() {
     if (!user?.id) return;
     setLoadingSupport(true);
     try {
-      const [custList, invList] = await Promise.all([
+      const [custList, invList, bankList] = await Promise.all([
         customersService.getAll(user.id),
         invoicesService.getAll(user.id),
+        bankAccountsService.getAll(user.id),
       ]);
       setCustomers(custList.map((c: any) => ({ id: c.id, name: c.name })));
       setInvoices(
@@ -91,6 +100,23 @@ export default function AdvancesPage() {
           paidAmount: Number(inv.paid_amount) || 0,
         }))
       );
+
+      // Mapa de cuentas de anticipos por cliente
+      const advMap: Record<string, string> = {};
+      (custList || []).forEach((c: any) => {
+        if (c.id && c.advanceAccountId) {
+          advMap[String(c.id)] = String(c.advanceAccountId);
+        }
+      });
+      setCustomerAdvanceAccounts(advMap);
+
+      // Cuentas bancarias para poder generar asientos Banco vs Anticipos
+      const mappedBanks: BankAccountOption[] = (bankList || []).map((ba: any) => ({
+        id: String(ba.id),
+        name: `${ba.bank_name} - ${ba.account_number}`,
+        chartAccountId: ba.chart_account_id ? String(ba.chart_account_id) : null,
+      }));
+      setBankAccounts(mappedBanks);
     } finally {
       setLoadingSupport(false);
     }
@@ -300,9 +326,15 @@ export default function AdvancesPage() {
     const paymentMethod = String(formData.get('payment_method') || '');
     const reference = String(formData.get('reference') || '');
     const concept = String(formData.get('concept') || '');
+    const bankAccountId = String(formData.get('bank_account_id') || '');
 
     if (!customerId || !amount || !paymentMethod) {
       alert('Cliente, monto y método de pago son obligatorios');
+      return;
+    }
+
+    if (paymentMethod !== 'cash' && !bankAccountId) {
+      alert('Debe seleccionar una cuenta de banco para este método de pago');
       return;
     }
 
@@ -323,7 +355,78 @@ export default function AdvancesPage() {
     };
 
     try {
-      await customerAdvancesService.create(user.id, payload);
+      const created = await customerAdvancesService.create(user.id, payload);
+
+      // Best-effort: registrar asiento contable del anticipo (Banco/Caja vs Anticipos de cliente)
+      try {
+        const customerAdvanceAccountId = customerAdvanceAccounts[customerId];
+
+        if (!customerAdvanceAccountId) {
+          alert('Anticipo registrado, pero no se pudo crear el asiento: el cliente no tiene configurada una cuenta de Anticipos.');
+        } else {
+          let bankChartAccountId: string | null = null;
+          if (bankAccountId) {
+            const bank = bankAccounts.find(b => b.id === bankAccountId);
+            bankChartAccountId = bank?.chartAccountId || null;
+          }
+
+          if (!bankChartAccountId) {
+            if (paymentMethod === 'cash') {
+              alert('Anticipo registrado en efectivo sin cuenta de banco/caja configurada; no se generó asiento automático.');
+            } else {
+              alert('Anticipo registrado, pero no se pudo crear el asiento: la cuenta de banco seleccionada no tiene cuenta contable asociada.');
+            }
+          } else {
+            const entryAmount = Number(created.amount) || amount;
+
+            const lines: any[] = [
+              {
+                account_id: bankChartAccountId,
+                description: 'Anticipo de cliente - Banco',
+                debit_amount: entryAmount,
+                credit_amount: 0,
+                line_number: 1,
+              },
+              {
+                account_id: customerAdvanceAccountId,
+                description: 'Anticipo de cliente - Pasivo',
+                debit_amount: 0,
+                credit_amount: entryAmount,
+                line_number: 2,
+              },
+            ];
+
+            const customerName = customers.find(c => c.id === customerId)?.name || '';
+            const descriptionText = customerName
+              ? `Anticipo ${created.advance_number || advanceNumber} - ${customerName}`
+              : `Anticipo ${created.advance_number || advanceNumber}`;
+
+            const refText = created.reference || reference || '';
+            const entryReference = refText
+              ? `Anticipo:${created.id} Ref:${refText}`
+              : `Anticipo:${created.id}`;
+
+            const entryDate = created.advance_date || advanceDate;
+
+            const entryPayload = {
+              entry_number: created.id,
+              entry_date: entryDate,
+              description: descriptionText,
+              reference: entryReference,
+              total_debit: entryAmount,
+              total_credit: entryAmount,
+              status: 'posted' as const,
+            };
+
+            await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        // eslint-disable-next-line no-console
+        console.error('[Advances] Error creando asiento contable de anticipo:', jeError);
+        alert('Anticipo registrado, pero ocurrió un error al crear el asiento contable. Revise el libro diario y la configuración.');
+      }
+
       await loadAdvances();
       alert('Anticipo creado exitosamente');
       setShowAdvanceModal(false);

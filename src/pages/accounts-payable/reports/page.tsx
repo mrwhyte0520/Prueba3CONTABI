@@ -4,7 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { purchaseOrdersService, supplierPaymentsService, suppliersService } from '../../../services/database';
+import { apInvoicesService, supplierPaymentsService, suppliersService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -20,7 +20,7 @@ export default function ReportsPage() {
   const [supplier, setSupplier] = useState('all');
   const [showReport, setShowReport] = useState(false);
   const [suppliers, setSuppliers] = useState<any[]>([]);
-  const [orders, setOrders] = useState<any[]>([]);
+  const [apInvoices, setApInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
   const [agingData, setAgingData] = useState<any[]>([]);
   const [paymentsData, setPaymentsData] = useState<any[]>([]);
@@ -40,18 +40,18 @@ export default function ReportsPage() {
     }
   };
 
-  const loadOrders = async () => {
+  const loadApInvoices = async () => {
     if (!user?.id) {
-      setOrders([]);
+      setApInvoices([]);
       return;
     }
     try {
-      const data = await purchaseOrdersService.getAll(user.id);
-      setOrders(data || []);
+      const data = await apInvoicesService.getAll(user.id);
+      setApInvoices(data || []);
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.error('Error loading purchase orders for AP reports', error);
-      setOrders([]);
+      console.error('Error loading AP invoices for AP reports', error);
+      setApInvoices([]);
     }
   };
 
@@ -72,7 +72,7 @@ export default function ReportsPage() {
 
   useEffect(() => {
     loadSuppliers();
-    loadOrders();
+    loadApInvoices();
     loadPayments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -90,14 +90,34 @@ export default function ReportsPage() {
     if (reportType === 'aging') {
       const bySupplier: Record<string, any> = {};
 
-      orders.forEach((po: any) => {
-        if (po.status === 'cancelled') return;
-        const poDate = po.order_date ? new Date(po.order_date) : null;
-        if (poDate && (poDate < start || poDate > end)) return;
-        if (selectedSupplierId && po.supplier_id !== selectedSupplierId) return;
+      // Mapa de pagos por número de factura (supplier_payments.invoice_number)
+      const paymentsByInvoice = payments.reduce<Record<string, number>>((acc, p: any) => {
+        const status = p.status || '';
+        if (status !== 'Completado' && status !== 'completed') return acc;
+        const invNumber = (p.invoice_number || '').toString();
+        if (!invNumber) return acc;
+        const amount = Number(p.amount) || 0;
+        if (!acc[invNumber]) acc[invNumber] = 0;
+        acc[invNumber] += amount;
+        return acc;
+      }, {});
 
-        const supplierId = po.supplier_id as string;
-        const supplierName = (po.suppliers as any)?.name || 'Proveedor';
+      apInvoices.forEach((inv: any) => {
+        if (inv.status === 'cancelled') return;
+
+        const invoiceDate = inv.invoice_date ? new Date(inv.invoice_date) : null;
+        if (invoiceDate && (invoiceDate < start || invoiceDate > end)) return;
+
+        if (selectedSupplierId && inv.supplier_id !== selectedSupplierId) return;
+
+        const invoiceNumber = (inv.invoice_number || '').toString();
+        const invoiceTotal = Number(inv.total_to_pay ?? inv.total_gross ?? inv.total_net ?? 0) || 0;
+        const paidForInvoice = invoiceNumber ? (paymentsByInvoice[invoiceNumber] || 0) : 0;
+        const outstanding = Math.max(invoiceTotal - paidForInvoice, 0);
+        if (outstanding <= 0) return; // factura totalmente pagada
+
+        const supplierId = inv.supplier_id as string;
+        const supplierName = (inv.suppliers as any)?.name || 'Proveedor';
         if (!bySupplier[supplierId]) {
           bySupplier[supplierId] = {
             supplierId,
@@ -111,25 +131,24 @@ export default function ReportsPage() {
           };
         }
 
-        const total = Number(po.total_amount) || 0;
-        const expected = po.expected_date ? new Date(po.expected_date) : null;
+        const due = inv.due_date ? new Date(inv.due_date) : invoiceDate;
         const today = new Date();
         let days = 0;
-        if (expected) {
-          days = Math.floor((today.getTime() - expected.getTime()) / (1000 * 60 * 60 * 24));
+        if (due) {
+          days = Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
         }
 
-        bySupplier[supplierId].total += total;
-        if (!expected || days <= 0) {
-          bySupplier[supplierId].current += total;
+        bySupplier[supplierId].total += outstanding;
+        if (!due || days <= 0) {
+          bySupplier[supplierId].current += outstanding;
         } else if (days <= 30) {
-          bySupplier[supplierId].days1_30 += total;
+          bySupplier[supplierId].days1_30 += outstanding;
         } else if (days <= 60) {
-          bySupplier[supplierId].days31_60 += total;
+          bySupplier[supplierId].days31_60 += outstanding;
         } else if (days <= 90) {
-          bySupplier[supplierId].days61_90 += total;
+          bySupplier[supplierId].days61_90 += outstanding;
         } else {
-          bySupplier[supplierId].over90 += total;
+          bySupplier[supplierId].over90 += outstanding;
         }
       });
 

@@ -1,181 +1,260 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { useAuth } from '../../../hooks/useAuth';
+import { apSupplierAdvancesService, suppliersService } from '../../../services/database';
+
+interface SupplierAdvance {
+  id: string;
+  number: string;
+  date: string;
+  supplierId: string;
+  supplierName: string;
+  amount: number;
+  reason: string;
+  status: 'Pendiente' | 'Aprobado' | 'Aplicado' | 'Rechazado';
+  dueDate: string | null;
+  remainingBalance: number;
+  appliedAmount: number;
+}
 
 export default function AdvancesPage() {
+  const { user } = useAuth();
+
   const [showModal, setShowModal] = useState(false);
-  const [editingAdvance, setEditingAdvance] = useState<any>(null);
+  const [editingAdvance, setEditingAdvance] = useState<SupplierAdvance | null>(null);
   const [filterStatus, setFilterStatus] = useState('all');
 
-  const [advances, setAdvances] = useState([
-    {
-      id: 1,
-      number: 'ADV-2024-001',
-      date: '2024-01-15',
-      supplier: 'Proveedor Industrial SA',
-      amount: 50000,
-      reason: 'Anticipo para materiales industriales proyecto Q1',
-      status: 'Aprobado',
-      approvedBy: 'Juan Pérez',
-      dueDate: '2024-02-15',
-      remainingBalance: 35000,
-      appliedAmount: 15000
-    },
-    {
-      id: 2,
-      number: 'ADV-2024-002',
-      date: '2024-01-14',
-      supplier: 'Distribuidora Nacional SRL',
-      amount: 25000,
-      reason: 'Anticipo para compra de inventario',
-      status: 'Pendiente',
-      approvedBy: '',
-      dueDate: '2024-02-14',
-      remainingBalance: 25000,
-      appliedAmount: 0
-    },
-    {
-      id: 3,
-      number: 'ADV-2024-003',
-      date: '2024-01-13',
-      supplier: 'Servicios Técnicos EIRL',
-      amount: 15000,
-      reason: 'Anticipo para servicios técnicos especializados',
-      status: 'Aplicado',
-      approvedBy: 'María García',
-      dueDate: '2024-01-30',
-      remainingBalance: 0,
-      appliedAmount: 15000
-    },
-    {
-      id: 4,
-      number: 'ADV-2024-004',
-      date: '2024-01-12',
-      supplier: 'Materiales Construcción SA',
-      amount: 75000,
-      reason: 'Anticipo para materiales de construcción premium',
-      status: 'Rechazado',
-      approvedBy: '',
-      dueDate: '2024-02-12',
-      remainingBalance: 75000,
-      appliedAmount: 0
-    }
-  ]);
+  const [advances, setAdvances] = useState<SupplierAdvance[]>([]);
+  const [suppliers, setSuppliers] = useState<Array<{ id: string; name: string }>>([]);
 
   const [formData, setFormData] = useState({
-    supplier: '',
+    supplierId: '',
     amount: '',
     reason: '',
-    dueDate: ''
+    dueDate: '',
   });
 
-  const suppliers = [
-    'Proveedor Industrial SA',
-    'Distribuidora Nacional SRL',
-    'Servicios Técnicos EIRL',
-    'Materiales Construcción SA'
-  ];
+  const loadSuppliers = async () => {
+    if (!user?.id) {
+      setSuppliers([]);
+      return;
+    }
+    try {
+      const rows = await suppliersService.getAll(user.id);
+      setSuppliers((rows || []).map((s: any) => ({ id: String(s.id), name: s.name || '' })));
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error cargando proveedores para anticipos CxP', error);
+      setSuppliers([]);
+    }
+  };
 
-  const filteredAdvances = advances.filter(advance => {
+  const mapDbStatusToUi = (status: string | null | undefined): SupplierAdvance['status'] => {
+    switch (status) {
+      case 'approved':
+        return 'Aprobado';
+      case 'applied':
+        return 'Aplicado';
+      case 'cancelled':
+        return 'Rechazado';
+      default:
+        return 'Pendiente';
+    }
+  };
+
+  const mapUiStatusToDb = (status: SupplierAdvance['status']): string => {
+    switch (status) {
+      case 'Aprobado':
+        return 'approved';
+      case 'Aplicado':
+        return 'applied';
+      case 'Rechazado':
+        return 'cancelled';
+      default:
+        return 'pending';
+    }
+  };
+
+  const loadAdvances = async () => {
+    if (!user?.id) {
+      setAdvances([]);
+      return;
+    }
+    try {
+      const rows = await apSupplierAdvancesService.getAll(user.id);
+      const mapped: SupplierAdvance[] = (rows || []).map((a: any) => {
+        const amount = Number(a.amount) || 0;
+        const applied = Number(a.applied_amount) || 0;
+        const balance = Number(a.balance_amount) || (amount - applied);
+        return {
+          id: String(a.id),
+          number: a.advance_number || '',
+          date: a.advance_date || (a.created_at ? String(a.created_at).slice(0, 10) : ''),
+          supplierId: String(a.supplier_id),
+          supplierName: (a.suppliers as any)?.name || 'Proveedor',
+          amount,
+          reason: a.description || '',
+          status: mapDbStatusToUi(a.status),
+          dueDate: a.due_date || null,
+          remainingBalance: balance,
+          appliedAmount: applied,
+        };
+      });
+      setAdvances(mapped);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error cargando anticipos a suplidores', error);
+      setAdvances([]);
+    }
+  };
+
+  useEffect(() => {
+    loadSuppliers();
+    loadAdvances();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const filteredAdvances = advances.filter((advance) => {
     return filterStatus === 'all' || advance.status === filterStatus;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (editingAdvance) {
-      setAdvances(advances.map(advance => 
-        advance.id === editingAdvance.id 
-          ? { 
-              ...advance, 
-              supplier: formData.supplier,
-              amount: parseFloat(formData.amount),
-              reason: formData.reason,
-              dueDate: formData.dueDate,
-              remainingBalance: parseFloat(formData.amount)
-            }
-          : advance
-      ));
-    } else {
-      const newAdvance = {
-        id: advances.length + 1,
-        number: `ADV-2024-${String(advances.length + 1).padStart(3, '0')}`,
-        date: new Date().toISOString().split('T')[0],
-        supplier: formData.supplier,
-        amount: parseFloat(formData.amount),
-        reason: formData.reason,
-        status: 'Pendiente',
-        approvedBy: '',
-        dueDate: formData.dueDate,
-        remainingBalance: parseFloat(formData.amount),
-        appliedAmount: 0
-      };
-      setAdvances([...advances, newAdvance]);
+
+    if (!user?.id) {
+      alert('Debes iniciar sesión para registrar anticipos');
+      return;
     }
-    
-    resetForm();
-    alert(editingAdvance ? 'Anticipo actualizado exitosamente' : 'Anticipo creado exitosamente');
+
+    const amountNumber = Number(formData.amount);
+    if (!formData.supplierId || !formData.reason.trim() || isNaN(amountNumber) || amountNumber <= 0) {
+      alert('Proveedor, motivo y monto válido son obligatorios');
+      return;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const advanceNumber = editingAdvance?.number || `ADV-${new Date().getFullYear()}-${String(advances.length + 1).padStart(3, '0')}`;
+
+    try {
+      if (editingAdvance) {
+        const dbStatus = mapUiStatusToDb(editingAdvance.status);
+        const appliedAmount = editingAdvance.appliedAmount;
+        const balanceAmount = amountNumber - appliedAmount;
+
+        await apSupplierAdvancesService.updateStatus(editingAdvance.id, dbStatus, {
+          appliedAmount,
+          balanceAmount,
+        });
+
+        // Nota: no tenemos un método update completo en el servicio, así que solo actualizamos montos/estatus.
+        // Para cambios más profundos se podría ampliar el servicio con un método update similar a create.
+      } else {
+        await apSupplierAdvancesService.create(user.id, {
+          supplier_id: formData.supplierId,
+          advance_number: advanceNumber,
+          advance_date: today,
+          amount: amountNumber,
+          reference: null,
+          description: formData.reason,
+          status: 'pending',
+          applied_amount: 0,
+          balance_amount: amountNumber,
+        });
+      }
+
+      await loadAdvances();
+      resetForm();
+      alert(editingAdvance ? 'Anticipo actualizado exitosamente' : 'Anticipo creado exitosamente');
+    } catch (error: any) {
+      // eslint-disable-next-line no-console
+      console.error('Error guardando anticipo de suplidor', error);
+      alert(error?.message || 'Error al guardar el anticipo');
+    }
   };
 
   const resetForm = () => {
     setFormData({
-      supplier: '',
+      supplierId: '',
       amount: '',
       reason: '',
-      dueDate: ''
+      dueDate: '',
     });
     setEditingAdvance(null);
     setShowModal(false);
   };
 
-  const handleEdit = (advance: any) => {
+  const handleEdit = (advance: SupplierAdvance) => {
     setEditingAdvance(advance);
     setFormData({
-      supplier: advance.supplier,
+      supplierId: advance.supplierId,
       amount: advance.amount.toString(),
       reason: advance.reason,
-      dueDate: advance.dueDate
+      dueDate: advance.dueDate || '',
     });
     setShowModal(true);
   };
 
-  const handleApprove = (id: number) => {
-    if (confirm('¿Aprobar este anticipo?')) {
-      setAdvances(advances.map(advance => 
-        advance.id === id ? { ...advance, status: 'Aprobado', approvedBy: 'Usuario Actual' } : advance
-      ));
-      alert('Anticipo aprobado exitosamente');
-    }
-  };
-
-  const handleReject = (id: number) => {
-    if (confirm('¿Rechazar este anticipo?')) {
-      setAdvances(advances.map(advance => 
-        advance.id === id ? { ...advance, status: 'Rechazado' } : advance
-      ));
-      alert('Anticipo rechazado');
-    }
-  };
-
-  const handleApply = (id: number) => {
+  const handleApprove = async (id: string) => {
     const advance = advances.find(a => a.id === id);
-    if (advance && confirm(`¿Aplicar anticipo de RD$ ${advance.remainingBalance.toLocaleString()}?`)) {
-      setAdvances(advances.map(a => 
-        a.id === id ? { 
-          ...a, 
-          status: 'Aplicado',
-          appliedAmount: a.amount,
-          remainingBalance: 0
-        } : a
-      ));
+    if (!advance) return;
+    if (!confirm('¿Aprobar este anticipo?')) return;
+    try {
+      await apSupplierAdvancesService.updateStatus(id, 'approved', {
+        appliedAmount: advance.appliedAmount,
+        balanceAmount: advance.remainingBalance,
+      });
+      await loadAdvances();
+      alert('Anticipo aprobado exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error aprobando anticipo de suplidor', error);
+      alert('No se pudo aprobar el anticipo');
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    const advance = advances.find(a => a.id === id);
+    if (!advance) return;
+    if (!confirm('¿Rechazar este anticipo?')) return;
+    try {
+      await apSupplierAdvancesService.updateStatus(id, 'cancelled', {
+        appliedAmount: advance.appliedAmount,
+        balanceAmount: advance.remainingBalance,
+      });
+      await loadAdvances();
+      alert('Anticipo rechazado');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error rechazando anticipo de suplidor', error);
+      alert('No se pudo rechazar el anticipo');
+    }
+  };
+
+  const handleApply = async (id: string) => {
+    const advance = advances.find(a => a.id === id);
+    if (!advance) return;
+    if (!confirm(`¿Aplicar anticipo de RD$ ${advance.remainingBalance.toLocaleString()}?`)) return;
+    try {
+      const newApplied = advance.appliedAmount + advance.remainingBalance;
+      const newBalance = 0;
+      await apSupplierAdvancesService.updateStatus(id, 'applied', {
+        appliedAmount: newApplied,
+        balanceAmount: newBalance,
+      });
+      await loadAdvances();
       alert('Anticipo aplicado exitosamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error aplicando anticipo de suplidor', error);
+      alert('No se pudo aplicar el anticipo');
     }
   };
 
   const exportToExcel = () => {
-    alert('Exportando anticipos a Excel...');
+    alert('Exportando anticipos a Excel... (pendiente de implementar integración real)');
   };
 
-  const printAdvance = (advance: any) => {
+  const printAdvance = (advance: SupplierAdvance) => {
     alert(`Imprimiendo anticipo: ${advance.number}`);
   };
 
@@ -308,7 +387,7 @@ export default function AdvancesPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{advance.date}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className="text-sm font-medium text-gray-900">{advance.supplier}</div>
+                        <div className="text-sm font-medium text-gray-900">{advance.supplierName}</div>
                         <div className="text-sm text-gray-500 truncate max-w-xs">{advance.reason}</div>
                       </div>
                     </td>
@@ -391,13 +470,13 @@ export default function AdvancesPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Proveedor *</label>
                     <select 
                       required
-                      value={formData.supplier}
-                      onChange={(e) => setFormData({...formData, supplier: e.target.value})}
+                      value={formData.supplierId}
+                      onChange={(e) => setFormData({ ...formData, supplierId: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Seleccionar proveedor</option>
-                      {suppliers.map(supplier => (
-                        <option key={supplier} value={supplier}>{supplier}</option>
+                      {suppliers.map((supplier) => (
+                        <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
                       ))}
                     </select>
                   </div>

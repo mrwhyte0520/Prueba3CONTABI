@@ -83,6 +83,8 @@ const PreInvoicingPage = lazy(() => import('../pages/billing/pre-invoicing/page'
 const RecurringBillingPage = lazy(() => import('../pages/billing/recurring/page'));
 const CashClosingPage = lazy(() => import('../pages/billing/cash-closing/page'));
 const QuotesPage = lazy(() => import('../pages/billing/quotes/page'));
+const AuthorizationsPage = lazy(() => import('../pages/billing/authorizations/page'));
+const SalesRepsPage = lazy(() => import('../pages/billing/sales-reps/page'));
 
 // Accounts Payable Pages
 const APReportsPage = lazy(() => import('../pages/accounts-payable/reports/page'));
@@ -91,6 +93,9 @@ const PaymentsPage = lazy(() => import('../pages/accounts-payable/payments/page'
 const PurchaseOrdersPage = lazy(() => import('../pages/accounts-payable/purchase-orders/page'));
 const APQuotesPage = lazy(() => import('../pages/accounts-payable/quotes/page'));
 const AdvancesPage = lazy(() => import('../pages/accounts-payable/advances/page'));
+const SupplierTypesPage = lazy(() => import('../pages/accounts-payable/supplier-types/page'));
+const PaymentTermsPage = lazy(() => import('../pages/accounts-payable/payment-terms/page'));
+const APInvoicesPage = lazy(() => import('../pages/accounts-payable/invoices/page'));
 
 // Accounts Receivable Pages
 const ARInvoicesPage = lazy(() => import('../pages/accounts-receivable/invoices/page'));
@@ -410,6 +415,18 @@ const routes: RouteObject[] = [
     element: <ProtectedRoute><AdvancesPage /></ProtectedRoute>
   },
   {
+    path: '/accounts-payable/supplier-types',
+    element: <ProtectedRoute><SupplierTypesPage /></ProtectedRoute>
+  },
+  {
+    path: '/accounts-payable/payment-terms',
+    element: <ProtectedRoute><PaymentTermsPage /></ProtectedRoute>
+  },
+  {
+    path: '/accounts-payable/invoices',
+    element: <ProtectedRoute><APInvoicesPage /></ProtectedRoute>
+  },
+  {
     path: '/billing',
     element: <ProtectedRoute><BillingPage /></ProtectedRoute>
   },
@@ -417,6 +434,10 @@ const routes: RouteObject[] = [
   {
     path: '/billing/sales-reports',
     element: <SalesReportsPage />
+  },
+  {
+    path: '/billing/sales-reps',
+    element: <ProtectedRoute><SalesRepsPage /></ProtectedRoute>
   },
   {
     path: '/billing/invoicing',
@@ -437,6 +458,10 @@ const routes: RouteObject[] = [
   {
     path: '/billing/quotes',
     element: <QuotesPage />
+  },
+  {
+    path: '/billing/authorizations',
+    element: <ProtectedRoute><AuthorizationsPage /></ProtectedRoute>
   },
   {
     path: '/taxes',

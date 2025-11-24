@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { bankAccountsService, supplierPaymentsService, suppliersService } from '../../../services/database';
+import { bankAccountsService, supplierPaymentsService, suppliersService, apInvoicesService } from '../../../services/database';
 
 export default function PaymentsPage() {
   const { user } = useAuth();
@@ -11,6 +11,8 @@ export default function PaymentsPage() {
   const [filterMethod, setFilterMethod] = useState('all');
 
   const [payments, setPayments] = useState<any[]>([]);
+
+  const [apInvoices, setApInvoices] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
     supplierId: '',
@@ -91,10 +93,26 @@ export default function PaymentsPage() {
     }
   };
 
+  const loadApInvoices = async () => {
+    if (!user?.id) {
+      setApInvoices([]);
+      return;
+    }
+    try {
+      const rows = await apInvoicesService.getAll(user.id);
+      setApInvoices(rows || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading AP invoices for supplier payments', error);
+      setApInvoices([]);
+    }
+  };
+
   useEffect(() => {
     loadSuppliers();
     loadBankAccounts();
     loadPayments();
+    loadApInvoices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -481,14 +499,21 @@ export default function PaymentsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Factura</label>
-                    <input 
-                      type="text"
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Factura (CxP)</label>
+                    <select
                       value={formData.invoice}
-                      onChange={(e) => setFormData({...formData, invoice: e.target.value})}
+                      onChange={(e) => setFormData({ ...formData, invoice: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="INV-001234"
-                    />
+                    >
+                      <option value="">Sin factura seleccionada</option>
+                      {apInvoices
+                        .filter((inv: any) => String(inv.supplier_id) === String(formData.supplierId))
+                        .map((inv: any) => (
+                          <option key={inv.id} value={inv.invoice_number || ''}>
+                            {(inv.invoice_number || 'SIN-NUM').toString()} - {(inv.currency || 'DOP')} {Number(inv.total_to_pay || inv.total_gross || 0).toLocaleString()}
+                          </option>
+                        ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Método de Pago *</label>

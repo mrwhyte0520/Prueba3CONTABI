@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 import { useAuth } from '../../../hooks/useAuth';
-import { pettyCashService, chartAccountsService } from '../../../services/database';
+import { pettyCashService, chartAccountsService, pettyCashCategoriesService } from '../../../services/database';
 
 interface PettyCashFund {
   id: string;
@@ -29,6 +29,8 @@ interface PettyCashExpense {
   approvedBy: string;
   status: 'pending' | 'approved' | 'rejected';
   expenseAccountId?: string;
+  ncf?: string;
+  itbis?: number | null;
 }
 
 interface PettyCashReimbursement {
@@ -42,7 +44,8 @@ interface PettyCashReimbursement {
 
 const PettyCashPage: React.FC = () => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'funds' | 'expenses' | 'reimbursements'>('funds');
+  const [activeTab, setActiveTab] = useState<'funds' | 'expenses' | 'reimbursements' | 'categories'>('funds');
+
   const [funds, setFunds] = useState<PettyCashFund[]>([]);
   const [expenses, setExpenses] = useState<PettyCashExpense[]>([]);
   const [reimbursements, setReimbursements] = useState<PettyCashReimbursement[]>([]);
@@ -54,21 +57,31 @@ const PettyCashPage: React.FC = () => {
   const [selectedExpense, setSelectedExpense] = useState<PettyCashExpense | null>(null);
 
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<any | null>(null);
 
   const [loadingFunds, setLoadingFunds] = useState(false);
   const [loadingExpenses, setLoadingExpenses] = useState(false);
 
-  // Cargar fondos y cuentas reales
+  const lowBalanceFunds = funds.filter((fund) => {
+    const initial = Number(fund.initialAmount) || 0;
+    const current = Number(fund.currentBalance) || 0;
+    if (initial <= 0) return false;
+    return current <= initial * 0.1;
+  });
+
   useEffect(() => {
     const loadData = async () => {
       if (!user) return;
       try {
         setLoadingFunds(true);
-        const [fundsData, accountsData, expensesData, reimbursementsData] = await Promise.all([
+        const [fundsData, accountsData, expensesData, reimbursementsData, categoriesData] = await Promise.all([
           pettyCashService.getFunds(user.id),
           chartAccountsService.getAll(user.id),
           pettyCashService.getExpenses(user.id),
           pettyCashService.getReimbursements(user.id),
+          pettyCashCategoriesService.getAll(user.id),
         ]);
 
         const mappedFunds: PettyCashFund[] = (fundsData || []).map((f: any) => ({
@@ -85,7 +98,27 @@ const PettyCashPage: React.FC = () => {
         }));
         setFunds(mappedFunds);
 
+        try {
+          const criticalFunds = mappedFunds.filter((fund) => {
+            const initial = Number(fund.initialAmount) || 0;
+            const current = Number(fund.currentBalance) || 0;
+            if (initial <= 0) return false;
+            return current <= initial * 0.1;
+          });
+          if (criticalFunds.length > 0) {
+            const names = criticalFunds.map((f) => `${f.name} (RD$ ${f.currentBalance.toLocaleString()} de RD$ ${f.initialAmount.toLocaleString()})`).join('\n');
+            alert(
+              'Atención: Existen fondos de caja chica con disponibilidad igual o inferior al 10% del monto inicial.\n\n' +
+              names
+            );
+          }
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error('Error evaluando fondos críticos de caja chica:', e);
+        }
+
         setAccounts(accountsData || []);
+        setCategories(categoriesData || []);
 
         const mappedExpenses: PettyCashExpense[] = (expensesData || []).map((e: any) => ({
           id: e.id,
@@ -98,6 +131,8 @@ const PettyCashPage: React.FC = () => {
           approvedBy: e.approved_by || '',
           status: (e.status as 'pending' | 'approved' | 'rejected') || 'pending',
           expenseAccountId: e.expense_account_id || undefined,
+          ncf: e.ncf || '',
+          itbis: e.itbis != null ? Number(e.itbis) : null,
         }));
         setExpenses(mappedExpenses);
 
@@ -196,6 +231,18 @@ const PettyCashPage: React.FC = () => {
     return false;
   });
 
+  const hasDbCategories = categories && categories.length > 0;
+  const categoryOptions: { value: string; label: string }[] = hasDbCategories
+    ? categories.map((c: any) => ({ value: String(c.name || '').trim(), label: String(c.name || '').trim() })).filter(c => c.value)
+    : [
+        { value: 'Suministros de Oficina', label: 'Suministros de Oficina' },
+        { value: 'Viáticos', label: 'Viáticos' },
+        { value: 'Transporte', label: 'Transporte' },
+        { value: 'Mantenimiento', label: 'Mantenimiento' },
+        { value: 'Comunicaciones', label: 'Comunicaciones' },
+        { value: 'Otros', label: 'Otros' },
+      ];
+
   const handleCreateExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
@@ -207,6 +254,9 @@ const PettyCashPage: React.FC = () => {
     const category = String(formData.get('category') || '').trim();
     const amount = parseFloat(String(formData.get('amount') || '0')) || 0;
     const receipt = String(formData.get('receipt') || '').trim();
+    const ncf = String(formData.get('ncf') || '').trim();
+    const itbisRaw = String(formData.get('itbis') || '').trim();
+    const itbis = itbisRaw ? (parseFloat(itbisRaw) || 0) : null;
     const expenseAccountId = String(formData.get('expenseAccountId') || '');
 
     if (!fundId) {
@@ -226,6 +276,8 @@ const PettyCashPage: React.FC = () => {
         category,
         amount,
         receipt_number: receipt,
+        ncf: ncf || null,
+        itbis,
         expense_account_id: expenseAccountId,
       });
 
@@ -240,6 +292,8 @@ const PettyCashPage: React.FC = () => {
         approvedBy: created.approved_by || '',
         status: (created.status as 'pending' | 'approved' | 'rejected') || 'pending',
         expenseAccountId: created.expense_account_id || undefined,
+        ncf: created.ncf || ncf,
+        itbis: created.itbis != null ? Number(created.itbis) : itbis,
       };
 
       setExpenses(prev => [mapped, ...prev]);
@@ -364,6 +418,8 @@ const PettyCashPage: React.FC = () => {
           { key: 'amount', title: 'Monto' },
           { key: 'status', title: 'Estado' },
           { key: 'approvedBy', title: 'Aprobado Por' },
+          { key: 'ncf', title: 'NCF' },
+          { key: 'itbis', title: 'ITBIS' },
         ];
         const fundNameById = new Map(funds.map(f => [f.id, f.name] as const));
         const rows = expenses.map(e => ({
@@ -374,8 +430,10 @@ const PettyCashPage: React.FC = () => {
           amount: e.amount || 0,
           status: e.status === 'approved' ? 'Aprobado' : e.status === 'pending' ? 'Pendiente' : 'Rechazado',
           approvedBy: e.approvedBy || 'N/A',
+          ncf: e.ncf || '',
+          itbis: e.itbis || 0,
         }));
-        exportToExcelWithHeaders(rows, headers, `caja_chica_gastos_${today}`, 'Gastos', [12,22,40,18,14,12,18]);
+        exportToExcelWithHeaders(rows, headers, `caja_chica_gastos_${today}`, 'Gastos', [12,22,40,18,14,12,18,12,12]);
         return;
       }
 
@@ -488,6 +546,25 @@ const PettyCashPage: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {lowBalanceFunds.length > 0 && (
+          <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg flex items-start space-x-3">
+            <i className="ri-alert-line mt-0.5"></i>
+            <div>
+              <p className="font-semibold">Alerta de Caja Chica</p>
+              <p className="text-sm">
+                Los siguientes fondos tienen una disponibilidad igual o inferior al 10% del monto inicial. Se recomienda solicitar la reposición correspondiente.
+              </p>
+              <ul className="mt-2 list-disc list-inside text-sm">
+                {lowBalanceFunds.map((fund) => (
+                  <li key={fund.id}>
+                    {fund.name}: RD${fund.currentBalance.toLocaleString()} de RD${fund.initialAmount.toLocaleString()}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
 
         {/* Navegación por pestañas */}
         <div className="bg-white rounded-lg shadow-sm border">
@@ -632,12 +709,18 @@ const PettyCashPage: React.FC = () => {
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Acciones
                         </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          NCF
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          ITBIS
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                       {loadingExpenses && expenses.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-6 py-4 text-center text-sm text-gray-500">
+                          <td colSpan={8} className="px-6 py-4 text-center text-sm text-gray-500">
                             Cargando gastos de caja chica...
                           </td>
                         </tr>
@@ -691,6 +774,12 @@ const PettyCashPage: React.FC = () => {
                                 Rechazar
                               </button>
                             )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {expense.ncf || '-'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {expense.itbis || 0}
                           </td>
                         </tr>
                       ))}
@@ -757,6 +846,91 @@ const PettyCashPage: React.FC = () => {
                             RD${r.amount.toLocaleString()}
                           </td>
                           <td className="px-6 py-4 text-sm text-gray-700">{r.description}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Tab: Categorías */}
+            {activeTab === 'categories' && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-lg font-semibold text-gray-900">Categorías de Gastos de Caja Chica</h2>
+                  <button
+                    onClick={() => {
+                      setEditingCategory(null);
+                      setShowCategoryModal(true);
+                    }}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                  >
+                    <i className="ri-add-line mr-2"></i>
+                    Nueva Categoría
+                  </button>
+                </div>
+
+                <div className="bg-white border rounded-lg overflow-hidden">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {(!categories || categories.length === 0) && (
+                        <tr>
+                          <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
+                            No hay categorías configuradas. Puede crear nuevas usando el botón "Nueva Categoría".
+                          </td>
+                        </tr>
+                      )}
+                      {categories.map((cat: any) => (
+                        <tr key={cat.id}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{cat.name}</td>
+                          <td className="px-6 py-4 text-sm text-gray-700">{cat.description || ''}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              cat.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                            }`}>
+                              {cat.is_active ? 'Activa' : 'Inactiva'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-3">
+                            <button
+                              className="text-blue-600 hover:text-blue-900"
+                              onClick={() => {
+                                setEditingCategory(cat);
+                                setShowCategoryModal(true);
+                              }}
+                            >
+                              Editar
+                            </button>
+                            <button
+                              className={cat.is_active ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}
+                              onClick={async () => {
+                                if (!user) return;
+                                const confirmMsg = cat.is_active
+                                  ? '¿Desea desactivar esta categoría? Ya no estará disponible para nuevos gastos.'
+                                  : '¿Desea activar nuevamente esta categoría?';
+                                if (!confirm(confirmMsg)) return;
+                                try {
+                                  const updated = await pettyCashCategoriesService.toggleActive(cat.id, !cat.is_active);
+                                  setCategories(prev => prev.map((c: any) => (c.id === cat.id ? updated : c)));
+                                } catch (error) {
+                                  // eslint-disable-next-line no-console
+                                  console.error('Error actualizando estado de categoría de caja chica:', error);
+                                  alert('Error al actualizar el estado de la categoría');
+                                }
+                              }}
+                            >
+                              {cat.is_active ? 'Desactivar' : 'Activar'}
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -943,12 +1117,11 @@ const PettyCashPage: React.FC = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar categoría</option>
-                    <option value="Suministros de Oficina">Suministros de Oficina</option>
-                    <option value="Viáticos">Viáticos</option>
-                    <option value="Transporte">Transporte</option>
-                    <option value="Mantenimiento">Mantenimiento</option>
-                    <option value="Comunicaciones">Comunicaciones</option>
-                    <option value="Otros">Otros</option>
+                    {categoryOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -977,6 +1150,32 @@ const PettyCashPage: React.FC = () => {
                     required
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Ej: REC-001"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    NCF (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    name="ncf"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Número de comprobante fiscal, si aplica"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    ITBIS (RD$, opcional)
+                  </label>
+                  <input
+                    type="number"
+                    name="itbis"
+                    min="0"
+                    step="0.01"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="0.00"
                   />
                 </div>
 

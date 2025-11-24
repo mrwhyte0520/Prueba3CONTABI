@@ -3,7 +3,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customerPaymentsService, invoicesService, bankAccountsService, accountingSettingsService, journalEntriesService } from '../../../services/database';
+import { customerPaymentsService, invoicesService, bankAccountsService, accountingSettingsService, journalEntriesService, customersService } from '../../../services/database';
 
 interface Payment {
   id: string;
@@ -39,15 +39,17 @@ export default function PaymentsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [invoices, setInvoices] = useState<InvoiceOption[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
+  const [customerArAccounts, setCustomerArAccounts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const loadData = async () => {
       if (!user) return;
       try {
-        const [paymentsData, invoicesData, bankAccountsData] = await Promise.all([
+        const [paymentsData, invoicesData, bankAccountsData, customersData] = await Promise.all([
           customerPaymentsService.getAll(user.id),
           invoicesService.getAll(user.id),
           bankAccountsService.getAll(user.id),
+          customersService.getAll(user.id),
         ]);
 
         const mappedPayments: Payment[] = (paymentsData || []).map((p: any) => ({
@@ -83,6 +85,15 @@ export default function PaymentsPage() {
           name: `${ba.bank_name} - ${ba.account_number}`,
         }));
         setBankAccounts(mappedBankAccounts);
+
+        // Mapa de cuentas por cobrar por cliente (si tienen ar_account_id asignada)
+        const arMap: Record<string, string> = {};
+        (customersData || []).forEach((c: any) => {
+          if (c.id && c.ar_account_id) {
+            arMap[String(c.id)] = String(c.ar_account_id);
+          }
+        });
+        setCustomerArAccounts(arMap);
       } catch (error) {
         console.error('Error loading customer payments:', error);
       }
@@ -300,7 +311,10 @@ export default function PaymentsPage() {
       // Best-effort: registrar asiento contable del pago (Banco vs CxC)
       try {
         const settings = await accountingSettingsService.get(user.id);
-        const arAccountId = settings?.ar_account_id;
+
+        // Preferir cuenta de CxC específica del cliente, si existe
+        const customerSpecificArId = customerArAccounts[mapped.customerId] || customerArAccounts[created.customer_id];
+        const arAccountId = customerSpecificArId || settings?.ar_account_id;
 
         // Necesitamos la cuenta contable del banco (chart_account_id)
         const { chart_account_id: bankAccountAccountId } = created.bank_accounts || {};

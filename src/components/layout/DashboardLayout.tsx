@@ -193,7 +193,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Suplidores', href: '/accounts-payable/suppliers' },
         { name: 'Emisión de Pagos', href: '/accounts-payable/payments' },
         { name: 'Órdenes de Compra', href: '/accounts-payable/purchase-orders' },
-        { name: 'Cotizaciones', href: '/accounts-payable/quotes' }
+        { name: 'Cotizaciones', href: '/accounts-payable/quotes' },
+        { name: 'Tipos de Suplidor', href: '/accounts-payable/supplier-types' },
+        { name: 'Términos de Pago', href: '/accounts-payable/payment-terms' },
+        { name: 'Facturas de Suplidor', href: '/accounts-payable/invoices' }
       ]
     },
     // 5. Facturación
@@ -204,11 +207,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       current: location.pathname.startsWith('/billing'),
       submenu: [
         { name: 'Reporte de Ventas', href: '/billing/sales-reports' },
+        { name: 'Vendedores', href: '/billing/sales-reps' },
         { name: 'Facturación', href: '/billing/invoicing' },
         { name: 'Pre-facturación', href: '/billing/pre-invoicing' },
         { name: 'Facturación Recurrente', href: '/billing/recurring' },
         { name: 'Cierre de Caja', href: '/billing/cash-closing' },
-        { name: 'Cotizaciones', href: '/billing/quotes' }
+        { name: 'Cotizaciones', href: '/billing/quotes' },
+        { name: 'Autorizaciones', href: '/billing/authorizations' }
       ]
     },
     // 6. Punto de ventas

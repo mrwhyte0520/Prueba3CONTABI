@@ -178,90 +178,48 @@ export default function FixedAssetsPage() {
   const [assetsStats, setAssetsStats] = useState([
     {
       title: 'Valor Total de Activos',
-      value: 'RD$ 8,450,000',
-      change: '+3.2%',
+      value: 'RD$ 0',
+      change: '',
       icon: 'ri-building-line',
       color: 'blue'
     },
     {
       title: 'Depreciación Acumulada',
-      value: 'RD$ 2,150,000',
-      change: '+5.8%',
+      value: 'RD$ 0',
+      change: '',
       icon: 'ri-line-chart-line',
       color: 'red'
     },
     {
       title: 'Valor Neto',
-      value: 'RD$ 6,300,000',
-      change: '+2.1%',
+      value: 'RD$ 0',
+      change: '',
       icon: 'ri-money-dollar-circle-line',
       color: 'green'
     },
     {
       title: 'Total de Activos',
-      value: '245',
-      change: '+8',
+      value: '0',
+      change: '',
       icon: 'ri-archive-line',
       color: 'purple'
     }
   ]);
 
-  const [assetsByCategory, setAssetsByCategory] = useState([
-    {
-      category: 'Edificios y Construcciones',
-      count: 15,
-      value: 'RD$ 4,200,000',
-      depreciation: '2%'
-    },
-    {
-      category: 'Maquinaria y Equipo',
-      count: 45,
-      value: 'RD$ 2,800,000',
-      depreciation: '10%'
-    },
-    {
-      category: 'Vehículos',
-      count: 12,
-      value: 'RD$ 850,000',
-      depreciation: '20%'
-    },
-    {
-      category: 'Mobiliario y Equipo de Oficina',
-      count: 85,
-      value: 'RD$ 450,000',
-      depreciation: '10%'
-    },
-    {
-      category: 'Equipo de Computación',
-      count: 88,
-      value: 'RD$ 150,000',
-      depreciation: '25%'
-    }
-  ]);
+  const [assetsByCategory, setAssetsByCategory] = useState<Array<{
+    category: string;
+    count: number;
+    value: string;
+    depreciation: string;
+  }>>([]);
 
-  const [recentDepreciations, setRecentDepreciations] = useState([
-    {
-      asset: 'Edificio Principal',
-      code: 'ACT-001',
-      monthlyDepreciation: 'RD$ 7,000',
-      accumulatedDepreciation: 'RD$ 420,000',
-      date: '01/01/2024'
-    },
-    {
-      asset: 'Maquinaria Industrial A',
-      code: 'ACT-045',
-      monthlyDepreciation: 'RD$ 2,333',
-      accumulatedDepreciation: 'RD$ 140,000',
-      date: '01/01/2024'
-    },
-    {
-      asset: 'Vehículo Toyota Hilux',
-      code: 'ACT-123',
-      monthlyDepreciation: 'RD$ 1,417',
-      accumulatedDepreciation: 'RD$ 85,000',
-      date: '01/01/2024'
-    }
-  ]);
+  const [recentDepreciations, setRecentDepreciations] = useState<Array<{
+    asset: string;
+    code: string;
+    monthlyDepreciation: string;
+    accumulatedDepreciation: string;
+    date: string;
+  }>>([]);
 
   // Module Access Functions
   const handleAccessModule = (moduleHref: string) => {

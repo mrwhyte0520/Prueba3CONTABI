@@ -4,7 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, receiptsService, invoicesService, receiptApplicationsService } from '../../../services/database';
+import { customersService, receiptsService, invoicesService, receiptApplicationsService, bankAccountsService, accountingSettingsService, journalEntriesService } from '../../../services/database';
 
 interface Receipt {
   id: string;
@@ -20,6 +20,12 @@ interface Receipt {
   invoiceNumbers: string[];
 }
 
+interface BankAccountOption {
+  id: string;
+  name: string;
+  chartAccountId: string | null;
+}
+
 export default function ReceiptsPage() {
   const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
@@ -31,10 +37,12 @@ export default function ReceiptsPage() {
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
   const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(false);
-   const [receipts, setReceipts] = useState<Receipt[]>([]);
-   const [loadingReceipts, setLoadingReceipts] = useState(false);
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [loadingReceipts, setLoadingReceipts] = useState(false);
   const [applyInvoices, setApplyInvoices] = useState<Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number; balance: number }>>([]);
   const [loadingApplyInvoices, setLoadingApplyInvoices] = useState(false);
+  const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
+  const [customerArAccounts, setCustomerArAccounts] = useState<Record<string, string>>({});
 
   const getPaymentMethodName = (method: string) => {
     switch (method) {
@@ -77,6 +85,15 @@ export default function ReceiptsPage() {
     try {
       const list = await customersService.getAll(user.id);
       setCustomers(list.map(c => ({ id: c.id, name: c.name })));
+
+      // Mapa de cuentas por cobrar específicas por cliente
+      const arMap: Record<string, string> = {};
+      (list || []).forEach((c: any) => {
+        if (c.id && c.ar_account_id) {
+          arMap[String(c.id)] = String(c.ar_account_id);
+        }
+      });
+      setCustomerArAccounts(arMap);
     } finally {
       setLoadingCustomers(false);
     }
@@ -85,6 +102,27 @@ export default function ReceiptsPage() {
   useEffect(() => {
     loadCustomers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Cargar cuentas bancarias para poder generar asientos Banco vs CxC
+  useEffect(() => {
+    const loadBankAccounts = async () => {
+      if (!user?.id) return;
+      try {
+        const data = await bankAccountsService.getAll(user.id);
+        const mapped: BankAccountOption[] = (data || []).map((ba: any) => ({
+          id: String(ba.id),
+          name: `${ba.bank_name} - ${ba.account_number}`,
+          chartAccountId: ba.chart_account_id ? String(ba.chart_account_id) : null,
+        }));
+        setBankAccounts(mapped);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[Receipts] Error loading bank accounts', error);
+      }
+    };
+
+    loadBankAccounts();
   }, [user?.id]);
 
   const loadReceipts = async () => {
@@ -386,9 +424,15 @@ export default function ReceiptsPage() {
     const paymentMethod = String(formData.get('payment_method') || 'cash');
     const reference = String(formData.get('reference') || '');
     const concept = String(formData.get('concept') || '');
+    const bankAccountId = String(formData.get('bank_account_id') || '');
 
     if (!customerId || !amount) {
       alert('Cliente y monto son obligatorios');
+      return;
+    }
+
+    if (paymentMethod !== 'cash' && !bankAccountId) {
+      alert('Debe seleccionar una cuenta de banco para este método de pago');
       return;
     }
 
@@ -407,7 +451,83 @@ export default function ReceiptsPage() {
     };
 
     try {
-      await receiptsService.create(user.id, payload);
+      const created = await receiptsService.create(user.id, payload);
+
+      // Best-effort: registrar asiento contable del recibo (Banco/Caja vs CxC)
+      try {
+        const settings = await accountingSettingsService.get(user.id);
+
+        // Preferir cuenta de CxC específica del cliente, si existe
+        const customerSpecificArId = customerArAccounts[customerId];
+        const arAccountId = customerSpecificArId || settings?.ar_account_id;
+
+        if (!arAccountId) {
+          alert('Recibo registrado, pero no se pudo crear el asiento: falta configurar la Cuenta de Cuentas por Cobrar en Ajustes Contables o en el cliente.');
+        } else {
+          // Determinar cuenta contable del banco si se seleccionó uno
+          let bankChartAccountId: string | null = null;
+          if (bankAccountId) {
+            const bank = bankAccounts.find(b => b.id === bankAccountId);
+            bankChartAccountId = bank?.chartAccountId || null;
+          }
+
+          if (!bankChartAccountId) {
+            if (paymentMethod === 'cash') {
+              alert('Recibo registrado en efectivo sin cuenta de banco/caja configurada; no se generó asiento automático.');
+            } else {
+              alert('Recibo registrado, pero no se pudo crear el asiento: la cuenta de banco seleccionada no tiene cuenta contable asociada.');
+            }
+          } else {
+            const entryAmount = Number(created.amount) || amount;
+
+            const lines: any[] = [
+              {
+                account_id: bankChartAccountId,
+                description: 'Cobro de cliente - Banco/Recibo',
+                debit_amount: entryAmount,
+                credit_amount: 0,
+                line_number: 1,
+              },
+              {
+                account_id: arAccountId,
+                description: 'Cobro de cliente - Cuentas por Cobrar (Recibo)',
+                debit_amount: 0,
+                credit_amount: entryAmount,
+                line_number: 2,
+              },
+            ];
+
+            const customerName = customers.find(c => c.id === customerId)?.name || '';
+            const descriptionText = customerName
+              ? `Recibo ${created.receipt_number || receiptNumber} - ${customerName}`
+              : `Recibo ${created.receipt_number || receiptNumber}`;
+
+            const refText = created.reference || reference || '';
+            const entryReference = refText
+              ? `Recibo:${created.id} Ref:${refText}`
+              : `Recibo:${created.id}`;
+
+            const entryDate = created.receipt_date || todayStr;
+
+            const entryPayload = {
+              entry_number: created.id,
+              entry_date: entryDate,
+              description: descriptionText,
+              reference: entryReference,
+              total_debit: entryAmount,
+              total_credit: entryAmount,
+              status: 'posted' as const,
+            };
+
+            await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        // eslint-disable-next-line no-console
+        console.error('[Receipts] Error creando asiento contable de recibo:', jeError);
+        alert('Recibo registrado, pero ocurrió un error al crear el asiento contable. Revise el libro diario y la configuración.');
+      }
+
       await loadReceipts();
       alert('Recibo creado exitosamente');
       setShowReceiptModal(false);

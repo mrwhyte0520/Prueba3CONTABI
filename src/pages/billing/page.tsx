@@ -21,6 +21,13 @@ export default function BillingPage() {
       color: 'blue'
     },
     {
+      title: 'Vendedores',
+      description: 'Gestión de vendedores y comisiones de ventas',
+      icon: 'ri-user-star-line',
+      href: '/billing/sales-reps',
+      color: 'teal'
+    },
+    {
       title: 'Facturación',
       description: 'Crear y gestionar facturas de clientes',
       icon: 'ri-file-text-line',
@@ -207,108 +214,56 @@ export default function BillingPage() {
   const [salesStats, setSalesStats] = useState([
     {
       title: 'Ventas de Hoy',
-      value: 'RD$ 185,000',
-      change: '+12.5%',
+      value: 'RD$ 0',
+      change: '',
       icon: 'ri-money-dollar-circle-line',
-      color: 'green'
+      color: 'green',
     },
     {
       title: 'Facturas Emitidas',
-      value: '67',
-      change: '+8.2%',
+      value: '0',
+      change: '',
       icon: 'ri-file-text-line',
-      color: 'blue'
+      color: 'blue',
     },
     {
       title: 'Cotizaciones Pendientes',
-      value: '23',
-      change: '+15%',
+      value: '0',
+      change: '',
       icon: 'ri-file-list-line',
-      color: 'orange'
+      color: 'orange',
     },
     {
       title: 'Ingresos Mensuales',
-      value: 'RD$ 2,850,000',
-      change: '+18.3%',
+      value: 'RD$ 0',
+      change: '',
       icon: 'ri-line-chart-line',
-      color: 'purple'
-    }
+      color: 'purple',
+    },
   ]);
 
-  const [recentInvoices, setRecentInvoices] = useState([
-    {
-      number: 'FAC-2024-189',
-      customer: 'Empresa ABC SRL',
-      amount: 'RD$ 45,000',
-      status: 'Pagada',
-      date: '15/01/2024'
-    },
-    {
-      number: 'FAC-2024-188',
-      customer: 'Comercial XYZ EIRL',
-      amount: 'RD$ 32,500',
-      status: 'Pendiente',
-      date: '15/01/2024'
-    },
-    {
-      number: 'FAC-2024-187',
-      customer: 'Distribuidora DEF SA',
-      amount: 'RD$ 78,000',
-      status: 'Pagada',
-      date: '14/01/2024'
-    },
-    {
-      number: 'FAC-2024-186',
-      customer: 'Servicios GHI SRL',
-      amount: 'RD$ 25,000',
-      status: 'Vencida',
-      date: '13/01/2024'
-    }
-  ]);
+  const [recentInvoices, setRecentInvoices] = useState<Array<{
+    number: string;
+    customer: string;
+    amount: string;
+    status: string;
+    date: string;
+  }>>([]);
 
-  const [topProducts, setTopProducts] = useState([
-    {
-      name: 'Laptop Dell Inspiron 15',
-      quantity: 25,
-      revenue: 'RD$ 875,000',
-      margin: '22%'
-    },
-    {
-      name: 'Monitor Samsung 24"',
-      quantity: 45,
-      revenue: 'RD$ 450,000',
-      margin: '18%'
-    },
-    {
-      name: 'Impresora HP LaserJet',
-      quantity: 18,
-      revenue: 'RD$ 324,000',
-      margin: '25%'
-    },
-    {
-      name: 'Teclado Mecánico RGB',
-      quantity: 67,
-      revenue: 'RD$ 201,000',
-      margin: '35%'
-    }
-  ]);
+  const [topProducts, setTopProducts] = useState<Array<{
+    name: string;
+    quantity: number;
+    revenue: string;
+    margin: string;
+  }>>([]);
 
-  const [pendingQuotes, setPendingQuotes] = useState([
-    {
-      number: 'COT-2024-045',
-      customer: 'Nuevo Cliente SA',
-      amount: 'RD$ 125,000',
-      validUntil: '25/01/2024',
-      status: 'Pendiente'
-    },
-    {
-      number: 'COT-2024-044',
-      customer: 'Empresa Potencial SRL',
-      amount: 'RD$ 89,000',
-      validUntil: '22/01/2024',
-      status: 'En Revisión'
-    }
-  ]);
+  const [pendingQuotes, setPendingQuotes] = useState<Array<{
+    number: string;
+    customer: string;
+    amount: string;
+    validUntil: string;
+    status: string;
+  }>>([]);
 
   // Module Access Functions
   const handleAccessModule = (moduleHref: string) => {

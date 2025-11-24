@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { customersService } from '../../services/database';
+import { customersService, paymentTermsService } from '../../services/database';
 
 interface Customer {
   id: string;
@@ -12,19 +12,21 @@ interface Customer {
   email?: string;
   address?: string;
   type: 'regular' | 'vip';
+  paymentTermId?: string | null;
 }
 
 export default function CustomersPage() {
   const { user } = useAuth();
 
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [paymentTerms, setPaymentTerms] = useState<Array<{ id: string; name: string; days?: number }>>([]);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [showNew, setShowNew] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
-  const [form, setForm] = useState<Omit<Customer, 'id'>>({ name: '', document: '', phone: '', email: '', address: '', type: 'regular' });
+  const [form, setForm] = useState<Omit<Customer, 'id'>>({ name: '', document: '', phone: '', email: '', address: '', type: 'regular', paymentTermId: null });
 
   const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
@@ -73,7 +75,11 @@ export default function CustomersPage() {
   const load = async () => {
     try {
       if (user?.id) {
-        const rows = await customersService.getAll(user.id);
+        const [rows, terms] = await Promise.all([
+          customersService.getAll(user.id),
+          paymentTermsService.getAll(user.id),
+        ]);
+
         const mapped: Customer[] = (rows || []).map((c: any) => ({
           id: c.id,
           name: c.name || c.customer_name || 'Cliente',
@@ -81,9 +87,17 @@ export default function CustomersPage() {
           phone: c.phone || c.contact_phone || '',
           email: c.email || c.contact_email || '',
           address: c.address || '',
-          type: (c.type === 'vip' ? 'vip' : 'regular') as 'regular' | 'vip'
+          type: (c.type === 'vip' ? 'vip' : 'regular') as 'regular' | 'vip',
+          paymentTermId: c.paymentTermId ?? c.payment_term_id ?? null,
         }));
         setCustomers(mapped);
+
+        const mappedTerms = (terms || []).map((t: any) => ({
+          id: t.id as string,
+          name: t.name as string,
+          days: typeof t.days === 'number' ? t.days : undefined,
+        }));
+        setPaymentTerms(mappedTerms);
       } else {
         const local = localStorage.getItem('contabi_customers');
         setCustomers(local ? JSON.parse(local) : []);
@@ -124,9 +138,18 @@ export default function CustomersPage() {
 
     if (user?.id) {
       try {
-        await customersService.create(user.id, form);
+        await customersService.create(user.id, {
+          name: form.name,
+          document: form.document,
+          phone: form.phone || '',
+          email: form.email || '',
+          address: form.address || '',
+          creditLimit: 0,
+          status: 'active',
+          paymentTermId: form.paymentTermId || null,
+        });
         setShowNew(false);
-        setForm({ name: '', document: '', phone: '', email: '', address: '', type: 'regular' });
+        setForm({ name: '', document: '', phone: '', email: '', address: '', type: 'regular', paymentTermId: null });
         await load();
         return;
       } catch {}
@@ -134,7 +157,7 @@ export default function CustomersPage() {
     const local: Customer = { id: `local-${Date.now()}`, ...form } as Customer;
     saveLocal([local, ...customers]);
     setShowNew(false);
-    setForm({ name: '', document: '', phone: '', email: '', address: '', type: 'regular' });
+    setForm({ name: '', document: '', phone: '', email: '', address: '', type: 'regular', paymentTermId: null });
   };
 
   const onUpdate = async () => {
@@ -147,7 +170,16 @@ export default function CustomersPage() {
 
     if (user?.id && isUuid(editing.id)) {
       try {
-        await customersService.update(editing.id, editing);
+        await customersService.update(editing.id, {
+          name: editing.name,
+          document: editing.document,
+          phone: editing.phone || '',
+          email: editing.email || '',
+          address: editing.address || '',
+          creditLimit: 0,
+          status: 'active',
+          paymentTermId: editing.paymentTermId || null,
+        });
         setShowEdit(false);
         setEditing(null);
         await load();
@@ -327,6 +359,21 @@ export default function CustomersPage() {
                   <option value="vip">VIP</option>
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Condición de pago</label>
+                <select
+                  value={form.paymentTermId ?? ''}
+                  onChange={e => setForm(prev => ({ ...prev, paymentTermId: e.target.value || null }))}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                >
+                  <option value="">Sin condición específica</option>
+                  {paymentTerms.map(term => (
+                    <option key={term.id} value={term.id}>
+                      {term.name}{typeof term.days === 'number' ? ` (${term.days} días)` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={() => setShowNew(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50">Cancelar</button>
                 <button onClick={onCreate} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Guardar</button>
@@ -367,6 +414,21 @@ export default function CustomersPage() {
                 <select value={editing.type} onChange={e => setEditing(prev => ({ ...(prev as Customer), type: e.target.value as 'regular' | 'vip' }))} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8">
                   <option value="regular">Regular</option>
                   <option value="vip">VIP</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Condición de pago</label>
+                <select
+                  value={editing.paymentTermId ?? ''}
+                  onChange={e => setEditing(prev => ({ ...(prev as Customer), paymentTermId: e.target.value || null }))}
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                >
+                  <option value="">Sin condición específica</option>
+                  {paymentTerms.map(term => (
+                    <option key={term.id} value={term.id}>
+                      {term.name}{typeof term.days === 'number' ? ` (${term.days} días)` : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="flex justify-end gap-2 pt-2">
