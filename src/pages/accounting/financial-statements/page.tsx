@@ -721,10 +721,6 @@ export default function FinancialStatementsPage() {
                     <span className="text-sm text-gray-700">Importaciones</span>
                     <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                   </div>
-                  <div className="flex justify-between py-0.5 pl-6">
-                    <span className="text-sm text-gray-700">Mano de Obra Directa</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
-                  </div>
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-6">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Total Compras del Periodo</span>
