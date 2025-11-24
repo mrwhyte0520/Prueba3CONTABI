@@ -97,10 +97,27 @@ export default function UsersPage() {
   const load = async () => {
     try {
       if (!user?.id) { loadLocal(); return; }
-      const { data: r } = await supabase.from('roles').select('*').order('name');
-      const { data: p } = await supabase.from('permissions').select('*');
-      const { data: rp } = await supabase.from('role_permissions').select('*');
-      const { data: ur } = await supabase.from('user_roles').select('*');
+      const ownerId = user.id;
+
+      const { data: r } = await supabase
+        .from('roles')
+        .select('*')
+        .eq('owner_user_id', ownerId)
+        .order('name');
+
+      const { data: p } = await supabase
+        .from('permissions')
+        .select('*'); // permisos son globales, no por tenant
+
+      const { data: rp } = await supabase
+        .from('role_permissions')
+        .select('*')
+        .eq('owner_user_id', ownerId);
+
+      const { data: ur } = await supabase
+        .from('user_roles')
+        .select('*')
+        .eq('owner_user_id', ownerId);
       if (r && p && rp && ur) {
         setRoles(r as any);
         setPermissions(p as any);
@@ -131,9 +148,15 @@ export default function UsersPage() {
         if (checked) {
           await supabase
             .from('role_permissions')
-            .upsert({ role_id: roleId, permission_id: permId }, { onConflict: 'role_id,permission_id' });
+            .upsert(
+              { role_id: roleId, permission_id: permId, owner_user_id: user.id },
+              { onConflict: 'role_id,permission_id,owner_user_id' }
+            );
         } else {
-          await supabase.from('role_permissions').delete().match({ role_id: roleId, permission_id: permId });
+          await supabase
+            .from('role_permissions')
+            .delete()
+            .match({ role_id: roleId, permission_id: permId, owner_user_id: user.id });
         }
         await load();
         return;
@@ -153,7 +176,15 @@ export default function UsersPage() {
     if (!newRoleName.trim()) return;
     if (user?.id) {
       try {
-        const { data } = await supabase.from('roles').insert({ name: newRoleName.trim(), description: newRoleDesc }).select().single();
+        const { data } = await supabase
+          .from('roles')
+          .insert({
+            name: newRoleName.trim(),
+            description: newRoleDesc,
+            owner_user_id: user.id,
+          })
+          .select()
+          .single();
         if (data) { setNewRoleName(''); setNewRoleDesc(''); await load(); return; }
       } catch {}
     }
@@ -166,9 +197,23 @@ export default function UsersPage() {
     if (!confirm('¿Eliminar rol?')) return;
     if (user?.id) {
       try {
-        await supabase.from('role_permissions').delete().eq('role_id', roleId);
-        await supabase.from('user_roles').delete().eq('role_id', roleId);
-        await supabase.from('roles').delete().eq('id', roleId);
+        await supabase
+          .from('role_permissions')
+          .delete()
+          .eq('role_id', roleId)
+          .eq('owner_user_id', user.id);
+
+        await supabase
+          .from('user_roles')
+          .delete()
+          .eq('role_id', roleId)
+          .eq('owner_user_id', user.id);
+
+        await supabase
+          .from('roles')
+          .delete()
+          .eq('id', roleId)
+          .eq('owner_user_id', user.id);
         await load();
         return;
       } catch {}
@@ -188,7 +233,9 @@ export default function UsersPage() {
           const { data: profile } = await supabase.from('profiles').select('id,email').eq('email', assignEmail).single();
           const uid = (profile as any)?.id;
           if (uid) {
-            await supabase.from('user_roles').insert({ user_id: uid, role_id: assignRoleId });
+            await supabase
+              .from('user_roles')
+              .insert({ user_id: uid, role_id: assignRoleId, owner_user_id: user.id });
             setAssignEmail(''); setAssignRoleId(''); await load();
             return;
           }

@@ -1393,7 +1393,7 @@ export const chartAccountsService = {
     } catch (error) {
       console.error('Error updating account:', error);
       throw error;
-    }
+    } 
   },
 
   async checkRelations(id: string): Promise<{ hasAccountingSettings: boolean; hasJournalEntries: boolean }> {
@@ -1402,7 +1402,7 @@ export const chartAccountsService = {
         supabase
           .from('accounting_settings')
           .select('id')
-          .eq('ap_account_id', id)
+          .or(`ap_account_id.eq.${id},ar_account_id.eq.${id}`)
           .limit(1),
         supabase
           .from('journal_entry_lines')
@@ -1490,6 +1490,61 @@ export const chartAccountsService = {
         totalEquity: 0,
         asOfDate,
       };
+    }
+  },
+
+  async seedFromTemplate(userId: string) {
+    try {
+      const { data: templateRows, error } = await supabase
+        .from('chart_accounts_template')
+        .select('*');
+
+      if (error) throw error;
+      if (!templateRows || templateRows.length === 0) {
+        return { created: 0 };
+      }
+
+      // Obtener códigos ya existentes para este usuario
+      const { data: existing, error: existingError } = await supabase
+        .from('chart_accounts')
+        .select('code')
+        .eq('user_id', userId);
+
+      if (existingError) throw existingError;
+      const existingCodes = new Set((existing || []).map((r: any) => String(r.code || '').trim()));
+
+      const rowsToInsert = templateRows
+        .filter((row: any) => {
+          const code = String(row.code || '').trim();
+          return !!code && !existingCodes.has(code);
+        })
+        .map((row: any) => ({
+          user_id: userId,
+          code: row.code,
+          name: row.name,
+          type: row.type || 'asset',
+          level: row.level || 1,
+          balance: row.balance || 0,
+          is_active: row.is_active !== false,
+          description: row.description || null,
+          normal_balance: row.normal_balance || 'debit',
+          allow_posting: row.allow_posting !== false,
+          parent_id: row.parent_id || null,
+        }));
+
+      if (rowsToInsert.length === 0) {
+        return { created: 0 };
+      }
+
+      const { error: insertError } = await supabase
+        .from('chart_accounts')
+        .insert(rowsToInsert);
+
+      if (insertError) throw insertError;
+      return { created: rowsToInsert.length };
+    } catch (error) {
+      console.error('Error seeding chart of accounts from template:', error);
+      throw error;
     }
   },
 
@@ -4557,6 +4612,7 @@ export const bankAccountsService = {
         .from('bank_accounts')
         .select('*')
         .eq('user_id', userId)
+        .eq('is_deleted', false)
         .order('bank_name', { ascending: true });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4567,7 +4623,7 @@ export const bankAccountsService = {
 
   async create(userId: string, payload: any) {
     try {
-      const body = { ...payload, user_id: userId };
+      const body = { ...payload, user_id: userId, is_deleted: false };
       const { data, error } = await supabase
         .from('bank_accounts')
         .insert(body)
@@ -4603,7 +4659,7 @@ export const bankAccountsService = {
     try {
       const { error } = await supabase
         .from('bank_accounts')
-        .delete()
+        .update({ is_deleted: true, is_active: false })
         .eq('id', id);
       if (error) throw error;
     } catch (error) {
@@ -4670,12 +4726,17 @@ export const taxService = {
   // -----------------------------------------------------------------
   // NCF Series Management - CORREGIDO COMPLETAMENTE
   // -----------------------------------------------------------------
-  async getNcfSeries() {
+  async getNcfSeries(userId?: string) {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('ncf_series')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*');
+      
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+      
+      const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) throw error;
       return data || [];
@@ -4842,6 +4903,7 @@ export const taxService = {
         const itbis = Number(po.tax_amount) || 0;
 
         return {
+          user_id: user.id,
           period,
           fecha_comprobante: fecha,
           tipo_comprobante: 'B01',
@@ -4861,7 +4923,8 @@ export const taxService = {
       const { error: delErr } = await supabase
         .from('report_606_data')
         .delete()
-        .eq('period', period);
+        .eq('period', period)
+        .eq('user_id', user.id);
       if (delErr) throw delErr;
 
       if (rows.length > 0) {
@@ -4879,11 +4942,17 @@ export const taxService = {
 
   async generateReport606(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return [];
+
       await this.buildReport606(period);
       const { data, error } = await supabase
         .from('report_606_data')
         .select('*')
         .eq('period', period)
+        .eq('user_id', user.id)
         .order('fecha_comprobante');
 
       if (error) throw error;
@@ -4896,10 +4965,18 @@ export const taxService = {
 
   async getReport606Summary(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) {
+        return { totalMonto: 0, totalItbis: 0, totalRetenido: 0, totalISR: 0 };
+      }
+
       const { data, error } = await supabase
         .from('report_606_data')
         .select('monto_facturado, itbis_facturado, itbis_retenido, monto_retencion_renta')
-        .eq('period', period);
+        .eq('period', period)
+        .eq('user_id', user.id);
 
       if (error) throw error;
 
@@ -4960,6 +5037,7 @@ export const taxService = {
         const itbis = Number(inv.tax_amount ?? 0);
 
         return {
+          user_id: user.id,
           period,
           fecha_factura: fecha,
           fecha_comprobante: fecha,
@@ -4982,11 +5060,12 @@ export const taxService = {
         };
       });
 
-      // Limpiar datos anteriores del período y guardar nuevos
+      // Limpiar datos anteriores del período para este usuario y guardar nuevos
       const { error: delErr } = await supabase
         .from('report_607_data')
         .delete()
-        .eq('period', period);
+        .eq('period', period)
+        .eq('user_id', user.id);
       if (delErr) throw delErr;
 
       if (rows.length > 0) {
@@ -5004,11 +5083,17 @@ export const taxService = {
 
   async generateReport607(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return [];
+
       await this.buildReport607(period);
       const { data, error } = await supabase
         .from('report_607_data')
         .select('*')
         .eq('period', period)
+        .eq('user_id', user.id)
         .order('fecha_comprobante');
 
       if (error) throw error;
@@ -5040,10 +5125,18 @@ export const taxService = {
 
   async getReport607Summary(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) {
+        return { totalMonto: 0, totalItbis: 0, totalRetenido: 0, totalISR: 0 };
+      }
+
       const { data, error } = await supabase
         .from('report_607_data')
         .select('monto_facturado, itbis_facturado, itbis_retenido, retencion_renta_terceros, itbis_cobrado')
-        .eq('period', period);
+        .eq('period', period)
+        .eq('user_id', user.id);
 
       if (error) throw error;
 
@@ -5089,6 +5182,7 @@ export const taxService = {
       if (fdErr) throw fdErr;
 
       const rows = (docs || []).map((doc: any) => ({
+        user_id: user.id,
         period,
         cancellation_date: doc.cancelled_date || doc.issue_date,
         tipo_comprobante: doc.document_type || 'NCF',
@@ -5102,7 +5196,8 @@ export const taxService = {
       const { error: delErr } = await supabase
         .from('report_608_data')
         .delete()
-        .eq('period', period);
+        .eq('period', period)
+        .eq('user_id', user.id);
       if (delErr) throw delErr;
 
       if (rows.length > 0) {
@@ -5120,11 +5215,17 @@ export const taxService = {
 
   async generateReport608(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return [];
+
       await this.buildReport608(period);
       const { data, error } = await supabase
         .from('report_608_data')
         .select('*')
         .eq('period', period)
+        .eq('user_id', user.id)
         .order('cancellation_date');
 
       if (error) throw error;
@@ -5137,10 +5238,18 @@ export const taxService = {
 
   async getReport608Summary(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) {
+        return { totalAmount: 0, totalTax: 0 };
+      }
+
       const { data, error } = await supabase
         .from('report_608_data')
         .select('amount, tax_amount')
-        .eq('period', period);
+        .eq('period', period)
+        .eq('user_id', user.id);
 
       if (error) throw error;
 
@@ -5289,11 +5398,17 @@ export const taxService = {
 
   async generateReportIR17(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return [];
+
       await this.buildReportIR17(period);
       const { data, error } = await supabase
         .from('report_ir17_data')
         .select('*')
         .eq('period', period)
+        .eq('user_id', user.id)
         .order('payment_date');
 
       if (error) throw error;
@@ -5306,10 +5421,18 @@ export const taxService = {
 
   async getReportIR17Summary(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) {
+        return { totalGross: 0, totalWithheld: 0, totalNet: 0, count: 0 };
+      }
+
       const { data, error } = await supabase
         .from('report_ir17_data')
         .select('gross_amount, withheld_amount, net_amount')
-        .eq('period', period);
+        .eq('period', period)
+        .eq('user_id', user.id);
 
       if (error) throw error;
 
@@ -5335,21 +5458,35 @@ export const taxService = {
   // -----------------------------------------------------------------
   async generateReportIT1(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return null;
+
       // Verificar si ya existe una declaración para este período
       const { data: existing, error: existingError } = await supabase
         .from('report_it1_data')
         .select('*')
         .eq('period', period)
+        .eq('user_id', user.id)
         .maybeSingle();
 
       if (!existingError && existing) {
         return existing;
       }
 
-      // Obtener datos de ventas y compras para el período
+      // Obtener datos de ventas y compras para el período del usuario actual
       const [salesResponse, purchasesResponse] = await Promise.all([
-        supabase.from('report_607_data').select('*').eq('period', period),
-        supabase.from('report_606_data').select('*').eq('period', period)
+        supabase
+          .from('report_607_data')
+          .select('*')
+          .eq('period', period)
+          .eq('user_id', user.id),
+        supabase
+          .from('report_606_data')
+          .select('*')
+          .eq('period', period)
+          .eq('user_id', user.id),
       ]);
 
       // Calcular totales de ventas
@@ -5379,6 +5516,7 @@ export const taxService = {
 
       // Construir la declaración SIEMPRE con datos reales (o ceros si no hay datos)
       const reportData = {
+        user_id: user.id,
         period,
         total_sales: totalSales,
         itbis_collected: itbisCollected,
@@ -5405,9 +5543,25 @@ export const taxService = {
 
   async getReportIT1Summary() {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) {
+        return {
+          totalDeclaraciones: 0,
+          totalVentasGravadas: 0,
+          totalITBISCobrado: 0,
+          totalComprasGravadas: 0,
+          totalITBISPagado: 0,
+          saldoNeto: 0,
+          ultimaDeclaracion: null,
+        };
+      }
+
       const { data, error } = await supabase
         .from('report_it1_data')
         .select('*')
+        .eq('user_id', user.id)
         .order('period', { ascending: false })
         .limit(12);
 
@@ -5446,9 +5600,15 @@ export const taxService = {
 
   async getReportIT1History(year?: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return [];
+
       let query = supabase
         .from('report_it1_data')
         .select('*')
+        .eq('user_id', user.id)
         .order('period', { ascending: false });
 
       if (year) {
@@ -5514,10 +5674,16 @@ export const taxService = {
 
   async getReportIT1ByPeriod(period: string) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return null;
+
       const { data, error } = await supabase
         .from('report_it1_data')
         .select('*')
         .eq('period', period)
+        .eq('user_id', user.id)
         .single();
 
       if (error && error.code !== 'PGRST116') throw error;
@@ -5637,13 +5803,21 @@ export const taxService = {
   // -----------------------------------------------------------------
   // Tax Statistics
   // -----------------------------------------------------------------
-  async getTaxStatistics() {
+  async getTaxStatistics(userId?: string) {
     try {
       const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
 
+      let sales607Query = supabase.from('report_607_data').select('*').eq('period', currentMonth);
+      let purchases606Query = supabase.from('report_606_data').select('*').eq('period', currentMonth);
+      
+      if (userId) {
+        sales607Query = sales607Query.eq('user_id', userId);
+        purchases606Query = purchases606Query.eq('user_id', userId);
+      }
+
       const [salesResponse, purchasesResponse] = await Promise.all([
-        supabase.from('report_607_data').select('*').eq('period', currentMonth),
-        supabase.from('report_606_data').select('*').eq('period', currentMonth)
+        sales607Query,
+        purchases606Query
       ]);
 
       const itbisCobrado = salesResponse.data?.reduce(
@@ -5667,6 +5841,74 @@ export const taxService = {
       };
     } catch (error) {
       console.error('Error getting tax statistics:', error);
+      throw error;
+    }
+  },
+
+  // -----------------------------------------------------------------
+  // Fiscal Deadlines / Vencimientos Fiscales
+  // -----------------------------------------------------------------
+  async getFiscalDeadlines(userId: string) {
+    try {
+      if (!userId) return [];
+      
+      const { data, error } = await supabase
+        .from('fiscal_deadlines')
+        .select('*')
+        .eq('user_id', userId)
+        .order('due_date', { ascending: true });
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error getting fiscal deadlines:', error);
+      return [];
+    }
+  },
+
+  async createFiscalDeadline(userId: string, deadline: any) {
+    try {
+      const { data, error } = await supabase
+        .from('fiscal_deadlines')
+        .insert({ ...deadline, user_id: userId })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error creating fiscal deadline:', error);
+      throw error;
+    }
+  },
+
+  async updateFiscalDeadline(id: string, deadline: any) {
+    try {
+      const { data, error } = await supabase
+        .from('fiscal_deadlines')
+        .update(deadline)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating fiscal deadline:', error);
+      throw error;
+    }
+  },
+
+  async deleteFiscalDeadline(id: string) {
+    try {
+      const { error } = await supabase
+        .from('fiscal_deadlines')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error deleting fiscal deadline:', error);
       throw error;
     }
   }

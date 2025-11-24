@@ -1,8 +1,141 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import { useAuth } from '../../hooks/useAuth';
+import { fixedAssetsService, assetDepreciationService } from '../../services/database';
 
 export default function FixedAssetsPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+
+  // Load data from database
+  useEffect(() => {
+    const loadData = async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const [assets, depreciations] = await Promise.all([
+          fixedAssetsService.getAll(user.id),
+          assetDepreciationService.getAll(user.id),
+        ]);
+
+        const assetsArr = Array.isArray(assets) ? assets : [];
+        const depreciationsArr = Array.isArray(depreciations) ? depreciations : [];
+
+        // Si no hay datos, solo establecer valores en 0 y continuar
+        if (assetsArr.length === 0 && depreciationsArr.length === 0) {
+          console.info('No fixed assets or depreciations found for user');
+          setLoading(false);
+          return;
+        }
+
+        // Calculate total value
+        const totalValue = assetsArr.reduce((sum, asset: any) => sum + (Number(asset.acquisition_cost) || 0), 0);
+
+        // Calculate total accumulated depreciation
+        const totalDepreciation = depreciationsArr.reduce((sum, dep: any) => sum + (Number(dep.depreciation_amount) || 0), 0);
+
+        // Calculate net value
+        const netValue = totalValue - totalDepreciation;
+
+        // Count total assets
+        const totalAssets = assetsArr.length;
+
+        setAssetsStats([
+          {
+            title: 'Valor Total de Activos',
+            value: `RD$ ${totalValue.toLocaleString('es-DO')}`,
+            change: '',
+            icon: 'ri-building-line',
+            color: 'blue',
+          },
+          {
+            title: 'Depreciación Acumulada',
+            value: `RD$ ${totalDepreciation.toLocaleString('es-DO')}`,
+            change: '',
+            icon: 'ri-line-chart-line',
+            color: 'red',
+          },
+          {
+            title: 'Valor Neto',
+            value: `RD$ ${netValue.toLocaleString('es-DO')}`,
+            change: '',
+            icon: 'ri-money-dollar-circle-line',
+            color: 'green',
+          },
+          {
+            title: 'Total de Activos',
+            value: String(totalAssets),
+            change: '',
+            icon: 'ri-archive-line',
+            color: 'purple',
+          },
+        ]);
+
+        // Group assets by category
+        const categoryMap: Record<string, { count: number; value: number }> = {};
+        assetsArr.forEach((asset: any) => {
+          const category = asset.asset_category || 'Sin Categoría';
+          if (!categoryMap[category]) {
+            categoryMap[category] = { count: 0, value: 0 };
+          }
+          categoryMap[category].count += 1;
+          categoryMap[category].value += Number(asset.acquisition_cost) || 0;
+        });
+
+        const categoriesData = Object.entries(categoryMap).map(([category, data]) => ({
+          category,
+          count: data.count,
+          value: `RD$ ${data.value.toLocaleString('es-DO')}`,
+          depreciation: '',
+        }));
+
+        if (categoriesData.length > 0) {
+          setAssetsByCategory(categoriesData);
+        }
+
+        // Recent depreciations (max 3)
+        const recentDeps = depreciationsArr
+          .sort((a: any, b: any) => new Date(b.depreciation_date || b.created_at || 0).getTime() - new Date(a.depreciation_date || a.created_at || 0).getTime())
+          .slice(0, 3)
+          .map((dep: any) => {
+            // Find the related asset
+            const asset = assetsArr.find((a: any) => a.id === dep.asset_id);
+            const assetName = asset?.asset_name || 'Activo';
+            const assetCode = asset?.code || dep.asset_id;
+            const depAmount = Number(dep.depreciation_amount) || 0;
+            const dateStr = (dep.depreciation_date || '').slice(0, 10) || (dep.created_at || '').slice(0, 10);
+
+            return {
+              asset: assetName,
+              code: assetCode,
+              monthlyDepreciation: `RD$ ${depAmount.toLocaleString('es-DO')}`,
+              accumulatedDepreciation: '',
+              date: dateStr ? new Date(dateStr).toLocaleDateString('es-DO') : '',
+            };
+          });
+
+        if (recentDeps.length > 0) {
+          setRecentDepreciations(recentDeps);
+        }
+      } catch (error) {
+        console.error('Error loading fixed assets data:', error);
+        if (error instanceof Error) {
+          console.error('Error message:', error.message);
+          console.error('Error stack:', error.stack);
+        }
+        // Continue with default hardcoded values on error
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [user?.id]);
 
   const modules = [
     {
@@ -42,7 +175,7 @@ export default function FixedAssetsPage() {
     }
   ];
 
-  const assetsStats = [
+  const [assetsStats, setAssetsStats] = useState([
     {
       title: 'Valor Total de Activos',
       value: 'RD$ 8,450,000',
@@ -71,9 +204,9 @@ export default function FixedAssetsPage() {
       icon: 'ri-archive-line',
       color: 'purple'
     }
-  ];
+  ]);
 
-  const assetsByCategory = [
+  const [assetsByCategory, setAssetsByCategory] = useState([
     {
       category: 'Edificios y Construcciones',
       count: 15,
@@ -104,9 +237,9 @@ export default function FixedAssetsPage() {
       value: 'RD$ 150,000',
       depreciation: '25%'
     }
-  ];
+  ]);
 
-  const recentDepreciations = [
+  const [recentDepreciations, setRecentDepreciations] = useState([
     {
       asset: 'Edificio Principal',
       code: 'ACT-001',
@@ -128,10 +261,10 @@ export default function FixedAssetsPage() {
       accumulatedDepreciation: 'RD$ 85,000',
       date: '01/01/2024'
     }
-  ];
+  ]);
 
   // Module Access Functions
-  const handleAccessModule = (moduleHref: string, moduleName: string) => {
+  const handleAccessModule = (moduleHref: string) => {
     navigate(moduleHref);
   };
 
@@ -184,7 +317,7 @@ export default function FixedAssetsPage() {
               <h3 className="text-lg font-semibold text-gray-900 mb-2">{module.title}</h3>
               <p className="text-gray-600 mb-4 text-sm">{module.description}</p>
               <button 
-                onClick={() => handleAccessModule(module.href, module.title)}
+                onClick={() => handleAccessModule(module.href)}
                 className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
               >
                 Acceder

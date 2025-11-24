@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { taxService } from '../../services/database';
+import { useAuth } from '../../hooks/useAuth';
 
 export default function TaxesPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [taxStats, setTaxStats] = useState({
     itbis_cobrado: 0,
     itbis_pagado: 0,
@@ -13,20 +15,32 @@ export default function TaxesPage() {
     retenciones: 0
   });
   const [ncfSeries, setNcfSeries] = useState<any[]>([]);
+  const [fiscalDeadlines, setFiscalDeadlines] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadDashboardData();
-  }, []);
+    if (user?.id) {
+      loadDashboardData();
+    } else {
+      setLoading(false);
+    }
+  }, [user?.id]);
 
   const loadDashboardData = async () => {
+    if (!user?.id) return;
+    
     try {
-      const [stats, series] = await Promise.all([
-        taxService.getTaxStatistics(),
-        taxService.getNcfSeries()
+      const [stats, series, deadlines] = await Promise.all([
+        taxService.getTaxStatistics(user.id),
+        taxService.getNcfSeries(user.id),
+        taxService.getFiscalDeadlines(user.id)
       ]);
       setTaxStats(stats);
       setNcfSeries(series);
+      setFiscalDeadlines(deadlines);
+      
+      console.log('Fiscal deadlines loaded:', deadlines);
+      console.log('Deadlines count:', deadlines?.length || 0);
     } catch (error) {
       console.error('Error loading dashboard data:', error);
     } finally {
@@ -154,26 +168,45 @@ export default function TaxesPage() {
     status: series.status === 'active' ? 'Activo' : 'Inactivo'
   }));
 
-  const upcomingDeadlines = [
-    {
-      report: 'IT-1 Febrero 2024',
-      dueDate: '20/03/2024',
-      daysLeft: 5,
-      priority: 'High'
-    },
-    {
-      report: 'Reporte 607 Febrero',
-      dueDate: '29/03/2024',
-      daysLeft: 14,
-      priority: 'Medium'
-    },
-    {
-      report: 'IR-17 Retenciones',
-      dueDate: '15/03/2024',
-      daysLeft: 0,
-      priority: 'Urgent'
-    }
-  ];
+  // Calculate upcoming deadlines from database or use defaults
+  const upcomingDeadlines = fiscalDeadlines.length > 0 
+    ? fiscalDeadlines.map((deadline: any) => {
+        const dueDate = new Date(deadline.due_date);
+        const today = new Date();
+        const diffTime = dueDate.getTime() - today.getTime();
+        const daysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        let priority = 'Medium';
+        if (daysLeft <= 0) priority = 'Urgent';
+        else if (daysLeft <= 7) priority = 'High';
+        
+        return {
+          report: deadline.report_name || deadline.description,
+          dueDate: dueDate.toLocaleDateString('es-DO'),
+          daysLeft: Math.max(0, daysLeft),
+          priority
+        };
+      })
+    : [
+        {
+          report: 'IT-1 Febrero 2024',
+          dueDate: '20/03/2024',
+          daysLeft: 5,
+          priority: 'High'
+        },
+        {
+          report: 'Reporte 607 Febrero',
+          dueDate: '29/03/2024',
+          daysLeft: 14,
+          priority: 'Medium'
+        },
+        {
+          report: 'IR-17 Retenciones',
+          dueDate: '15/03/2024',
+          daysLeft: 0,
+          priority: 'Urgent'
+        }
+      ];
 
   const handleAccessModule = (moduleHref: string) => {
     navigate(moduleHref);

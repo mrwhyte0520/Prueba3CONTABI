@@ -113,6 +113,20 @@ export default function BankAccountsPage() {
     loadAccounts();
   }, [user?.id]);
 
+  const handleDeleteBank = async (bank: Bank) => {
+    if (!confirm(`¿Eliminar la cuenta bancaria "${bank.name}" (${bank.account_number})?`)) return;
+
+    try {
+      await bankAccountsService.delete(bank.id);
+      toast.success('Cuenta bancaria eliminada correctamente');
+      await loadBanks();
+    } catch (error: any) {
+      console.error('Error deleting bank account', error);
+      const message = error?.message || 'No se pudo eliminar la cuenta bancaria. Verifique si tiene movimientos o relaciones activas.';
+      toast.error(message);
+    }
+  };
+
   const handleSubmitBank = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.id) {
@@ -279,17 +293,26 @@ export default function BankAccountsPage() {
                       </div>
                       <div className="text-gray-500 text-xs">{bank.currency}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingBank(bank);
-                          setShowBankModal(true);
-                        }}
-                        className="text-blue-600 hover:text-blue-800 text-xs font-medium"
-                      >
-                        Editar
-                      </button>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingBank(bank);
+                            setShowBankModal(true);
+                          }}
+                          className="text-blue-600 hover:text-blue-800 text-xs font-medium"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBank(bank)}
+                          className="text-red-600 hover:text-red-800 text-xs font-medium"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

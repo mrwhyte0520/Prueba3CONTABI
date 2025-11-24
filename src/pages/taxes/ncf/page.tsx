@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
+import { useAuth } from '../../../hooks/useAuth';
 
 interface NcfSeries {
   id?: string;
@@ -16,6 +17,7 @@ interface NcfSeries {
 
 export default function NcfManagementPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [series, setSeries] = useState<NcfSeries[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingSeries, setEditingSeries] = useState<NcfSeries | null>(null);
@@ -44,12 +46,16 @@ export default function NcfManagementPage() {
   ];
 
   useEffect(() => {
-    loadSeries();
-  }, []);
+    if (user?.id) {
+      loadSeries();
+    }
+  }, [user?.id]);
 
   const loadSeries = async () => {
+    if (!user?.id) return;
+    
     try {
-      const data = await taxService.getNcfSeries();
+      const data = await taxService.getNcfSeries(user.id);
       setSeries(data);
     } catch (error) {
       console.error('Error loading NCF series:', error);

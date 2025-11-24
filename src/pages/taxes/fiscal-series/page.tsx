@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
+import { useAuth } from '../../../hooks/useAuth';
 
 interface FiscalSeries {
   id?: string;
@@ -17,6 +18,7 @@ interface FiscalSeries {
 
 export default function FiscalSeriesPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [series, setSeries] = useState<FiscalSeries[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingSeries, setEditingSeries] = useState<FiscalSeries | null>(null);
@@ -43,12 +45,16 @@ export default function FiscalSeriesPage() {
   ];
 
   useEffect(() => {
-    loadSeries();
-  }, []);
+    if (user?.id) {
+      loadSeries();
+    }
+  }, [user?.id]);
 
   const loadSeries = async () => {
+    if (!user?.id) return;
+
     try {
-      const data = await taxService.getNcfSeries();
+      const data = await taxService.getNcfSeries(user.id);
       setSeries(data.map(item => ({
         id: item.id,
         series_name: item.document_type,

@@ -95,9 +95,24 @@ export default function ChartAccountsPage() {
     
     setLoading(true);
     try {
-      const data = await chartAccountsService.getAll(user.id);
+      let data = await chartAccountsService.getAll(user.id);
       console.log('DEBUG cuentas cargadas:', data.length);
-      setAccounts(data);
+
+      // Si el usuario no tiene plan de cuentas, intentar sembrar desde la plantilla
+      if (!data || data.length === 0) {
+        try {
+          const seedResult = await chartAccountsService.seedFromTemplate(user.id);
+          console.log('DEBUG seedFromTemplate result:', seedResult);
+          if (seedResult && seedResult.created > 0) {
+            data = await chartAccountsService.getAll(user.id);
+            console.log('DEBUG cuentas cargadas tras seed:', data.length);
+          }
+        } catch (seedError) {
+          console.error('Error seeding chart of accounts from template:', seedError);
+        }
+      }
+
+      setAccounts(data || []);
     } catch (error) {
       console.error('Error loading accounts:', error);
     } finally {
@@ -243,10 +258,23 @@ export default function ChartAccountsPage() {
     if (!trimmed) return 1;
 
     // Normalizar separadores: tratar punto, guion y espacios como separadores de nivel
-    const normalized = trimmed.replace(/[\-\s]+/g, '.');
+    const normalized = trimmed.replace(/[\.\-\s]+/g, '.');
 
     // Contar segmentos no vacíos
-    return normalized.split('.').filter(Boolean).length || 1;
+    const segments = normalized.split('.').filter(Boolean);
+    if (segments.length > 1) return segments.length;
+
+    // Si no hay separadores pero el código es solo numérico, inferir por longitud
+    if (/^\d+$/.test(trimmed)) {
+      const len = trimmed.length;
+      if (len <= 2) return 1;       // 1, 10
+      if (len <= 4) return 2;       // 1001
+      if (len <= 6) return 3;       // 100101
+      if (len <= 8) return 4;
+      return 5;
+    }
+
+    return 1;
   };
 
   const mapSpanishTypeToInternal = (value: string): string => {
