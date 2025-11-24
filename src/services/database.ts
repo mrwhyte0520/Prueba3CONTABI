@@ -1402,7 +1402,7 @@ export const chartAccountsService = {
         supabase
           .from('accounting_settings')
           .select('id')
-          .or(`ap_account_id.eq.${id},ar_account_id.eq.${id}`)
+          .or(`ap_account_id.eq.${id},ar_account_id.eq.${id},sales_account_id.eq.${id},sales_tax_account_id.eq.${id},ap_bank_account_id.eq.${id}`)
           .limit(1),
         supabase
           .from('journal_entry_lines')

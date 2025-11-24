@@ -64,7 +64,6 @@ export default function AccountingSettingsPage() {
       try {
         const data = await chartAccountsService.getAll(user.id);
         const options: AccountOption[] = (data || [])
-          .filter((acc: any) => acc.allow_posting !== false)
           .map((acc: any) => ({
             id: acc.id,
             code: acc.code,
