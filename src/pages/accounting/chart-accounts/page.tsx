@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { chartAccountsService } from '../../../services/database';
+import { chartAccountsService, accountingSettingsService } from '../../../services/database';
 import { useAuth } from '../../../hooks/useAuth';
 import * as XLSX from 'xlsx';
 
@@ -59,6 +59,7 @@ export default function ChartAccountsPage() {
   const [importProgress, setImportProgress] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSeedingBase, setIsSeedingBase] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -98,17 +99,32 @@ export default function ChartAccountsPage() {
       let data = await chartAccountsService.getAll(user.id);
       console.log('DEBUG cuentas cargadas:', data.length);
 
-      // Si el usuario no tiene plan de cuentas, intentar sembrar desde la plantilla
+      // Si el usuario no tiene plan de cuentas, verificar si ya se sembró antes
       if (!data || data.length === 0) {
-        try {
-          const seedResult = await chartAccountsService.seedFromTemplate(user.id);
-          console.log('DEBUG seedFromTemplate result:', seedResult);
-          if (seedResult && seedResult.created > 0) {
-            data = await chartAccountsService.getAll(user.id);
-            console.log('DEBUG cuentas cargadas tras seed:', data.length);
+        // Verificar si el catálogo ya fue sembrado previamente
+        const alreadySeeded = await accountingSettingsService.hasChartAccountsSeeded(user.id);
+        console.log('DEBUG catálogo ya sembrado antes:', alreadySeeded);
+
+        // Solo sembrar si NO se ha hecho antes (primera vez del usuario)
+        if (!alreadySeeded) {
+          try {
+            const seedResult = await chartAccountsService.seedFromTemplate(user.id);
+            console.log('DEBUG seedFromTemplate result:', seedResult);
+            
+            if (seedResult && seedResult.created > 0) {
+              // Marcar que el catálogo ya fue sembrado para este usuario
+              await accountingSettingsService.markChartAccountsSeeded(user.id);
+              console.log('DEBUG catálogo marcado como sembrado');
+              
+              // Recargar las cuentas
+              data = await chartAccountsService.getAll(user.id);
+              console.log('DEBUG cuentas cargadas tras seed:', data.length);
+            }
+          } catch (seedError) {
+            console.error('Error seeding chart of accounts from template:', seedError);
           }
-        } catch (seedError) {
-          console.error('Error seeding chart of accounts from template:', seedError);
+        } else {
+          console.log('DEBUG No se vuelve a cargar el catálogo - usuario ya lo recibió antes');
         }
       }
 
@@ -222,6 +238,32 @@ export default function ChartAccountsPage() {
       alert('Error al eliminar las cuentas seleccionadas.');
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleSeedBaseCatalog = async () => {
+    if (!user) return;
+
+    const confirmMsg = `Esto cargará nuevamente el catálogo de cuentas base.\n\nSolo agregará las cuentas faltantes; no eliminará ni modificará las existentes.\n\n¿Desea continuar?`;
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      setIsSeedingBase(true);
+      const seedResult = await chartAccountsService.seedFromTemplate(user.id);
+      console.log('DEBUG seedFromTemplate (manual) result:', seedResult);
+
+      if (seedResult && seedResult.created > 0) {
+        await accountingSettingsService.markChartAccountsSeeded(user.id);
+        await loadAccounts();
+        alert(`Catálogo base aplicado. Cuentas creadas: ${seedResult.created}.`);
+      } else {
+        alert('No se encontraron cuentas nuevas para agregar desde el catálogo base.');
+      }
+    } catch (error) {
+      console.error('Error applying base chart of accounts manually:', error);
+      alert('Ocurrió un error al aplicar el catálogo de cuentas base.');
+    } finally {
+      setIsSeedingBase(false);
     }
   };
 
@@ -1129,6 +1171,18 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Catálogo de Cuentas</h1>
           </div>
           <div className="flex flex-wrap gap-3 justify-start md:justify-end">
+            <button
+              onClick={handleSeedBaseCatalog}
+              disabled={isSeedingBase}
+              className={`px-4 py-2 rounded-lg transition-colors whitespace-nowrap border ${
+                isSeedingBase
+                  ? 'bg-gray-100 text-gray-500 cursor-wait border-gray-200'
+                  : 'bg-white text-gray-800 hover:bg-gray-50 border-gray-300'
+              }`}
+            >
+              <i className="ri-refresh-line mr-2"></i>
+              {isSeedingBase ? 'Cargando catálogo base...' : 'Catálogo de cuentas base'}
+            </button>
             <button
               onClick={downloadExcel}
               className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"

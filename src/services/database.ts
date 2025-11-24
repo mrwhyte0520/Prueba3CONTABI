@@ -3284,6 +3284,49 @@ export const accountingSettingsService = {
       return null;
     }
   },
+
+  // Verificar si el catálogo de cuentas ya fue sembrado para este usuario
+  async hasChartAccountsSeeded(userId: string): Promise<boolean> {
+    try {
+      const { data, error } = await supabase
+        .from('accounting_settings')
+        .select('chart_accounts_seeded')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error checking chart_accounts_seeded:', error);
+        return false;
+      }
+
+      return data?.chart_accounts_seeded === true;
+    } catch (error) {
+      console.error('accountingSettingsService.hasChartAccountsSeeded error', error);
+      return false;
+    }
+  },
+
+  // Marcar que el catálogo de cuentas ya fue sembrado para este usuario
+  async markChartAccountsSeeded(userId: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('accounting_settings')
+        .upsert(
+          { 
+            user_id: userId, 
+            chart_accounts_seeded: true,
+            updated_at: new Date().toISOString()
+          },
+          { onConflict: 'user_id' }
+        );
+
+      if (error) {
+        console.error('Error marking chart_accounts_seeded:', error);
+      }
+    } catch (error) {
+      console.error('accountingSettingsService.markChartAccountsSeeded error', error);
+    }
+  },
 };
 
 /* ==========================================================
