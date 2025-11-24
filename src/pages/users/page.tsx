@@ -118,10 +118,14 @@ export default function UsersPage() {
         .from('user_roles')
         .select('*')
         .eq('owner_user_id', ownerId);
-      if (r && p && rp && ur) {
+      if (r && p && ur) {
+        // Combinar permisos: si Supabase devuelve role_permissions, usarlos; si no, usar los de localStorage
+        const localRp: RolePermission[] = JSON.parse(localStorage.getItem(storageKey('role_permissions')) || '[]');
+        const effectiveRp = rp && rp.length > 0 ? (rp as any as RolePermission[]) : localRp;
+
         setRoles(r as any);
         setPermissions(p as any);
-        setRolePerms(rp as any);
+        setRolePerms(effectiveRp);
         setUserRoles(ur as any);
         return;
       }
@@ -143,6 +147,14 @@ export default function UsersPage() {
   }, [permissions.length]);
 
   const toggleRolePerm = async (roleId: string, permId: string, checked: boolean) => {
+    // Actualización optimista en memoria y en localStorage (siempre)
+    const next = checked
+      ? [...rolePerms, { role_id: roleId, permission_id: permId }]
+      : rolePerms.filter(rp => !(rp.role_id === roleId && rp.permission_id === permId));
+    setRolePerms(next);
+    saveLocal('role_permissions', next);
+
+    // Sincronizar con Supabase si hay usuario propietario
     if (user?.id) {
       try {
         if (checked) {
@@ -158,18 +170,10 @@ export default function UsersPage() {
             .delete()
             .match({ role_id: roleId, permission_id: permId, owner_user_id: user.id });
         }
-        await load();
-        return;
       } catch (error) {
         console.error('Error al actualizar permisos de rol:', error);
       }
     }
-    // local fallback
-    const next = checked
-      ? [...rolePerms, { role_id: roleId, permission_id: permId }]
-      : rolePerms.filter(rp => !(rp.role_id === roleId && rp.permission_id === permId));
-    setRolePerms(next);
-    saveLocal('role_permissions', next);
   };
 
   const addRole = async () => {
