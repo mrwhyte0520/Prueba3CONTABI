@@ -1164,17 +1164,17 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
 
   return (
     <DashboardLayout>
-      <div className="p-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div className="p-4 sm:p-6 max-w-7xl mx-auto">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6">
           <div className="flex-1">
             <p className="text-sm text-gray-600 mb-1">Gestión completa del plan de cuentas contables</p>
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Catálogo de Cuentas</h1>
           </div>
-          <div className="flex flex-wrap gap-3 justify-start md:justify-end">
+          <div className="flex flex-wrap gap-3 justify-start lg:justify-end w-full lg:w-auto">
             <button
               onClick={handleSeedBaseCatalog}
               disabled={isSeedingBase}
-              className={`px-4 py-2 rounded-lg transition-colors whitespace-nowrap border ${
+              className={`w-full sm:w-auto px-4 py-2 rounded-lg transition-colors whitespace-nowrap border ${
                 isSeedingBase
                   ? 'bg-gray-100 text-gray-500 cursor-wait border-gray-200'
                   : 'bg-white text-gray-800 hover:bg-gray-50 border-gray-300'
@@ -1185,28 +1185,28 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
             </button>
             <button
               onClick={downloadExcel}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+              className="w-full sm:w-auto bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
             >
               <i className="ri-file-excel-line mr-2"></i>
               Descargar catálogo de cuentas
             </button>
             <button
               onClick={downloadTemplateHeaders}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+              className="w-full sm:w-auto bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
             >
               <i className="ri-file-excel-line mr-2"></i>
               Descargar plantilla
             </button>
             <button
               onClick={() => setShowFormatModal(true)}
-              className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors whitespace-nowrap"
+              className="w-full sm:w-auto bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors whitespace-nowrap"
             >
               <i className="ri-upload-line mr-2"></i>
               Importar Catálogo
             </button>
             <button
               onClick={() => setShowAddModal(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+              className="w-full sm:w-auto bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
             >
               <i className="ri-add-line mr-2"></i>
               Nueva Cuenta
@@ -1214,7 +1214,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
             <button
               onClick={handleDeleteSelected}
               disabled={selectedIds.length === 0}
-              className={`px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${selectedIds.length === 0 ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}
+              className={`w-full sm:w-auto px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${selectedIds.length === 0 ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}
             >
               <i className="ri-delete-bin-line mr-2"></i>
               Eliminar seleccionadas

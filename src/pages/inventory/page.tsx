@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { inventoryService, settingsService } from '../../services/database';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
 
 // Eliminados datos de ejemplo: la vista se alimenta solo de la base de datos
 
@@ -92,11 +93,45 @@ export default function InventoryPage() {
     }
   };
 
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const imageUrl = URL.createObjectURL(file);
-      setFormData(prev => ({ ...prev, image_url: imageUrl }));
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      if (!user?.id) {
+        alert('Debes iniciar sesión para subir imágenes de productos');
+        return;
+      }
+
+      const ext = file.name.split('.').pop() || 'jpg';
+      const fileName = `${user.id}/products/${Date.now()}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('product-images')
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error('Error uploading product image to Supabase Storage:', uploadError);
+        alert('No se pudo subir la imagen del producto');
+        return;
+      }
+
+      const { data: publicData } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(fileName);
+
+      const publicUrl = publicData?.publicUrl;
+      if (!publicUrl) {
+        alert('No se pudo obtener la URL pública de la imagen');
+        return;
+      }
+
+      setFormData(prev => ({ ...prev, image_url: publicUrl }));
+    } catch (error) {
+      console.error('handleImageUpload error', error);
+      alert('Ocurrió un error al procesar la imagen');
     }
   };
 
@@ -119,14 +154,23 @@ export default function InventoryPage() {
     try {
       if (modalType === 'item') {
         if (user) {
+          // Normalizar campos numéricos antes de guardar
+          const normalizedItem = {
+            ...formData,
+            current_stock: Number(formData.current_stock) || 0,
+            minimum_stock: Number(formData.minimum_stock) || 0,
+            maximum_stock: Number(formData.maximum_stock) || 0,
+            cost_price: Number(formData.cost_price) || 0,
+            selling_price: Number(formData.selling_price) || 0,
+          };
+
           // Si hay usuario, intentar guardar en la base de datos
           if (selectedItem) {
-            await inventoryService.updateItem(selectedItem.id, formData);
+            await inventoryService.updateItem(selectedItem.id, normalizedItem);
           } else {
             await inventoryService.createItem(user!.id, {
-              ...formData,
+              ...normalizedItem,
               sku: formData.sku || `SKU${Date.now()}`,
-              current_stock: formData.current_stock || 0,
               is_active: formData.is_active !== false
             });
           }
@@ -984,13 +1028,40 @@ export default function InventoryPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     SKU *
                   </label>
-                  <input
-                    type="text"
-                    value={formData.sku || ''}
-                    onChange={(e) => setFormData({...formData, sku: e.target.value})}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={formData.sku || ''}
+                      onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Generar un SKU único basado en los existentes
+                        const existingSkus = (items || [])
+                          .map((it) => String(it.sku || ''))
+                          .filter((sku) => sku.startsWith('SKU-'));
+
+                        let maxNum = 0;
+                        existingSkus.forEach((sku) => {
+                          const m = sku.match(/^SKU-(\d{1,})$/);
+                          if (m) {
+                            const n = parseInt(m[1], 10);
+                            if (!Number.isNaN(n) && n > maxNum) maxNum = n;
+                          }
+                        });
+
+                        const next = maxNum + 1;
+                        const suggested = `SKU-${next.toString().padStart(4, '0')}`;
+                        setFormData({ ...formData, sku: suggested });
+                      }}
+                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg border border-gray-300 hover:bg-gray-200 transition-colors whitespace-nowrap text-sm"
+                    >
+                      Generar
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1230,13 +1301,26 @@ export default function InventoryPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Nombre del Almacén *
                   </label>
-                  <input
-                    type="text"
-                    value={formData.name || ''}
-                    onChange={(e) => setFormData({...formData, name: e.target.value})}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={formData.name || ''}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const index = (warehouses?.length || 0) + 1;
+                        const suggested = `Almacén ${index}`;
+                        setFormData({ ...formData, name: suggested });
+                      }}
+                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg border border-gray-300 hover:bg-gray-200 transition-colors whitespace-nowrap text-sm"
+                    >
+                      Generar
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">

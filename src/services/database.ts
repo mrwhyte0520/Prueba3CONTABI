@@ -7507,17 +7507,26 @@ export const settingsService = {
       return [];
     }
   },
-
   async createWarehouse(warehouseData: any) {
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.id) {
+        throw new Error('No authenticated user for warehouse creation');
+      }
+
       const generatedCode = (warehouseData.code || warehouseData.name || 'ALM')
         .toString()
         .trim()
         .substring(0, 8)
         .toUpperCase();
       const payload = {
+        user_id: user.id,
         name: warehouseData.name,
         code: generatedCode,
+        location: warehouseData.location ?? null,
         address: warehouseData.address ?? null,
         manager: warehouseData.manager ?? null,
         phone: warehouseData.phone ?? null,

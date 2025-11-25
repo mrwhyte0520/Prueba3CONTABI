@@ -137,61 +137,86 @@ export default function POSPage() {
       document.body
     );
 
-  // Load data from localStorage
+  // Load data (productos desde Supabase si hay usuario; si no, desde localStorage)
   useEffect(() => {
     loadProducts();
     loadSales();
     loadCustomers();
-    loadCategories();
 
     const onProductsUpdated = () => {
       loadProducts();
-      loadCategories();
-    };
-    const onCategoriesUpdated = () => {
-      loadCategories();
     };
     window.addEventListener('productsUpdated', onProductsUpdated);
-    window.addEventListener('categoriesUpdated', onCategoriesUpdated);
     return () => {
       window.removeEventListener('productsUpdated', onProductsUpdated);
-      window.removeEventListener('categoriesUpdated', onCategoriesUpdated);
     };
   }, []);
 
-  // When auth user becomes available, reload customers from Supabase
+  // When auth user becomes available, recargar datos desde Supabase
   useEffect(() => {
     if (user?.id) {
+      loadProducts();
+      loadSales();
       loadCustomers();
     }
   }, [user?.id]);
 
-  const loadProducts = () => {
-    const savedProducts = localStorage.getItem('contabi_products');
-    if (savedProducts) {
-      const parsedProducts = JSON.parse(savedProducts);
-      const activeProducts = parsedProducts.filter((product: Product) => product.status === 'active');
-      setProducts(activeProducts);
-    } else {
-      setProducts([]);
-    }
-  };
-
-  const loadCategories = () => {
+  const loadProducts = async () => {
     try {
-      const saved = localStorage.getItem('contabi_categories');
-      if (saved) {
-        const list = JSON.parse(saved) as { id: string; name: string }[];
-        const names = Array.from(new Set(list.map(x => x.name).filter(Boolean)));
+      if (user?.id) {
+        // Cargar productos reales desde inventario (Supabase)
+        const items: any[] = await inventoryService.getItems(user.id);
+        const mapped: Product[] = (items || []).map((it: any) => ({
+          id: it.id,
+          name: it.name || '',
+          price: Number(it.selling_price) || 0,
+          stock: Number(it.current_stock) || 0,
+          category: it.category || '',
+          barcode: it.barcode || '',
+          imageUrl: it.image_url || '',
+          sku: it.sku || '',
+          cost: Number(it.cost_price) || 0,
+          minStock: Number(it.minimum_stock) || 0,
+          maxStock: Number(it.maximum_stock) || 0,
+          description: it.description || '',
+          supplier: it.supplier || '',
+          status: it.is_active === false ? 'inactive' : 'active',
+        }));
+
+        const activeProducts = mapped.filter(p => p.status === 'active');
+        setProducts(activeProducts);
+
+        // Derivar categorías desde los productos activos
+        const names = Array.from(new Set(activeProducts.map(p => p.category).filter(Boolean)));
         setCategories(['all', ...names]);
       } else {
-        // Derivar de los productos actuales en localStorage
-        const savedProducts = JSON.parse(localStorage.getItem('contabi_products') || '[]') as Product[];
-        const names = Array.from(new Set(savedProducts.map(p => p.category).filter(Boolean)));
-        setCategories(['all', ...names]);
+        // Sin usuario: mantener comportamiento anterior basado en localStorage
+        const savedProducts = localStorage.getItem('contabi_products');
+        if (savedProducts) {
+          const parsedProducts = JSON.parse(savedProducts) as Product[];
+          const activeProducts = parsedProducts.filter((product) => product.status === 'active');
+          setProducts(activeProducts);
+          const names = Array.from(new Set(activeProducts.map(p => p.category).filter(Boolean)));
+          setCategories(['all', ...names]);
+        } else {
+          setProducts([]);
+          setCategories(['all']);
+        }
       }
-    } catch {
-      setCategories(['all']);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[POS] Error loading products, falling back to localStorage', error);
+      const savedProducts = localStorage.getItem('contabi_products');
+      if (savedProducts) {
+        const parsedProducts = JSON.parse(savedProducts) as Product[];
+        const activeProducts = parsedProducts.filter((product) => product.status === 'active');
+        setProducts(activeProducts);
+        const names = Array.from(new Set(activeProducts.map(p => p.category).filter(Boolean)));
+        setCategories(['all', ...names]);
+      } else {
+        setProducts([]);
+        setCategories(['all']);
+      }
     }
   };
 
@@ -891,25 +916,20 @@ export default function POSPage() {
               className="relative bg-white rounded-xl shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow cursor-pointer flex flex-col h-full overflow-hidden"
               onClick={() => addToCart(product)}
             >
-              <button
-                title="Eliminar producto"
-                onClick={(e) => { e.stopPropagation(); deleteProduct(product.id); }}
-                className="absolute top-2 right-2 w-7 h-7 bg-red-50 text-red-600 rounded-full flex items-center justify-center hover:bg-red-100 shadow-sm"
-              >
-                <i className="ri-delete-bin-line text-sm"></i>
-              </button>
 
               {/* Imagen */}
               <div className="w-full h-32 mb-2 bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center">
-                <img
-                  src={product.imageUrl}
-                  alt={product.name}
-                  className="max-h-full w-auto object-contain"
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xNTAgMTAwQzE2MS4wNDYgMTAwIDE3MCA5MC45NTQzIDE3MCA4MEM1NyA2OS4wNDU3IDE0Ny45NTQgNjAgMTM2IDYwQzEyNC45NTQgNjAgMTE2IDY5LjA0NTcgMTE2IDgwQzExNiA5MC45NTQzIDEyNC45NTQgMTAwIDEzNiAxMDBIMTUwWiIgZmlsbD0iIzlDQTNBRiIvPgo8cGF0aCBkPSJNMTg2IDEyMEgxMTRDMTA3LjM3MyAxMjAgMTAyIDEyNS4zNzMgMTAyIDEzMlYyMDBDMTAyIDIwNi2MjcgMTA3LjM3MyAyMTIgMTE0IDIxMkgxODZDMTkyLjYyNyAyMTIgMTk4IDIwNi4yMjJgMTk0IDIwMFYxMzJDMTk0IDEyNS4zNzMgMTkyLjYyNyAxMjAgMTg2IDEyMFoiIGZpbGw9IiM5Q0EzQUYiLz4KPC9zdmc+';
-                  }}
-                />
+                {product.imageUrl && (
+                  <img
+                    src={product.imageUrl}
+                    alt={product.name}
+                    className="max-h-full w-auto object-contain"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xNTAgMTAwQzE2MS4wNDYgMTAwIDE3MCA5MC45NTQzIDE3MCA4MEM1NyA2OS4wNDU3IDE0Ny45NTQgNjAgMTM2IDYwQzEyNC45NTQgNjAgMTE2IDY5LjA0NTcgMTE2IDgwQzExNiA5MC45NTQzIDEyNC45NTQgMTAwIDEzNiAxMDBIMTUwWiIgZmlsbD0iIzlDQTNBRiIvPgo8cGF0aCBkPSJNMTg2IDEyMEgxMTRDMTA3LjM3MyAxMjAgMTAyIDEyNS4zNzMgMTAyIDEzMlYyMDBDMTAyIDIwNi2MjcgMTA3LjM3MyAyMTIgMTE0IDIxMkgxODZDMTkyLjYyNyAyMTIgMTk4IDIwNi4yMjJgMTk0IDIwMFYxMzJDMTk0IDEyNS4zNzMgMTkyLjYyNyAxMjAgMTg2IDEyMFoiIGZpbGw9IiM5Q0EzQUYiLz4KPC9zdmc+';
+                    }}
+                  />
+                )}
               </div>
 
               {/* Categoría + Stock */}
@@ -983,15 +1003,17 @@ export default function POSPage() {
               {cart.map((item) => (
                 <div key={item.id} className="flex items-center p-3 bg-gray-50 rounded-lg">
                   <div className="w-12 h-12 bg-gray-200 rounded-lg overflow-hidden mr-3 flex-shrink-0">
-                    <img
-                      src={item.imageUrl}
-                      alt={item.name}
-                      className="w-full h-full object-cover object-top"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0yNCAyMEMyNi4yMDkxIDIwIDI4IDE4LjIwOTEgMjggMTZDMjggMTMuNzkwOSAyNi4yMDkxIDEyIDI0IDEyQzIxLjc5MDkgMTIgMjAgMTMuNzkwOSAyMCAxNkMyMCAxOC4yMDkxIDIxLjc5MDkgMjAgMjQgMjBaIiBmaWxsPSIjOUNBM0FGIi8+CjxwYXRoIGQ9Ik0zMiAyNEgxNkMxNC44OTU0IDI0IDE0IDI0Ljg5NTQgMTQgMjZWMzRDMTQgMzUuMTA0NiAxNC44OTU0IDM2IDE2IDM2SDMyQzMzLjEwNDYgMzYgMzQgMzUuMTA0NiAzNCAzNFYyNkMzNCAyNC44OTU0IDMzLjEwNDYgMjQgMzIgMjRaIiBmaWxsPSIjOUNBM0FGIi8+Cjwvc3ZnPg==';
-                      }}
-                    />
+                    {item.imageUrl && (
+                      <img
+                        src={item.imageUrl}
+                        alt={item.name}
+                        className="w-full h-full object-cover object-top"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0yNCAyMEMyNi4yMDkxIDIwIDI4IDE4LjIwOTEgMjggMTZDMjggMTMuNzkwOSAyNi4yMDkxIDEyIDI0IDEyQzIxLjc5MDkgMTIgMjAgMTMuNzkwOSAyMCAxNkMyMCAxOC4yMDkxIDIxLjc5MDkgMjAgMjQgMjBaIiBmaWxsPSIjOUNBM0FGIi8+CjxwYXRoIGQ9Ik0zMiAyNEgxNkMxNC44OTU0IDI0IDE0IDI0Ljg5NTQgMTQgMjZWMzRDMTQgMzUuMTA0NiAxNC44OTU0IDM2IDE2IDM2SDMyQzMzLjEwNDYgMzYgMzQgMzUuMTA0NiAzNCAzNFYyNkMzNCAyNC44OTU0IDMzLjEwNDYgMjQgMzIgMjRaIiBmaWxsPSIjOUNBM0FGIi8+Cjwvc3ZnPg==';
+                        }}
+                      />
+                    )}
                   </div>
 
                   <div className="flex-1 min-w-0">
@@ -1452,7 +1474,7 @@ export default function POSPage() {
                       Monto Recibido
                     </label>
                     <input
-                      type="number"
+                      type="text"
                       value={amountReceived}
                       onChange={(e) => setAmountReceived(e.target.value)}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
