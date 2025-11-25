@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -81,6 +81,7 @@ export default function POSPage() {
   });
   const [showEditCustomerModal, setShowEditCustomerModal] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
+  const amountInputRef = useRef<HTMLInputElement | null>(null);
   const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
 
   // Helpers: input masks
@@ -106,6 +107,21 @@ export default function POSPage() {
     if (digits.length <= 6) return `${digits.slice(0,3)}-${digits.slice(3)}`;
     return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6)}`;
   };
+
+  const handleAmountReceivedChange = (raw: string) => {
+    // Permitir solo dígitos, coma y punto, y normalizar a punto decimal
+    const cleaned = raw.replace(/[^0-9.,]/g, '').replace(',', '.');
+    setAmountReceived(cleaned);
+  };
+
+  useEffect(() => {
+    if (showPaymentModal) {
+      // Pequeño delay para asegurar que el input exista en el DOM antes de enfocar
+      setTimeout(() => {
+        amountInputRef.current?.focus();
+      }, 0);
+    }
+  }, [showPaymentModal, amountReceived]);
 
   const anyModalOpen =
     showCustomerModal ||
@@ -1475,8 +1491,9 @@ export default function POSPage() {
                     </label>
                     <input
                       type="text"
+                      ref={amountInputRef}
                       value={amountReceived}
-                      onChange={(e) => setAmountReceived(e.target.value)}
+                      onChange={(e) => handleAmountReceivedChange(e.target.value)}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
                     />
