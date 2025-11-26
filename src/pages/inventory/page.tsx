@@ -157,9 +157,15 @@ export default function InventoryPage() {
           // Normalizar campos numéricos antes de guardar
           const normalizedItem = {
             ...formData,
-            current_stock: Number(formData.current_stock) || 0,
-            minimum_stock: Number(formData.minimum_stock) || 0,
-            maximum_stock: Number(formData.maximum_stock) || 0,
+            current_stock: Number.isFinite(Number(formData.current_stock))
+              ? Math.round(Number(formData.current_stock))
+              : 0,
+            minimum_stock: Number.isFinite(Number(formData.minimum_stock))
+              ? Math.round(Number(formData.minimum_stock))
+              : 0,
+            maximum_stock: Number.isFinite(Number(formData.maximum_stock))
+              ? Math.round(Number(formData.maximum_stock))
+              : 0,
             cost_price: Number(formData.cost_price) || 0,
             selling_price: Number(formData.selling_price) || 0,
           };
