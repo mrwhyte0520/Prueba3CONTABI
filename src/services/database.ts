@@ -5105,7 +5105,7 @@ export const purchaseOrderItemsService = {
         .from('purchase_order_items')
         .select(`
           *,
-          inventory_items (current_stock, name, sku)
+          inventory_items (current_stock, name, sku, inventory_account_id)
         `)
         .eq('user_id', userId)
         .order('created_at', { ascending: false });

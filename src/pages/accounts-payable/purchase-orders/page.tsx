@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { purchaseOrdersService, purchaseOrderItemsService, suppliersService, inventoryService } from '../../../services/database';
+import { purchaseOrdersService, purchaseOrderItemsService, suppliersService, inventoryService, accountingSettingsService, journalEntriesService, chartAccountsService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -18,12 +18,14 @@ export default function PurchaseOrdersPage() {
 
   const [orders, setOrders] = useState<any[]>([]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<{ id: string; code: string; name: string }[]>([]);
 
   const [formData, setFormData] = useState({
     supplierId: '',
     deliveryDate: '',
     notes: '',
-    products: [{ itemId: null as string | null, name: '', quantity: 1, price: 0 }]
+    products: [{ itemId: null as string | null, name: '', quantity: 1, price: 0 }],
+    inventoryAccountId: '' as string | '',
   });
 
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -41,6 +43,22 @@ export default function PurchaseOrdersPage() {
         return 'Cancelada';
       default:
         return 'Pendiente';
+    }
+  };
+
+  const loadAccounts = async () => {
+    if (!user?.id) {
+      setAccounts([]);
+      return;
+    }
+    try {
+      const data = await chartAccountsService.getAll(user.id);
+      const options = (data || [])
+        .filter((acc: any) => acc.allow_posting !== false && acc.type === 'asset')
+        .map((acc: any) => ({ id: acc.id, code: acc.code, name: acc.name }));
+      setAccounts(options);
+    } catch {
+      setAccounts([]);
     }
   };
 
@@ -125,6 +143,7 @@ export default function PurchaseOrdersPage() {
         deliveryDate: po.expected_date,
         status: mapDbStatusToUi(po.status),
         notes: po.notes || '',
+        inventoryAccountId: po.inventory_account_id || '',
       }));
       setOrders(mapped);
     } catch (error) {
@@ -138,6 +157,7 @@ export default function PurchaseOrdersPage() {
     loadSuppliers();
     loadOrders();
     loadInventoryItems();
+    loadAccounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -195,6 +215,7 @@ export default function PurchaseOrdersPage() {
       total_amount: total,
       status: mapUiStatusToDb(editingOrder?.status || 'Pendiente'),
       notes: formData.notes,
+      inventory_account_id: formData.inventoryAccountId || null,
     };
 
     try {
@@ -224,7 +245,8 @@ export default function PurchaseOrdersPage() {
       supplierId: '',
       deliveryDate: '',
       notes: '',
-      products: [{ itemId: null, name: '', quantity: 1, price: 0 }]
+      products: [{ itemId: null, name: '', quantity: 1, price: 0 }],
+      inventoryAccountId: '',
     });
     setEditingOrder(null);
     setShowModal(false);
@@ -236,7 +258,8 @@ export default function PurchaseOrdersPage() {
       supplierId: order.supplierId || '',
       deliveryDate: order.deliveryDate,
       notes: order.notes,
-      products: order.products
+      products: order.products,
+      inventoryAccountId: order.inventoryAccountId || '',
     });
     setShowModal(true);
   };
@@ -278,7 +301,7 @@ export default function PurchaseOrdersPage() {
         // Si la línea está asociada a un producto de inventario, actualizamos su stock
         if (it.inventory_item_id) {
           await inventoryService.updateItem(String(it.inventory_item_id), {
-            current_stock: (it.current_stock || 0) + quantity,
+            current_stock: ((it.inventory_items as any)?.current_stock || 0) + quantity,
           });
         }
 
@@ -293,6 +316,68 @@ export default function PurchaseOrdersPage() {
           reference: `PO ${orderId}`,
           notes: it.description || null,
         });
+      }
+
+      // Best-effort: registrar asiento contable de recepción de OC (Inventario vs CxP)
+      try {
+        const settings = await accountingSettingsService.get(user.id);
+        const apAccountId = settings?.ap_account_id as string | undefined;
+
+        if (apAccountId) {
+          const inventoryTotals: Record<string, number> = {};
+
+          orderItems.forEach((it: any) => {
+            const qty = Number(it.quantity) || 0;
+            const unitCost = Number(it.unit_cost) || 0;
+            if (qty <= 0 || !it.inventory_item_id) return;
+
+            const invItem = it.inventory_items as any | null;
+            const inventoryAccountId = invItem?.inventory_account_id as string | null;
+            if (!inventoryAccountId) return;
+
+            const lineCost = qty * unitCost;
+            if (lineCost <= 0) return;
+
+            inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
+          });
+
+          const lines: any[] = [];
+          let totalDebit = 0;
+
+          Object.entries(inventoryTotals).forEach(([accountId, amount]) => {
+            const val = Number(amount) || 0;
+            if (val <= 0) return;
+            totalDebit += val;
+            lines.push({
+              account_id: accountId,
+              description: 'Entrada de inventario por OC',
+              debit_amount: val,
+              credit_amount: 0,
+            });
+          });
+
+          if (totalDebit > 0) {
+            lines.push({
+              account_id: apAccountId,
+              description: 'Cuentas por Pagar por OC',
+              debit_amount: 0,
+              credit_amount: totalDebit,
+            });
+
+            const entryPayload = {
+              entry_number: `PO-${orderId}`,
+              entry_date: today,
+              description: `Recepción orden de compra ${orderId}`,
+              reference: orderId,
+              status: 'posted' as const,
+            };
+
+            await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        // eslint-disable-next-line no-console
+        console.error('Error posting purchase order receipt to ledger:', jeError);
       }
 
       await purchaseOrdersService.updateStatus(orderId, mapUiStatusToDb('Recibida'));
@@ -698,6 +783,21 @@ export default function PurchaseOrdersPage() {
                       onChange={(e) => setFormData({...formData, deliveryDate: e.target.value})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Cuenta de Inventario</label>
+                    <select
+                      value={formData.inventoryAccountId}
+                      onChange={(e) => setFormData(prev => ({ ...prev, inventoryAccountId: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin cuenta específica</option>
+                      {accounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
