@@ -119,6 +119,16 @@ const GeneralJournalPage: React.FC = () => {
       const totalDebit = formData.lines.reduce((sum, line) => sum + (line.debit_amount || 0), 0);
       const totalCredit = formData.lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
 
+      // Validar que ninguna línea tenga simultáneamente débito y crédito
+      const invalidLines = formData.lines.filter(line =>
+        (line.debit_amount || 0) > 0 && (line.credit_amount || 0) > 0
+      );
+
+      if (invalidLines.length > 0) {
+        alert('Cada línea debe tener solo débito o solo crédito, no ambos.');
+        return;
+      }
+
       if (Math.abs(totalDebit - totalCredit) > 0.01) {
         alert('Los débitos y créditos deben estar balanceados');
         return;
@@ -298,9 +308,19 @@ const GeneralJournalPage: React.FC = () => {
   const updateLine = (index: number, field: string, value: any) => {
     setFormData(prev => ({
       ...prev,
-      lines: prev.lines.map((line, i) => 
-        i === index ? { ...line, [field]: value } : line
-      )
+      lines: prev.lines.map((line, i) => {
+        if (i !== index) return line;
+
+        // Regla: una línea solo puede tener débito o crédito, nunca ambos
+        if (field === 'debit_amount') {
+          return { ...line, debit_amount: value, credit_amount: 0 };
+        }
+        if (field === 'credit_amount') {
+          return { ...line, credit_amount: value, debit_amount: 0 };
+        }
+
+        return { ...line, [field]: value };
+      })
     }));
   };
 
@@ -367,6 +387,23 @@ const GeneralJournalPage: React.FC = () => {
   const totalCredit = formData.lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
   const isBalanced = Math.abs(totalDebit - totalCredit) < 0.01;
 
+  const hasValidLines = formData.lines.some(line =>
+    line.account_id && ((line.debit_amount || 0) > 0 || (line.credit_amount || 0) > 0)
+  );
+
+  const noInvalidLines = formData.lines.every(line =>
+    !((line.debit_amount || 0) > 0 && (line.credit_amount || 0) > 0)
+  );
+
+  const hasBothSides = totalDebit > 0 && totalCredit > 0;
+
+  const canSave =
+    isBalanced &&
+    hasValidLines &&
+    noInvalidLines &&
+    hasBothSides &&
+    !!formData.description;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -403,8 +440,8 @@ const GeneralJournalPage: React.FC = () => {
                 onClick={() => setShowCreateModal(true)}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
               >
-                <i className="ri-add-line mr-2"></i>
-                Nuevo Asiento
+                <i className="ri-save-line mr-2"></i>
+                Crear Asiento
               </button>
             </div>
           </div>
@@ -795,7 +832,7 @@ const GeneralJournalPage: React.FC = () => {
                 </button>
                 <button
                   onClick={handleCreateEntry}
-                  disabled={!isBalanced || !formData.description}
+                  disabled={!canSave}
                   className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
                   Crear Asiento

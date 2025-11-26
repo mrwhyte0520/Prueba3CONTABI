@@ -2093,6 +2093,50 @@ export const pettyCashService = {
         .select('*')
         .single();
       if (error) throw error;
+
+      // Asiento contable automático al crear el fondo: Debe Caja Chica / Haber Banco
+      try {
+        const amount = Number(fund.initial_amount) || 0;
+        if (amount > 0 && fund.petty_cash_account_id && fund.bank_account_id) {
+          // Obtener cuenta contable del banco
+          const { data: bankData, error: bankError } = await supabase
+            .from('bank_accounts')
+            .select('chart_account_id, bank_name')
+            .eq('id', fund.bank_account_id)
+            .maybeSingle();
+
+          if (!bankError && bankData?.chart_account_id) {
+            const entryDate = new Date().toISOString().split('T')[0];
+            const entryPayload = {
+              entry_number: `PCF-${String(entryDate).slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
+              entry_date: String(entryDate),
+              description: fund.description || `Creación fondo de caja chica ${fund.name || ''}`.trim(),
+              reference: data.id ? String(data.id) : null,
+              status: 'posted' as const,
+            };
+
+            const lines = [
+              {
+                account_id: fund.petty_cash_account_id as string,
+                description: 'Asignación inicial de Caja Chica',
+                debit_amount: amount,
+                credit_amount: 0,
+              },
+              {
+                account_id: bankData.chart_account_id as string,
+                description: `Banco ${bankData.bank_name || ''}`.trim(),
+                debit_amount: 0,
+                credit_amount: amount,
+              },
+            ];
+
+            await journalEntriesService.createWithLines(userId, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        console.error('Error creando asiento de creación de fondo de caja chica:', jeError);
+      }
+
       return data;
     } catch (error) {
       console.error('pettyCashService.createFund error', error);
@@ -2105,7 +2149,6 @@ export const pettyCashService = {
       const payload = {
         ...expense,
         user_id: userId,
-        status: expense.status || 'pending',
       };
       const { data, error } = await supabase
         .from('petty_cash_expenses')
@@ -2135,6 +2178,50 @@ export const pettyCashService = {
         .select('*')
         .single();
       if (error) throw error;
+
+      // Asiento contable automático al aprobar gasto: Debe Gasto / Haber Caja Chica
+      try {
+        const amount = Number(data.amount) || 0;
+        if (amount > 0 && data.expense_account_id && data.fund_id) {
+          // Obtener fondo para saber la cuenta de caja chica
+          const { data: fundData, error: fundError } = await supabase
+            .from('petty_cash_funds')
+            .select('id, petty_cash_account_id')
+            .eq('id', data.fund_id)
+            .maybeSingle();
+
+          if (!fundError && fundData?.petty_cash_account_id) {
+            const entryDate = data.expense_date || new Date().toISOString().split('T')[0];
+            const entryPayload = {
+              entry_number: `PCE-${String(entryDate).slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
+              entry_date: String(entryDate),
+              description: data.description || 'Gasto de caja chica',
+              reference: data.id ? String(data.id) : null,
+              status: 'posted' as const,
+            };
+
+            const lines = [
+              {
+                account_id: data.expense_account_id as string,
+                description: 'Gasto de Caja Chica',
+                debit_amount: amount,
+                credit_amount: 0,
+              },
+              {
+                account_id: fundData.petty_cash_account_id as string,
+                description: `Salida de Caja Chica fondo ${fundData.id}`,
+                debit_amount: 0,
+                credit_amount: amount,
+              },
+            ];
+
+            await journalEntriesService.createWithLines(userId, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        console.error('Error creando asiento de gasto de caja chica:', jeError);
+      }
+
       return data;
     } catch (error) {
       console.error('pettyCashService.approveExpense error', error);

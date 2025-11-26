@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 import { useAuth } from '../../../hooks/useAuth';
-import { pettyCashService, chartAccountsService, pettyCashCategoriesService } from '../../../services/database';
+import { pettyCashService, chartAccountsService, pettyCashCategoriesService, bankAccountsService } from '../../../services/database';
 
 interface PettyCashFund {
   id: string;
@@ -57,6 +57,7 @@ const PettyCashPage: React.FC = () => {
   const [selectedExpense, setSelectedExpense] = useState<PettyCashExpense | null>(null);
 
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<any | null>(null);
@@ -76,12 +77,13 @@ const PettyCashPage: React.FC = () => {
       if (!user) return;
       try {
         setLoadingFunds(true);
-        const [fundsData, accountsData, expensesData, reimbursementsData, categoriesData] = await Promise.all([
+        const [fundsData, accountsData, expensesData, reimbursementsData, categoriesData, bankAccountsData] = await Promise.all([
           pettyCashService.getFunds(user.id),
           chartAccountsService.getAll(user.id),
           pettyCashService.getExpenses(user.id),
           pettyCashService.getReimbursements(user.id),
           pettyCashCategoriesService.getAll(user.id),
+          bankAccountsService.getAll(user.id),
         ]);
 
         const mappedFunds: PettyCashFund[] = (fundsData || []).map((f: any) => ({
@@ -118,6 +120,7 @@ const PettyCashPage: React.FC = () => {
         }
 
         setAccounts(accountsData || []);
+        setBankAccounts(bankAccountsData || []);
         setCategories(categoriesData || []);
 
         const mappedExpenses: PettyCashExpense[] = (expensesData || []).map((e: any) => ({
@@ -157,7 +160,7 @@ const PettyCashPage: React.FC = () => {
     loadData();
   }, [user]);
 
-  const handleCreateFund = async (e: React.FormEvent) => {
+  const handleSubmitFund = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
 
@@ -169,50 +172,80 @@ const PettyCashPage: React.FC = () => {
     const pettyCashAccountId = String(formData.get('pettyCashAccountId') || '');
     const bankAccountId = String(formData.get('bankAccountId') || '');
 
-    if (!pettyCashAccountId || !bankAccountId) {
-      alert('Debe seleccionar la cuenta de Caja Chica y la cuenta de Banco.');
+    if (!name) {
+      alert('Debe indicar el nombre del fondo.');
       return;
     }
 
     try {
-      const created = await pettyCashService.createFund(user.id, {
-        name,
-        location,
-        custodian,
-        initial_amount: initialAmount,
-        petty_cash_account_id: pettyCashAccountId,
-        bank_account_id: bankAccountId,
-      });
+      if (selectedFund) {
+        // Edición básica: solo nombre, ubicación y custodio
+        const updated = await pettyCashService.updateFund(user.id, selectedFund.id, {
+          name,
+          location,
+          custodian,
+        });
 
-      const mapped: PettyCashFund = {
-        id: created.id,
-        name: created.name,
-        location: created.location || '',
-        custodian: created.custodian || '',
-        initialAmount: Number(created.initial_amount) || 0,
-        currentBalance: Number(created.current_balance) || 0,
-        status: (created.status as 'active' | 'inactive') || 'active',
-        createdAt: created.created_at ? String(created.created_at).split('T')[0] : '',
-        pettyCashAccountId: created.petty_cash_account_id || undefined,
-        bankAccountId: created.bank_account_id || undefined,
-      };
+        setFunds(prev => prev.map(f => (
+          f.id === selectedFund.id
+            ? {
+                ...f,
+                name: updated.name,
+                location: updated.location || '',
+                custodian: updated.custodian || '',
+              }
+            : f
+        )));
+        setSelectedFund(null);
+        setShowFundModal(false);
+      } else {
+        // Creación de fondo (usa cuentas y monto)
+        if (!pettyCashAccountId || !bankAccountId) {
+          alert('Debe seleccionar la cuenta de Caja Chica y la cuenta de Banco.');
+          return;
+        }
 
-      setFunds(prev => [mapped, ...prev]);
-      setShowFundModal(false);
+        const created = await pettyCashService.createFund(user.id, {
+          name,
+          location,
+          custodian,
+          initial_amount: initialAmount,
+          petty_cash_account_id: pettyCashAccountId,
+          bank_account_id: bankAccountId,
+        });
+
+        const mapped: PettyCashFund = {
+          id: created.id,
+          name: created.name,
+          location: created.location || '',
+          custodian: created.custodian || '',
+          initialAmount: Number(created.initial_amount) || 0,
+          currentBalance: Number(created.current_balance) || 0,
+          status: (created.status as 'active' | 'inactive') || 'active',
+          createdAt: created.created_at ? String(created.created_at).split('T')[0] : '',
+          pettyCashAccountId: created.petty_cash_account_id || undefined,
+          bankAccountId: created.bank_account_id || undefined,
+        };
+
+        setFunds(prev => [mapped, ...prev]);
+        setShowFundModal(false);
+      }
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.error('Error creating petty cash fund:', error);
-      alert('Error al crear el fondo de caja chica');
+      console.error('Error saving petty cash fund:', error);
+      alert('Error al guardar el fondo de caja chica');
     }
   };
 
-  const pettyCashAccounts = accounts.filter(
-    acc => acc.allowPosting && acc.type === 'asset' && !acc.isBankAccount
-  );
+  const pettyCashAccounts = accounts.filter((acc) => {
+    if (acc.allow_posting === false || acc.type !== 'asset') return false;
 
-  const bankAccounts = accounts.filter(
-    acc => acc.allowPosting && acc.type === 'asset' && acc.isBankAccount
-  );
+    // Caja chica: activo que NO esté marcado explícitamente como banco
+    const isFlaggedBank = acc.is_bank_account === true;
+    return !isFlaggedBank;
+  });
+
+  // bankAccounts state already contains real bank_accounts rows loaded above
 
   // Cuentas permitidas para gastos de Caja Chica:
   // - Cuentas por cobrar Accionistas
@@ -220,7 +253,7 @@ const PettyCashPage: React.FC = () => {
   // - Categoría 5 (Costos) -> type 'cost'
   // - Categoría 6 (Gastos) -> type 'expense'
   const expenseAccounts = accounts.filter((acc) => {
-    if (!acc.allowPosting) return false;
+    if (acc.allow_posting === false) return false;
 
     if (acc.type === 'expense' || acc.type === 'cost') return true;
 
@@ -613,7 +646,10 @@ const PettyCashPage: React.FC = () => {
                 <div className="flex justify-between items-center">
                   <h2 className="text-lg font-semibold text-gray-900">Fondos de Caja Chica</h2>
                   <button
-                    onClick={() => setShowFundModal(true)}
+                    onClick={() => {
+                      setSelectedFund(null);
+                      setShowFundModal(true);
+                    }}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                   >
                     <i className="ri-add-line mr-2"></i>
@@ -660,10 +696,29 @@ const PettyCashPage: React.FC = () => {
                       </div>
 
                       <div className="mt-4 flex space-x-2">
-                        <button className="flex-1 bg-blue-600 text-white py-2 px-3 rounded text-sm hover:bg-blue-700 transition-colors whitespace-nowrap">
+                        <button
+                          className="flex-1 bg-blue-600 text-white py-2 px-3 rounded text-sm hover:bg-blue-700 transition-colors whitespace-nowrap"
+                          onClick={() => {
+                            const details = [
+                              `Fondo: ${fund.name}`,
+                              `Ubicación: ${fund.location || 'N/D'}`,
+                              `Custodio: ${fund.custodian || 'N/D'}`,
+                              `Monto inicial: RD$${fund.initialAmount.toLocaleString()}`,
+                              `Balance actual: RD$${fund.currentBalance.toLocaleString()}`,
+                              `Estado: ${fund.status === 'active' ? 'Activo' : 'Inactivo'}`,
+                            ].join('\n');
+                            alert(details);
+                          }}
+                        >
                           Ver Detalles
                         </button>
-                        <button className="flex-1 bg-gray-600 text-white py-2 px-3 rounded text-sm hover:bg-gray-700 transition-colors whitespace-nowrap">
+                        <button
+                          className="flex-1 bg-gray-600 text-white py-2 px-3 rounded text-sm hover:bg-gray-700 transition-colors whitespace-nowrap"
+                          onClick={() => {
+                            setSelectedFund(fund);
+                            setShowFundModal(true);
+                          }}
+                        >
                           Editar
                         </button>
                       </div>
@@ -945,9 +1000,11 @@ const PettyCashPage: React.FC = () => {
         {showFundModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-full max-w-md">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Crear Nuevo Fondo</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                {selectedFund ? 'Editar Fondo' : 'Crear Nuevo Fondo'}
+              </h3>
               
-              <form onSubmit={handleCreateFund} className="space-y-4">
+              <form onSubmit={handleSubmitFund} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Nombre del Fondo
@@ -956,6 +1013,7 @@ const PettyCashPage: React.FC = () => {
                     type="text"
                     name="name"
                     required
+                    defaultValue={selectedFund?.name || ''}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Ej: Caja Chica Oficina Principal"
                   />
@@ -969,6 +1027,7 @@ const PettyCashPage: React.FC = () => {
                     type="text"
                     name="location"
                     required
+                    defaultValue={selectedFund?.location || ''}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Ej: Santo Domingo - Oficina Central"
                   />
@@ -982,6 +1041,7 @@ const PettyCashPage: React.FC = () => {
                     type="text"
                     name="custodian"
                     required
+                    defaultValue={selectedFund?.custodian || ''}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Nombre del responsable"
                   />
@@ -997,7 +1057,9 @@ const PettyCashPage: React.FC = () => {
                     required
                     min="0"
                     step="0.01"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    defaultValue={selectedFund ? selectedFund.initialAmount : ''}
+                    disabled={!!selectedFund}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
                     placeholder="0.00"
                   />
                 </div>
@@ -1009,14 +1071,18 @@ const PettyCashPage: React.FC = () => {
                   <select
                     name="pettyCashAccountId"
                     required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    defaultValue={selectedFund?.pettyCashAccountId || ''}
+                    disabled={!!selectedFund}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8 disabled:bg-gray-100 disabled:text-gray-500"
                   >
                     <option value="">Seleccionar cuenta</option>
-                    {pettyCashAccounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.code} - {acc.name}
-                      </option>
-                    ))}
+                    {pettyCashAccounts
+                      .filter(acc => acc.code || acc.name)
+                      .map(acc => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.code || ''} - {acc.name || ''}
+                        </option>
+                      ))}
                   </select>
                 </div>
 
@@ -1027,14 +1093,23 @@ const PettyCashPage: React.FC = () => {
                   <select
                     name="bankAccountId"
                     required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    defaultValue={selectedFund?.bankAccountId || ''}
+                    disabled={!!selectedFund}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8 disabled:bg-gray-100 disabled:text-gray-500"
                   >
                     <option value="">Seleccionar cuenta</option>
-                    {bankAccounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.code} - {acc.name}
-                      </option>
-                    ))}
+                    {bankAccounts
+                      .map((acc: any) => {
+                        const code = acc.code || '';
+                        const name = acc.name || acc.bank_name || '';
+                        return { ...acc, __display: `${code}${code && name ? ' - ' : ''}${name}` };
+                      })
+                      .filter((acc: any) => acc.__display.trim().length > 0)
+                      .map((acc: any) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.__display}
+                        </option>
+                      ))}
                   </select>
                 </div>
 
