@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { inventoryService, settingsService } from '../../services/database';
+import { inventoryService, settingsService, chartAccountsService, journalEntriesService } from '../../services/database';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 
@@ -13,6 +13,7 @@ export default function InventoryPage() {
   const [items, setItems] = useState<any[]>([]);
   const [movements, setMovements] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<{ id: string; code: string; name: string; type?: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('');
@@ -31,6 +32,7 @@ export default function InventoryPage() {
     if (user) {
       loadData();
       loadWarehouses();
+      loadAccounts();
     } else {
       // Sin usuario: limpiar datos (no usar datos de ejemplo)
       setItems([]);
@@ -80,6 +82,54 @@ export default function InventoryPage() {
       setMovements([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteWarehouseProducts = async (warehouse: any) => {
+    const productsInWarehouse = items.filter((item) => item.warehouse_id === warehouse.id);
+    const productCount = productsInWarehouse.length;
+
+    if (productCount === 0) {
+      alert('Este almacén no tiene productos asignados.');
+      return;
+    }
+
+    if (!confirm(`¿Eliminar definitivamente los ${productCount} productos de este almacén? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+
+    try {
+      for (const product of productsInWarehouse) {
+        await inventoryService.deleteItem(product.id);
+      }
+
+      if (user) {
+        await loadData();
+      }
+      await loadWarehouses();
+      alert('Productos eliminados del almacén correctamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error deleting warehouse products:', error);
+      alert('No se pudieron eliminar todos los productos del almacén');
+    }
+  };
+
+  const loadAccounts = async () => {
+    try {
+      if (!user?.id) {
+        setAccounts([]);
+        return;
+      }
+      const data = await chartAccountsService.getAll(user.id);
+      const options = (data || [])
+        .filter((acc: any) => acc.allow_posting !== false)
+        .map((acc: any) => ({ id: acc.id, code: acc.code, name: acc.name, type: acc.type }));
+      setAccounts(options);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading accounts:', error);
+      setAccounts([]);
     }
   };
 
@@ -202,11 +252,93 @@ export default function InventoryPage() {
         }
       } else if (modalType === 'movement') {
         if (user) {
-          await inventoryService.createMovement(user!.id, {
-            ...formData,
-            movement_date: formData.movement_date || new Date().toISOString().split('T')[0],
-            total_cost: (formData.quantity || 0) * (formData.unit_cost || 0)
+          const movementDate = formData.movement_date || new Date().toISOString().split('T')[0];
+          const quantity = formData.quantity || 0;
+          const unitCost = formData.unit_cost || 0;
+          const totalCost = quantity * unitCost;
+
+          // No enviar account_id a la tabla inventory_movements (solo se usa para el asiento)
+          const { account_id, ...movementRest } = formData;
+
+          const createdMovement = await inventoryService.createMovement(user!.id, {
+            ...movementRest,
+            movement_date: movementDate,
+            total_cost: totalCost,
           });
+
+          // Best-effort: registrar asiento contable del movimiento de inventario
+          try {
+            const item = items.find((it) => String(it.id) === String(formData.item_id));
+            const inventoryAccountId = item?.inventory_account_id as string | undefined;
+            const counterAccountId = account_id as string | undefined;
+
+            if (inventoryAccountId && counterAccountId && totalCost > 0 && formData.movement_type) {
+              const lines: any[] = [];
+
+              if (formData.movement_type === 'entry') {
+                lines.push(
+                  {
+                    account_id: inventoryAccountId,
+                    description: 'Entrada manual de inventario',
+                    debit_amount: totalCost,
+                    credit_amount: 0,
+                  },
+                  {
+                    account_id: counterAccountId,
+                    description: 'Contrapartida entrada inventario',
+                    debit_amount: 0,
+                    credit_amount: totalCost,
+                  },
+                );
+              } else if (formData.movement_type === 'exit') {
+                lines.push(
+                  {
+                    account_id: counterAccountId,
+                    description: 'Gasto por salida de inventario',
+                    debit_amount: totalCost,
+                    credit_amount: 0,
+                  },
+                  {
+                    account_id: inventoryAccountId,
+                    description: 'Salida manual de inventario',
+                    debit_amount: 0,
+                    credit_amount: totalCost,
+                  },
+                );
+              } else if (formData.movement_type === 'adjustment') {
+                // Para ajustes, tratamos como entrada (aumento) por ahora
+                lines.push(
+                  {
+                    account_id: inventoryAccountId,
+                    description: 'Ajuste de inventario',
+                    debit_amount: totalCost,
+                    credit_amount: 0,
+                  },
+                  {
+                    account_id: counterAccountId,
+                    description: 'Contrapartida ajuste inventario',
+                    debit_amount: 0,
+                    credit_amount: totalCost,
+                  },
+                );
+              }
+
+              if (lines.length > 0) {
+                const entryPayload = {
+                  entry_number: `INV-MOV-${createdMovement.id}`,
+                  entry_date: movementDate,
+                  description: `Movimiento de inventario ${formData.movement_type}`,
+                  reference: createdMovement.id ? String(createdMovement.id) : null,
+                  status: 'posted' as const,
+                };
+
+                await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+              }
+            }
+          } catch (jeError) {
+            // eslint-disable-next-line no-console
+            console.error('Error posting inventory movement to ledger', jeError);
+          }
         }
       } else if (modalType === 'warehouse') {
         if (selectedItem && selectedItem.id) {
@@ -830,6 +962,14 @@ export default function InventoryPage() {
                   <span className="hidden sm:inline">Ver productos</span>
                 </button>
                 <button
+                  onClick={() => handleDeleteWarehouseProducts(warehouse)}
+                  className="text-orange-600 hover:text-orange-900 text-sm flex items-center gap-1"
+                  title="Eliminar productos de este almacén"
+                >
+                  <i className="ri-delete-bin-2-line"></i>
+                  <span className="hidden sm:inline">Eliminar productos</span>
+                </button>
+                <button
                   onClick={() => handleOpenModal('warehouse', warehouse)}
                   className="text-blue-600 hover:text-blue-900"
                   title="Editar"
@@ -1263,7 +1403,15 @@ export default function InventoryPage() {
                   </label>
                   <select
                     value={formData.item_id || ''}
-                    onChange={(e) => setFormData({...formData, item_id: e.target.value})}
+                    onChange={(e) => {
+                      const selectedId = e.target.value;
+                      const selectedItem = items.find((it) => String(it.id) === String(selectedId));
+                      setFormData({
+                        ...formData,
+                        item_id: selectedId,
+                        unit_cost: selectedItem?.cost_price ?? formData.unit_cost,
+                      });
+                    }}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8"
                     required
                   >
@@ -1290,6 +1438,37 @@ export default function InventoryPage() {
                     <option value="exit">Salida</option>
                     <option value="transfer">Transferencia</option>
                     <option value="adjustment">Ajuste</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Cuenta contable (contrapartida)
+                  </label>
+                  <select
+                    value={formData.account_id || ''}
+                    onChange={(e) => setFormData({ ...formData, account_id: e.target.value || null })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 pr-8"
+                    required
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {accounts
+                      .filter((acc) => {
+                        const t = (acc.type || '').toLowerCase();
+                        if (formData.movement_type === 'entry' || formData.movement_type === 'adjustment') {
+                          // Permitir Pasivo, Patrimonio e Ingresos como contrapartida
+                          return t === 'liability' || t === 'equity' || t === 'income';
+                        }
+                        if (formData.movement_type === 'exit') {
+                          // Permitir Gastos / Costos
+                          return t === 'expense' || acc.code?.startsWith('6') || acc.code?.startsWith('7');
+                        }
+                        return true;
+                      })
+                      .map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div>
