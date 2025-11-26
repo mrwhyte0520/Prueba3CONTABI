@@ -7576,6 +7576,20 @@ export const settingsService = {
     }
   },
 
+  async deleteWarehouse(id: string) {
+    try {
+      const { error } = await supabase
+        .from('warehouses')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error deleting warehouse:', error);
+      throw error;
+    }
+  },
+
   // Payroll Settings
   async getPayrollSettings() {
     try {

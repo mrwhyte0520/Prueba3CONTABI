@@ -83,6 +83,25 @@ export default function InventoryPage() {
     }
   };
 
+  const handleDeleteWarehouse = async (warehouse: any) => {
+    const productCount = items.filter((item) => item.warehouse_id === warehouse.id).length;
+    if (productCount > 0) {
+      alert('No puedes eliminar este almacén porque tiene productos asignados. Mueve o elimina los productos primero.');
+      return;
+    }
+
+    if (!confirm('¿Eliminar este almacén? Esta acción no se puede deshacer.')) return;
+
+    try {
+      await settingsService.deleteWarehouse(warehouse.id);
+      await loadWarehouses();
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error deleting warehouse:', error);
+      alert('No se pudo eliminar el almacén');
+    }
+  };
+
   const loadWarehouses = async () => {
     try {
       const data = await settingsService.getWarehouses();
@@ -290,8 +309,9 @@ export default function InventoryPage() {
                          (statusFilter === 'active' && item.is_active) ||
                          (statusFilter === 'inactive' && !item.is_active) ||
                          (statusFilter === 'low_stock' && item.current_stock <= item.minimum_stock);
-    
-    return matchesSearch && matchesCategory && matchesStatus;
+    const matchesWarehouse = !warehouseFilter || item.warehouse_id === warehouseFilter;
+
+    return matchesSearch && matchesCategory && matchesStatus && matchesWarehouse;
   });
 
   const filteredMovements = movements.filter(movement => {
@@ -799,11 +819,29 @@ export default function InventoryPage() {
               </div>
               <div className="flex space-x-2">
                 <button
+                  onClick={() => {
+                    setWarehouseFilter(warehouse.id);
+                    setActiveTab('products');
+                  }}
+                  className="text-green-600 hover:text-green-900 text-sm flex items-center gap-1"
+                  title="Ver productos de este almacén"
+                >
+                  <i className="ri-eye-line"></i>
+                  <span className="hidden sm:inline">Ver productos</span>
+                </button>
+                <button
                   onClick={() => handleOpenModal('warehouse', warehouse)}
                   className="text-blue-600 hover:text-blue-900"
                   title="Editar"
                 >
                   <i className="ri-edit-line"></i>
+                </button>
+                <button
+                  onClick={() => handleDeleteWarehouse(warehouse)}
+                  className="text-red-600 hover:text-red-900"
+                  title="Eliminar almacén"
+                >
+                  <i className="ri-delete-bin-line"></i>
                 </button>
               </div>
             </div>
