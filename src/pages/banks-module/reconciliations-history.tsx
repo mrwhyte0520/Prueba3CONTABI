@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
 import { bankReconciliationsListService } from '../../services/database';
@@ -21,6 +22,7 @@ interface Reconciliation {
 
 export default function BankReconciliationsHistoryPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [reconciliations, setReconciliations] = useState<Reconciliation[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +102,7 @@ export default function BankReconciliationsHistoryPage() {
                     <th className="px-4 py-2 text-right font-medium text-gray-700">Saldo Libro</th>
                     <th className="px-4 py-2 text-right font-medium text-gray-700">Diferencia</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-700">Estado</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-700">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -142,6 +145,23 @@ export default function BankReconciliationsHistoryPage() {
                           >
                             {status === 'pending' ? 'Pendiente' : status === 'closed' ? 'Cerrada' : status}
                           </span>
+                        </td>
+                        <td className="px-4 py-2 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!rec.bank_account_id || !rec.reconciliation_date) return;
+                              const params = new URLSearchParams();
+                              params.set('bank_account_id', rec.bank_account_id);
+                              params.set('date', rec.reconciliation_date);
+                              params.set('reconciliation_id', rec.id);
+                              navigate(`/banks-module/reconciliation?${params.toString()}`);
+                            }}
+                            className="inline-flex items-center px-3 py-1.5 rounded-full border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800 shadow-sm transition-colors"
+                          >
+                            <i className="ri-search-eye-line mr-1.5 text-xs" />
+                            <span>Ver conciliación</span>
+                          </button>
                         </td>
                       </tr>
                     );

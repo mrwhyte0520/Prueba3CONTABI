@@ -4,7 +4,13 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { apInvoicesService, supplierPaymentsService, suppliersService } from '../../../services/database';
+import {
+  apInvoicesService,
+  supplierPaymentsService,
+  suppliersService,
+  bankCurrenciesService,
+  bankExchangeRatesService,
+} from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -24,6 +30,7 @@ export default function ReportsPage() {
   const [payments, setPayments] = useState<any[]>([]);
   const [agingData, setAgingData] = useState<any[]>([]);
   const [paymentsData, setPaymentsData] = useState<any[]>([]);
+  const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
 
   const loadSuppliers = async () => {
     if (!user?.id) {
@@ -70,14 +77,36 @@ export default function ReportsPage() {
     }
   };
 
+  const loadCurrencies = async () => {
+    if (!user?.id) {
+      setBaseCurrencyCode('DOP');
+      return;
+    }
+    try {
+      const rows = await bankCurrenciesService.getAll(user.id);
+      const mapped = (rows || []).map((c: any) => ({
+        code: c.code as string,
+        is_base: !!c.is_base,
+        is_active: c.is_active !== false,
+      })).filter((c: any) => c.is_active);
+      const base = mapped.find((c: any) => c.is_base) || mapped[0];
+      setBaseCurrencyCode(base?.code || 'DOP');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading currencies for AP reports', error);
+      setBaseCurrencyCode('DOP');
+    }
+  };
+
   useEffect(() => {
     loadSuppliers();
     loadApInvoices();
     loadPayments();
+    loadCurrencies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const generateReport = () => {
+  const generateReport = async () => {
     if (!user?.id) {
       alert('Debes iniciar sesión para generar reportes');
       return;
@@ -89,6 +118,8 @@ export default function ReportsPage() {
 
     if (reportType === 'aging') {
       const bySupplier: Record<string, any> = {};
+      const baseCode = baseCurrencyCode || 'DOP';
+      const uid = user.id;
 
       // Mapa de pagos por número de factura (supplier_payments.invoice_number)
       const paymentsByInvoice = payments.reduce<Record<string, number>>((acc, p: any) => {
@@ -102,7 +133,7 @@ export default function ReportsPage() {
         return acc;
       }, {});
 
-      apInvoices.forEach((inv: any) => {
+      for (const inv of apInvoices as any[]) {
         if (inv.status === 'cancelled') return;
 
         const invoiceDate = inv.invoice_date ? new Date(inv.invoice_date) : null;
@@ -138,19 +169,39 @@ export default function ReportsPage() {
           days = Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
         }
 
-        bySupplier[supplierId].total += outstanding;
-        if (!due || days <= 0) {
-          bySupplier[supplierId].current += outstanding;
-        } else if (days <= 30) {
-          bySupplier[supplierId].days1_30 += outstanding;
-        } else if (days <= 60) {
-          bySupplier[supplierId].days31_60 += outstanding;
-        } else if (days <= 90) {
-          bySupplier[supplierId].days61_90 += outstanding;
-        } else {
-          bySupplier[supplierId].over90 += outstanding;
+        const currency = (inv.currency as string) || baseCode;
+        let outstandingBase = outstanding;
+
+        if (currency !== baseCode) {
+          try {
+            const rate = await bankExchangeRatesService.getEffectiveRate(
+              uid,
+              currency,
+              baseCode,
+              (inv.invoice_date as string) || startDate,
+            );
+            if (rate && rate > 0) {
+              outstandingBase = outstanding * rate;
+            }
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('Error calculando equivalente en moneda base para factura CxP (aging)', error);
+          }
         }
-      });
+
+        bySupplier[supplierId].total += outstandingBase;
+        if (!due || days <= 0) {
+          bySupplier[supplierId].current += outstandingBase;
+        } else if (days <= 30) {
+          bySupplier[supplierId].days1_30 += outstandingBase;
+        } else if (days <= 60) {
+          bySupplier[supplierId].days31_60 += outstandingBase;
+        } else if (days <= 90) {
+          bySupplier[supplierId].days61_90 += outstandingBase;
+        } else {
+          bySupplier[supplierId].over90 += outstandingBase;
+        }
+      }
 
       setAgingData(Object.values(bySupplier));
     } else {

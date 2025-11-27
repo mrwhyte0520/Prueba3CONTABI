@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, bankCreditsService, bankCurrenciesService, chartAccountsService } from '../../services/database';
+import { bankAccountsService, bankCreditsService, chartAccountsService } from '../../services/database';
 
 interface BankCredit {
   id: string;
@@ -21,9 +21,10 @@ export default function BankCreditsPage() {
   const [credits, setCredits] = useState<BankCredit[]>([]);
   const [banks, setBanks] = useState<any[]>([]);
   const [accountsById, setAccountsById] = useState<Record<string, { id: string; code: string; name: string }>>({});
-  const [currencies, setCurrencies] = useState<any[]>([]);
   const [loanAccounts, setLoanAccounts] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [postableAccounts, setPostableAccounts] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [form, setForm] = useState({
+    tipoCredito: 'loan',
     banco: '',
     cuentaBanco: '',
     numeroCredito: '',
@@ -37,6 +38,26 @@ export default function BankCreditsPage() {
 
   const handleChange = (field: keyof typeof form, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleBankChange = (bankId: string) => {
+    setForm(prev => {
+      const next = { ...prev, banco: bankId };
+      const selectedBank = (banks || []).find((b: any) => b.id === bankId);
+      if (selectedBank) {
+        const accountId = selectedBank.chart_account_id as string | undefined;
+        if (accountId) {
+          const acc = accountsById[accountId];
+          if (acc) {
+            next.cuentaBanco = acc.code;
+          }
+        }
+        if (selectedBank.currency) {
+          next.moneda = selectedBank.currency;
+        }
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -74,6 +95,7 @@ export default function BankCreditsPage() {
 
         const map: Record<string, { id: string; code: string; name: string }> = {};
         const loans: Array<{ id: string; code: string; name: string }> = [];
+        const postables: Array<{ id: string; code: string; name: string }> = [];
 
         (chartRows || []).forEach((acc: any) => {
           const mapped = {
@@ -83,6 +105,10 @@ export default function BankCreditsPage() {
           };
           map[acc.id] = mapped;
 
+          if (acc.allowPosting && acc.isActive !== false) {
+            postables.push(mapped);
+          }
+
           if (acc.allowPosting && acc.isActive !== false && acc.type === 'liability') {
             loans.push(mapped);
           }
@@ -90,6 +116,7 @@ export default function BankCreditsPage() {
 
         setAccountsById(map);
         setLoanAccounts(loans);
+        setPostableAccounts(postables);
       } catch (error) {
         console.error('Error cargando bancos y cuentas contables para créditos', error);
       }
@@ -98,26 +125,7 @@ export default function BankCreditsPage() {
     loadBanksAndAccounts();
   }, [user?.id]);
 
-  useEffect(() => {
-    const loadCurrencies = async () => {
-      if (!user?.id) return;
-      try {
-        const data = await bankCurrenciesService.getAll(user.id);
-        const list = data || [];
-        setCurrencies(list);
-
-        if (list.length > 0) {
-          const base = list.find((c: any) => c.is_base);
-          const firstCode = (base || list[0]).code || 'DOP';
-          setForm(prev => ({ ...prev, moneda: prev.moneda || firstCode }));
-        }
-      } catch (error) {
-        console.error('Error cargando monedas para créditos bancarios', error);
-      }
-    };
-
-    loadCurrencies();
-  }, [user?.id]);
+  // Moneda se toma de la configuración del banco seleccionado; no es necesario cargar catálogo de monedas aquí
 
   const handleAddCredit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,6 +192,17 @@ export default function BankCreditsPage() {
     }
   };
 
+  const selectedBank = (banks || []).find((b: any) => b.id === form.banco);
+  const bankAccountLabel = (() => {
+    if (selectedBank?.chart_account_id) {
+      const acc = accountsById[selectedBank.chart_account_id];
+      if (acc) {
+        return `${acc.code} - ${acc.name}`;
+      }
+    }
+    return form.cuentaBanco;
+  })();
+
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6">
@@ -204,7 +223,7 @@ export default function BankCreditsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Banco</label>
               <select
                 value={form.banco}
-                onChange={(e) => handleChange('banco', e.target.value)}
+                onChange={(e) => handleBankChange(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Seleccione un banco...</option>
@@ -215,14 +234,26 @@ export default function BankCreditsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de Pasivo del Préstamo (Crédito)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Crédito</label>
+              <select
+                value={form.tipoCredito}
+                onChange={(e) => handleChange('tipoCredito', e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="loan">Préstamo / Línea de crédito</option>
+                <option value="general">Crédito de estado de cuenta (intereses, ajustes, etc.)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Contable de Contrapartida (Crédito)</label>
               <select
                 value={form.cuentaPasivo}
                 onChange={(e) => handleChange('cuentaPasivo', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Seleccione una cuenta...</option>
-                {loanAccounts.map((acc) => (
+                {(form.tipoCredito === 'loan' ? loanAccounts : postableAccounts).map((acc) => (
                   <option key={acc.id} value={acc.code}>
                     {acc.code} - {acc.name}
                   </option>
@@ -232,28 +263,13 @@ export default function BankCreditsPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de Banco (Cuenta Contable)</label>
-              <select
-                value={form.cuentaBanco}
-                onChange={(e) => handleChange('cuentaBanco', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Seleccione una cuenta...</option>
-                {banks
-                  .filter((b: any) => b.id === form.banco && b.chart_account_id)
-                  .map((b: any) => {
-                    const acc = accountsById[b.chart_account_id];
-                    if (!acc) return null;
-                    const value = acc.code;
-                    if (form.cuentaBanco !== value) {
-                      setForm(prev => ({ ...prev, cuentaBanco: value }));
-                    }
-                    return (
-                      <option key={acc.id} value={value}>
-                        {acc.code} - {acc.name}
-                      </option>
-                    );
-                  })}
-              </select>
+              <input
+                type="text"
+                value={bankAccountLabel || ''}
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+                placeholder="Se asigna automáticamente según el banco seleccionado"
+              />
             </div>
 
             <div>
@@ -269,20 +285,12 @@ export default function BankCreditsPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
-              <select
+              <input
+                type="text"
                 value={form.moneda}
-                onChange={(e) => handleChange('moneda', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                {currencies.length === 0 && (
-                  <option value="DOP">Peso Dominicano (DOP)</option>
-                )}
-                {currencies.map((c: any) => (
-                  <option key={c.id} value={c.code}>
-                    {c.name} ({c.code})
-                  </option>
-                ))}
-              </select>
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+              />
             </div>
 
             <div>

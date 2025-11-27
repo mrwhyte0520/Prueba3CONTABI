@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, receiptsService, creditDebitNotesService, customerAdvancesService } from '../../../services/database';
+import {
+  customersService,
+  invoicesService,
+  receiptsService,
+  creditDebitNotesService,
+  customerAdvancesService,
+  bankCurrenciesService,
+  bankExchangeRatesService,
+} from '../../../services/database';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
@@ -22,6 +30,9 @@ interface ReportInvoice {
   balance: number;
   daysOverdue: number;
   dueDate: string;
+  currency: string;
+  baseAmount?: number | null;
+  baseBalance?: number | null;
 }
 
 interface ReportPayment {
@@ -65,18 +76,31 @@ export default function ReportsPage() {
    const [creditNotes, setCreditNotes] = useState<ReportNote[]>([]);
    const [debitNotes, setDebitNotes] = useState<ReportNote[]>([]);
    const [advances, setAdvances] = useState<ReportAdvance[]>([]);
+  const [currencies, setCurrencies] = useState<
+    Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>
+  >([]);
+  const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
 
   useEffect(() => {
     const loadData = async () => {
       if (!user?.id) return;
       try {
-        const [customerRows, invoiceRows, receiptRows, creditRows, debitRows, advanceRows] = await Promise.all([
+        const [
+          customerRows,
+          invoiceRows,
+          receiptRows,
+          creditRows,
+          debitRows,
+          advanceRows,
+          currencyRows,
+        ] = await Promise.all([
           customersService.getAll(user.id),
           invoicesService.getAll(user.id),
           receiptsService.getAll(user.id),
           creditDebitNotesService.getAll(user.id, 'credit'),
           creditDebitNotesService.getAll(user.id, 'debit'),
           customerAdvancesService.getAll(user.id),
+          bankCurrenciesService.getAll(user.id),
         ]);
 
         const mappedCustomers: ReportCustomer[] = (customerRows || []).map((c: any) => ({
@@ -91,7 +115,22 @@ export default function ReportsPage() {
               : 'Activo') as ReportCustomer['status'],
         }));
 
-        const mappedInvoices: ReportInvoice[] = (invoiceRows || []).map((inv: any) => {
+        const mappedCurrencies = (currencyRows || []).map((c: any) => ({
+          code: c.code as string,
+          name: c.name as string,
+          symbol: c.symbol as string,
+          is_base: !!c.is_base,
+          is_active: c.is_active !== false,
+        })).filter((c: any) => c.is_active);
+        setCurrencies(mappedCurrencies);
+
+        const baseCurrency = mappedCurrencies.find((c: any) => c.is_base) || mappedCurrencies[0];
+        const baseCode = baseCurrency?.code || 'DOP';
+        setBaseCurrencyCode(baseCode);
+
+        const todayStr = new Date().toISOString().slice(0, 10);
+
+        const mappedInvoices: ReportInvoice[] = await Promise.all((invoiceRows || []).map(async (inv: any) => {
           const total = Number(inv.total_amount) || 0;
           const paid = Number(inv.paid_amount) || 0;
           const balance = total - paid;
@@ -102,6 +141,36 @@ export default function ReportsPage() {
             const diff = Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
             daysOverdue = diff > 0 ? diff : 0;
           }
+
+          const currency = (inv.currency as string) || baseCode;
+          const invoiceDate = (inv.invoice_date as string) || todayStr;
+
+          let baseAmount: number | null = total;
+          let baseBalance: number | null = balance;
+
+          if (currency !== baseCode) {
+            try {
+              const rate = await bankExchangeRatesService.getEffectiveRate(
+                user.id,
+                currency,
+                baseCode,
+                invoiceDate,
+              );
+              if (rate && rate > 0) {
+                baseAmount = total * rate;
+                baseBalance = balance * rate;
+              } else {
+                baseAmount = null;
+                baseBalance = null;
+              }
+            } catch (fxError) {
+              // eslint-disable-next-line no-console
+              console.error('Error calculando equivalente en moneda base para factura CxC (reportes)', fxError);
+              baseAmount = null;
+              baseBalance = null;
+            }
+          }
+
           return {
             id: String(inv.id),
             customerId: String(inv.customer_id),
@@ -111,8 +180,11 @@ export default function ReportsPage() {
             balance,
             daysOverdue,
             dueDate: (inv.due_date as string) || '',
+            currency,
+            baseAmount,
+            baseBalance,
           };
-        });
+        }));
 
         const mappedPayments: ReportPayment[] = (receiptRows || []).map((r: any) => ({
           id: String(r.id),
@@ -261,12 +333,21 @@ export default function ReportsPage() {
         doc.text('Facturas:', 20, currentY);
         currentY += 10;
         
-        const invoiceData = customerInvoices.map(inv => [
-          inv.invoiceNumber,
-          `RD$ ${inv.amount.toLocaleString()}`,
-          `RD$ ${inv.balance.toLocaleString()}`,
-          inv.daysOverdue > 0 ? `${inv.daysOverdue} días` : 'Al día'
-        ]);
+        const invoiceData = customerInvoices.map(inv => {
+          const amountStr = inv.baseAmount != null && inv.currency !== baseCurrencyCode
+            ? `${inv.currency} ${inv.amount.toLocaleString()} (≈ ${baseCurrencyCode} ${inv.baseAmount.toLocaleString()})`
+            : `${inv.currency} ${inv.amount.toLocaleString()}`;
+          const balanceStr = inv.baseBalance != null && inv.currency !== baseCurrencyCode
+            ? `${inv.currency} ${inv.balance.toLocaleString()} (≈ ${baseCurrencyCode} ${inv.baseBalance.toLocaleString()})`
+            : `${inv.currency} ${inv.balance.toLocaleString()}`;
+
+          return [
+            inv.invoiceNumber,
+            amountStr,
+            balanceStr,
+            inv.daysOverdue > 0 ? `${inv.daysOverdue} días` : 'Al día',
+          ];
+        });
         
         (doc as any).autoTable({
           startY: currentY,
@@ -571,7 +652,7 @@ export default function ReportsPage() {
     
     // Filtrar facturas vencidas
     const overdueInvoices = invoices.filter(inv => inv.daysOverdue > 0 && inv.balance > 0);
-    const totalOverdue = overdueInvoices.reduce((sum, inv) => sum + inv.balance, 0);
+    const totalOverdue = overdueInvoices.reduce((sum, inv) => sum + (inv.baseBalance ?? inv.balance), 0);
     
     // Análisis por períodos
     const overdue1to30 = overdueInvoices.filter(inv => inv.daysOverdue >= 1 && inv.daysOverdue <= 30);
@@ -585,10 +666,10 @@ export default function ReportsPage() {
     const summaryData = [
       ['Total Facturas Vencidas', overdueInvoices.length.toString()],
       ['Monto Total Vencido', `RD$ ${totalOverdue.toLocaleString()}`],
-      ['1-30 días', `${overdue1to30.length} facturas - RD$ ${overdue1to30.reduce((sum, inv) => sum + inv.balance, 0).toLocaleString()}`],
-      ['31-60 días', `${overdue31to60.length} facturas - RD$ ${overdue31to60.reduce((sum, inv) => sum + inv.balance, 0).toLocaleString()}`],
-      ['61-90 días', `${overdue61to90.length} facturas - RD$ ${overdue61to90.reduce((sum, inv) => sum + inv.balance, 0).toLocaleString()}`],
-      ['Más de 90 días', `${overdueOver90.length} facturas - RD$ ${overdueOver90.reduce((sum, inv) => sum + inv.balance, 0).toLocaleString()}`]
+      ['1-30 días', `${overdue1to30.length} facturas - RD$ ${overdue1to30.reduce((sum, inv) => sum + (inv.baseBalance ?? inv.balance), 0).toLocaleString()}`],
+      ['31-60 días', `${overdue31to60.length} facturas - RD$ ${overdue31to60.reduce((sum, inv) => sum + (inv.baseBalance ?? inv.balance), 0).toLocaleString()}`],
+      ['61-90 días', `${overdue61to90.length} facturas - RD$ ${overdue61to90.reduce((sum, inv) => sum + (inv.baseBalance ?? inv.balance), 0).toLocaleString()}`],
+      ['Más de 90 días', `${overdueOver90.length} facturas - RD$ ${overdueOver90.reduce((sum, inv) => sum + (inv.baseBalance ?? inv.balance), 0).toLocaleString()}`]
     ];
     
     (doc as any).autoTable({
@@ -604,14 +685,23 @@ export default function ReportsPage() {
       doc.setFontSize(14);
       doc.text('Detalle de Facturas Vencidas', 20, (doc as any).lastAutoTable.finalY + 20);
       
-      const overdueData = overdueInvoices.map(invoice => [
-        invoice.invoiceNumber,
-        invoice.customerName,
-        invoice.dueDate,
-        `${invoice.daysOverdue} días`,
-        `RD$ ${invoice.amount.toLocaleString()}`,
-        `RD$ ${invoice.balance.toLocaleString()}`
-      ]);
+      const overdueData = overdueInvoices.map(invoice => {
+        const amountStr = invoice.baseAmount != null && invoice.currency !== baseCurrencyCode
+          ? `${invoice.currency} ${invoice.amount.toLocaleString()} (≈ ${baseCurrencyCode} ${invoice.baseAmount.toLocaleString()})`
+          : `${invoice.currency} ${invoice.amount.toLocaleString()}`;
+        const balanceStr = invoice.baseBalance != null && invoice.currency !== baseCurrencyCode
+          ? `${invoice.currency} ${invoice.balance.toLocaleString()} (≈ ${baseCurrencyCode} ${invoice.baseBalance.toLocaleString()})`
+          : `${invoice.currency} ${invoice.balance.toLocaleString()}`;
+
+        return [
+          invoice.invoiceNumber,
+          invoice.customerName,
+          invoice.dueDate,
+          `${invoice.daysOverdue} días`,
+          amountStr,
+          balanceStr,
+        ];
+      });
       
       (doc as any).autoTable({
         startY: (doc as any).lastAutoTable.finalY + 30,

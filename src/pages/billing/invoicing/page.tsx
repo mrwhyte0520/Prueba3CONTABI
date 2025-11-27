@@ -5,7 +5,13 @@ import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { invoicesService, paymentTermsService, salesRepsService } from '../../../services/database';
+import {
+  invoicesService,
+  paymentTermsService,
+  salesRepsService,
+  bankCurrenciesService,
+  bankExchangeRatesService,
+} from '../../../services/database';
 
 interface UiInvoiceItem {
   description: string;
@@ -26,6 +32,8 @@ interface UiInvoice {
   dueDate: string;
   items: UiInvoiceItem[];
   salesRepId?: string | null;
+  currency: string;
+  baseTotal?: number | null;
 }
 
 export default function InvoicingPage() {
@@ -42,12 +50,17 @@ export default function InvoicingPage() {
 
   const [paymentTerms, setPaymentTerms] = useState<Array<{ id: string; name: string; days?: number }>>([]);
   const [salesReps, setSalesReps] = useState<Array<{ id: string; name: string; is_active: boolean }>>([]);
+  const [currencies, setCurrencies] = useState<
+    Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>
+  >([]);
+  const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
 
   const [newInvoiceCustomerId, setNewInvoiceCustomerId] = useState('');
   const [newInvoiceDate, setNewInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [newInvoicePaymentTermId, setNewInvoicePaymentTermId] = useState<string | null>(null);
   const [newInvoiceDueDate, setNewInvoiceDueDate] = useState(newInvoiceDate);
   const [newInvoiceSalesRepId, setNewInvoiceSalesRepId] = useState<string | null>(null);
+  const [newInvoiceCurrency, setNewInvoiceCurrency] = useState<string>('DOP');
 
   type NewItem = { description: string; quantity: number; price: number; total: number };
   const [newInvoiceItems, setNewInvoiceItems] = useState<NewItem[]>([
@@ -86,11 +99,29 @@ export default function InvoicingPage() {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const data = await invoicesService.getAll(user.id as string);
-      const mapped: UiInvoice[] = (data as any[]).map((inv) => {
+      const [data, currs] = await Promise.all([
+        invoicesService.getAll(user.id as string),
+        bankCurrenciesService.getAll(user.id as string),
+      ]);
+
+      const mappedCurrencies = (currs || []).map((c: any) => ({
+        code: c.code as string,
+        name: c.name as string,
+        symbol: c.symbol as string,
+        is_base: !!c.is_base,
+        is_active: c.is_active !== false,
+      })).filter((c) => c.is_active);
+      setCurrencies(mappedCurrencies);
+
+      const baseCurrency = mappedCurrencies.find((c) => c.is_base) || mappedCurrencies[0];
+      const baseCode = baseCurrency?.code || 'DOP';
+      setBaseCurrencyCode(baseCode);
+
+      const mapped: UiInvoice[] = await Promise.all((data as any[]).map(async (inv) => {
         const subtotal = Number(inv.subtotal) || 0;
         const tax = Number(inv.tax_amount) || 0;
         const total = Number(inv.total_amount) || subtotal + tax;
+        const invCurrency = (inv.currency as string) || baseCode;
 
         const items: UiInvoiceItem[] = (inv.invoice_lines || []).map((line: any) => {
           const qty = Number(line.quantity) || 0;
@@ -120,6 +151,27 @@ export default function InvoicingPage() {
         else if (statusDb === 'draft') status = 'draft';
         else status = 'pending';
 
+        let baseTotal: number | null = total;
+        if (invCurrency !== baseCode) {
+          try {
+            const rate = await bankExchangeRatesService.getEffectiveRate(
+              user.id as string,
+              invCurrency,
+              baseCode,
+              (inv.invoice_date as string) || new Date().toISOString().slice(0, 10),
+            );
+            if (rate && rate > 0) {
+              baseTotal = total * rate;
+            } else {
+              baseTotal = null;
+            }
+          } catch (fxError) {
+            // eslint-disable-next-line no-console
+            console.error('Error calculando equivalente en moneda base para factura', fxError);
+            baseTotal = null;
+          }
+        }
+
         return {
           id: (inv.invoice_number as string) || String(inv.id),
           customer: (inv.customers as any)?.name || 'Cliente',
@@ -132,8 +184,10 @@ export default function InvoicingPage() {
           dueDate: (inv.due_date as string) || (inv.invoice_date as string) || new Date().toISOString().slice(0, 10),
           items,
           salesRepId: (inv as any).sales_rep_id || null,
+          currency: invCurrency,
+          baseTotal,
         };
-      });
+      }));
 
       setInvoices(mapped);
     } catch (error) {
@@ -208,6 +262,8 @@ export default function InvoicingPage() {
     setNewInvoicePaymentTermId(null);
     setNewInvoiceSalesRepId(null);
     setNewInvoiceDueDate(today);
+    const defaultCurrency = currencies.find((c) => c.is_base) || currencies[0];
+    setNewInvoiceCurrency(defaultCurrency?.code || 'DOP');
     setNewInvoiceItems([{ description: '', quantity: 1, price: 0, total: 0 }]);
     setNewInvoiceSubtotal(0);
     setNewInvoiceTax(0);
@@ -534,7 +590,7 @@ export default function InvoicingPage() {
       invoice_number: invoiceNumber,
       invoice_date: newInvoiceDate,
       due_date: newInvoiceDueDate,
-      currency: 'DOP',
+      currency: newInvoiceCurrency || baseCurrencyCode,
       subtotal,
       tax_amount: tax,
       total_amount: total,
@@ -712,111 +768,105 @@ export default function InvoicingPage() {
             <table className="w-full">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Número
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Cliente
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Vendedor
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Fecha
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Vencimiento
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Total
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Estado
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Acciones
-                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Número</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cliente</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vendedor</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vencimiento</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredInvoices.map((invoice) => {
                   const rep = salesReps.find((r) => r.id === invoice.salesRepId);
                   return (
-                  <tr key={invoice.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{invoice.id}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{invoice.customer}</div>
-                      <div className="text-sm text-gray-500">{invoice.customerEmail}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {rep ? rep.name : '—'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {new Date(invoice.date).toLocaleDateString('es-DO')}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {new Date(invoice.dueDate).toLocaleDateString('es-DO')}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD$ {invoice.total.toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(invoice.status)}`}>
-                        {getStatusText(invoice.status)}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={() => handleViewInvoice(invoice.id)}
-                          className="text-blue-600 hover:text-blue-900 p-1"
-                          title="Ver factura"
-                        >
-                          <i className="ri-eye-line"></i>
-                        </button>
-                        <button
-                          onClick={() => handleEditInvoice(invoice.id)}
-                          className="text-green-600 hover:text-green-900 p-1"
-                          title="Editar factura"
-                        >
-                          <i className="ri-edit-line"></i>
-                        </button>
-                        <button
-                          onClick={() => handlePrintInvoice(invoice.id)}
-                          className="text-gray-600 hover:text-gray-900 p-1"
-                          title="Imprimir factura"
-                        >
-                          <i className="ri-printer-line"></i>
-                        </button>
-                        {invoice.status === 'pending' && (
-                          <button
-                            onClick={() => handleMarkAsPaid(invoice.id)}
-                            className="text-green-600 hover:text-green-900 p-1"
-                            title="Marcar como pagada"
-                          >
-                            <i className="ri-check-line"></i>
-                          </button>
+                    <tr key={invoice.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">{invoice.id}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-gray-900">{invoice.customer}</div>
+                        <div className="text-sm text-gray-500">{invoice.customerEmail}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {rep ? rep.name : '—'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {new Date(invoice.date).toLocaleDateString('es-DO')}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {new Date(invoice.dueDate).toLocaleDateString('es-DO')}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        <div className="text-sm font-medium text-gray-900">
+                          {invoice.currency || baseCurrencyCode}{' '}
+                          {invoice.total.toLocaleString('es-DO')}
+                        </div>
+                        {invoice.baseTotal != null && invoice.currency !== baseCurrencyCode && (
+                          <div className="text-xs text-gray-500">
+                            ≈ {baseCurrencyCode}{' '}
+                            {invoice.baseTotal.toLocaleString('es-DO')}
+                          </div>
                         )}
-                        <button
-                          onClick={() => handleDuplicateInvoice(invoice.id)}
-                          className="text-orange-600 hover:text-orange-900 p-1"
-                          title="Duplicar factura"
-                        >
-                          <i className="ri-file-copy-line"></i>
-                        </button>
-                        <button
-                          onClick={() => handleDeleteInvoice(invoice.id)}
-                          className="text-red-600 hover:text-red-900 p-1"
-                          title="Eliminar factura"
-                        >
-                          <i className="ri-delete-bin-line"></i>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )})}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(invoice.status)}`}>
+                          {getStatusText(invoice.status)}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => handleViewInvoice(invoice.id)}
+                            className="text-blue-600 hover:text-blue-900 p-1"
+                            title="Ver factura"
+                          >
+                            <i className="ri-eye-line"></i>
+                          </button>
+                          <button
+                            onClick={() => handleEditInvoice(invoice.id)}
+                            className="text-green-600 hover:text-green-900 p-1"
+                            title="Editar factura"
+                          >
+                            <i className="ri-edit-line"></i>
+                          </button>
+                          <button
+                            onClick={() => handlePrintInvoice(invoice.id)}
+                            className="text-gray-600 hover:text-gray-900 p-1"
+                            title="Imprimir factura"
+                          >
+                            <i className="ri-printer-line"></i>
+                          </button>
+                          {invoice.status === 'pending' && (
+                            <button
+                              onClick={() => handleMarkAsPaid(invoice.id)}
+                              className="text-green-600 hover:text-green-900 p-1"
+                              title="Marcar como pagada"
+                            >
+                              <i className="ri-check-line"></i>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDuplicateInvoice(invoice.id)}
+                            className="text-orange-600 hover:text-orange-900 p-1"
+                            title="Duplicar factura"
+                          >
+                            <i className="ri-file-copy-line"></i>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteInvoice(invoice.id)}
+                            className="text-red-600 hover:text-red-900 p-1"
+                            title="Eliminar factura"
+                          >
+                            <i className="ri-delete-bin-line"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

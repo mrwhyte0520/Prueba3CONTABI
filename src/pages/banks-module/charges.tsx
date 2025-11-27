@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, bankChargesService, bankCurrenciesService, chartAccountsService } from '../../services/database';
+import { bankAccountsService, bankChargesService, chartAccountsService } from '../../services/database';
 
 interface BankCharge {
   id: string;
@@ -18,7 +18,6 @@ export default function BankChargesPage() {
   const { user } = useAuth();
   const [charges, setCharges] = useState<BankCharge[]>([]);
   const [banks, setBanks] = useState<any[]>([]);
-  const [currencies, setCurrencies] = useState<any[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [form, setForm] = useState({
     descripcion: '',
@@ -32,6 +31,17 @@ export default function BankChargesPage() {
 
   const handleChange = (field: keyof typeof form, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleBankChange = (bankId: string) => {
+    setForm(prev => {
+      const next = { ...prev, banco: bankId };
+      const selected = (banks || []).find((b: any) => b.id === bankId);
+      if (selected?.currency) {
+        next.moneda = selected.currency;
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -58,17 +68,22 @@ export default function BankChargesPage() {
     const loadBanksCurrenciesAndExpenses = async () => {
       if (!user?.id) return;
       try {
-        const [bankRows, currencyRows, chartRows] = await Promise.all([
+        const [bankRows, chartRows] = await Promise.all([
           bankAccountsService.getAll(user.id),
-          bankCurrenciesService.getAll(user.id),
           chartAccountsService.getAll(user.id),
         ]);
 
         setBanks(bankRows || []);
-        setCurrencies(currencyRows || []);
 
         const expenses = (chartRows || [])
-          .filter((acc: any) => acc.type === 'expense' && acc.allowPosting && acc.isActive !== false)
+          .filter((acc: any) => {
+            const code = String(acc.code || '');
+            return (
+              acc.allowPosting &&
+              acc.isActive !== false &&
+              code.startsWith('61')
+            );
+          })
           .map((acc: any) => ({ id: acc.id, code: acc.code, name: acc.name }));
         setExpenseAccounts(expenses);
       } catch (error) {
@@ -163,7 +178,7 @@ export default function BankChargesPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Banco Afectado</label>
               <select
                 value={form.banco}
-                onChange={(e) => handleChange('banco', e.target.value)}
+                onChange={(e) => handleBankChange(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Seleccione un banco...</option>
@@ -175,20 +190,12 @@ export default function BankChargesPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
-              <select
+              <input
+                type="text"
                 value={form.moneda}
-                onChange={(e) => handleChange('moneda', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                {currencies.length === 0 && (
-                  <option value="DOP">Peso Dominicano (DOP)</option>
-                )}
-                {currencies.map((c: any) => (
-                  <option key={c.id} value={c.code}>
-                    {c.name} ({c.code})
-                  </option>
-                ))}
-              </select>
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+              />
             </div>
 
             <div>

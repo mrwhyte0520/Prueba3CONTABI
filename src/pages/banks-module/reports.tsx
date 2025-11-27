@@ -8,6 +8,10 @@ import {
   bankCreditsService,
   bankChargesService,
 } from '../../services/database';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
+import * as ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 
 type MovementType = 'deposit' | 'check' | 'transfer' | 'credit' | 'charge';
 
@@ -198,6 +202,118 @@ export default function BankReportsPage() {
     }
   };
 
+  const exportToPDF = () => {
+    if (filteredMovements.length === 0) {
+      alert('No hay movimientos para exportar. Ajusta los filtros primero.');
+      return;
+    }
+
+    const doc = new jsPDF();
+
+    doc.setFontSize(18);
+    doc.text('Reporte Bancario', 20, 20);
+
+    doc.setFontSize(10);
+    const fromLabel = filters.fromDate || 'Sin límite';
+    const toLabel = filters.toDate || 'Sin límite';
+    doc.text(`Período: ${fromLabel} al ${toLabel}`, 20, 30);
+
+    const rows = filteredMovements.map((m) => [
+      m.date ? new Date(m.date).toLocaleDateString('es-DO') : '',
+      formatTypeLabel(m.type),
+      m.bank_account_code || m.bank_id || '-',
+      m.currency,
+      m.amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      m.reference || '',
+      m.description || '',
+    ]);
+
+    (doc as any).autoTable({
+      startY: 40,
+      head: [['Fecha', 'Tipo', 'Cuenta/Banco', 'Moneda', 'Monto', 'Referencia', 'Descripción']],
+      body: rows,
+      theme: 'striped',
+      headStyles: { fillColor: [37, 99, 235] },
+      styles: { fontSize: 8 },
+    });
+
+    const pageCount = doc.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      doc.text(`Página ${i} de ${pageCount}`, pageWidth - 40, pageHeight - 10);
+      doc.text('Sistema Contabi - Reporte Bancario', 20, pageHeight - 10);
+    }
+
+    doc.save(`reporte-bancario-${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
+  const exportToExcel = async () => {
+    if (filteredMovements.length === 0) {
+      alert('No hay movimientos para exportar. Ajusta los filtros primero.');
+      return;
+    }
+
+    const fromLabel = filters.fromDate || 'Sin límite';
+    const toLabel = filters.toDate || 'Sin límite';
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Movimientos Bancarios');
+
+    // Encabezado
+    sheet.addRow(['Reporte Bancario']);
+    sheet.addRow([`Fecha de generación: ${new Date().toLocaleDateString()}`]);
+    sheet.addRow([`Período: ${fromLabel} al ${toLabel}`]);
+    sheet.addRow([]);
+
+    // Encabezados de tabla
+    const headerRow = sheet.addRow([
+      'Fecha',
+      'Tipo',
+      'Cuenta/Banco',
+      'Moneda',
+      'Monto',
+      'Referencia',
+      'Descripción',
+    ]);
+    headerRow.font = { bold: true };
+
+    // Filas de datos
+    filteredMovements.forEach((m) => {
+      sheet.addRow([
+        m.date ? new Date(m.date).toISOString().slice(0, 10) : '',
+        formatTypeLabel(m.type),
+        m.bank_account_code || m.bank_id || '-',
+        m.currency,
+        Number(m.amount) || 0,
+        m.reference || '',
+        m.description || '',
+      ]);
+    });
+
+    // Ajustar ancho de columnas según contenido
+    (sheet.columns || []).forEach((column) => {
+      if (!column) return;
+      let maxLength = 10;
+      column.eachCell({ includeEmpty: true }, (cell) => {
+        const v = cell.value as any;
+        const text = v == null ? '' : typeof v === 'string' ? v : v.toString();
+        if (text.length > maxLength) {
+          maxLength = text.length;
+        }
+      });
+      column.width = maxLength + 2;
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    saveAs(blob, `reporte-bancario-${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6">
@@ -282,10 +398,30 @@ export default function BankReportsPage() {
 
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold">Movimientos bancarios</h2>
-            {loading && (
-              <span className="text-xs text-gray-500">Cargando...</span>
-            )}
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold">Movimientos bancarios</h2>
+              {loading && (
+                <span className="text-xs text-gray-500">Cargando...</span>
+              )}
+            </div>
+            <div className="flex space-x-2">
+              <button
+                type="button"
+                onClick={exportToPDF}
+                className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700 flex items-center gap-1"
+              >
+                <i className="ri-file-pdf-line"></i>
+                <span>Exportar PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={exportToExcel}
+                className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+              >
+                <i className="ri-file-excel-line"></i>
+                <span>Exportar Excel</span>
+              </button>
+            </div>
           </div>
 
           {filteredMovements.length === 0 ? (

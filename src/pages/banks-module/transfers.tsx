@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, bankCurrenciesService, bankTransfersService, chartAccountsService } from '../../services/database';
+import { bankAccountsService, bankTransfersService, chartAccountsService, financialReportsService } from '../../services/database';
 
 interface BankTransfer {
   id: string;
@@ -22,7 +22,7 @@ export default function BankTransfersPage() {
   const [transfers, setTransfers] = useState<BankTransfer[]>([]);
   const [banks, setBanks] = useState<any[]>([]);
   const [accountsById, setAccountsById] = useState<Record<string, { id: string; code: string; name: string }>>({});
-  const [currencies, setCurrencies] = useState<any[]>([]);
+  const [originBalance, setOriginBalance] = useState<number | null>(null);
   const [form, setForm] = useState({
     bancoOrigen: '',
     cuentaOrigen: '',
@@ -37,6 +37,43 @@ export default function BankTransfersPage() {
 
   const handleChange = (field: keyof typeof form, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleOriginBankChange = (bankId: string) => {
+    setForm(prev => {
+      const next = { ...prev, bancoOrigen: bankId };
+      const selectedBank = (banks || []).find((b: any) => b.id === bankId);
+      if (selectedBank) {
+        const accountId = selectedBank.chart_account_id as string | undefined;
+        if (accountId) {
+          const acc = accountsById[accountId];
+          if (acc) {
+            next.cuentaOrigen = acc.code;
+          }
+        }
+        if (selectedBank.currency) {
+          next.moneda = selectedBank.currency;
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleDestBankChange = (bankId: string) => {
+    setForm(prev => {
+      const next = { ...prev, bancoDestino: bankId };
+      const selectedBank = (banks || []).find((b: any) => b.id === bankId);
+      if (selectedBank) {
+        const accountId = selectedBank.chart_account_id as string | undefined;
+        if (accountId) {
+          const acc = accountsById[accountId];
+          if (acc) {
+            next.cuentaDestino = acc.code;
+          }
+        }
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -90,26 +127,37 @@ export default function BankTransfersPage() {
     loadBanksAndAccounts();
   }, [user?.id]);
 
+  // Cargar saldo contable estimado de la cuenta de banco origen
   useEffect(() => {
-    const loadCurrencies = async () => {
-      if (!user?.id) return;
+    const loadOriginBalance = async () => {
+      if (!user?.id || !form.bancoOrigen) {
+        setOriginBalance(null);
+        return;
+      }
       try {
-        const data = await bankCurrenciesService.getAll(user.id);
-        const list = data || [];
-        setCurrencies(list);
-
-        if (list.length > 0) {
-          const base = list.find((c: any) => c.is_base);
-          const firstCode = (base || list[0]).code || 'DOP';
-          setForm(prev => ({ ...prev, moneda: prev.moneda || firstCode }));
+        const originBank = (banks || []).find((b: any) => b.id === form.bancoOrigen);
+        if (!originBank?.chart_account_id) {
+          setOriginBalance(null);
+          return;
+        }
+        const asOfDate = form.fecha || new Date().toISOString().slice(0, 10);
+        const trial = await financialReportsService.getTrialBalance(user.id, '1900-01-01', asOfDate);
+        const originAccount = (trial || []).find((acc: any) => acc.account_id === originBank.chart_account_id);
+        if (originAccount) {
+          setOriginBalance(Number(originAccount.balance) || 0);
+        } else {
+          setOriginBalance(null);
         }
       } catch (error) {
-        console.error('Error cargando monedas para transferencias bancarias', error);
+        // eslint-disable-next-line no-console
+        console.error('Error loading origin bank balance for transfer', error);
+        setOriginBalance(null);
       }
     };
 
-    loadCurrencies();
-  }, [user?.id]);
+    loadOriginBalance();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, form.bancoOrigen, form.fecha, banks]);
 
   const handleAddTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,6 +178,25 @@ export default function BankTransfersPage() {
     }
 
     try {
+      // Advertencia de saldo insuficiente (no bloqueante)
+      try {
+        if (originBalance === null) {
+          alert(
+            'Advertencia: no se pudo estimar el saldo contable de la cuenta de banco origen. ' +
+              'Verifique sus saldos bancarios reales antes de confirmar la operación en el banco.'
+          );
+        } else if (originBalance >= 0 && montoNumber > originBalance + 0.01) {
+          alert(
+            `Advertencia: el monto a transferir (${montoNumber.toLocaleString()}) excede el saldo contable estimado de la cuenta (${originBalance.toLocaleString()}). ` +
+              'Verifique sus saldos bancarios reales antes de confirmar la operación en el banco.'
+          );
+        }
+      } catch (balanceError) {
+        // No interrumpir la operación por errores al estimar el saldo
+        // eslint-disable-next-line no-console
+        console.error('Error estimating origin bank balance for transfer', balanceError);
+      }
+
       const created = await bankTransfersService.create(user.id, {
         from_bank_id: form.bancoOrigen,
         from_bank_account_code: form.cuentaOrigen,
@@ -169,6 +236,28 @@ export default function BankTransfersPage() {
     }
   };
 
+  const selectedOriginBank = (banks || []).find((b: any) => b.id === form.bancoOrigen);
+  const originBankAccountLabel = (() => {
+    if (selectedOriginBank?.chart_account_id) {
+      const acc = accountsById[selectedOriginBank.chart_account_id];
+      if (acc) {
+        return `${acc.code} - ${acc.name}`;
+      }
+    }
+    return form.cuentaOrigen;
+  })();
+
+  const selectedDestBank = (banks || []).find((b: any) => b.id === form.bancoDestino);
+  const destBankAccountLabel = (() => {
+    if (selectedDestBank?.chart_account_id) {
+      const acc = accountsById[selectedDestBank.chart_account_id];
+      if (acc) {
+        return `${acc.code} - ${acc.name}`;
+      }
+    }
+    return form.cuentaDestino;
+  })();
+
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6">
@@ -189,7 +278,7 @@ export default function BankTransfersPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Banco Origen</label>
               <select
                 value={form.bancoOrigen}
-                onChange={(e) => handleChange('bancoOrigen', e.target.value)}
+                onChange={(e) => handleOriginBankChange(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Seleccione un banco...</option>
@@ -201,68 +290,48 @@ export default function BankTransfersPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Origen (Cuenta Contable)</label>
-              <select
-                value={form.cuentaOrigen}
-                onChange={(e) => handleChange('cuentaOrigen', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Seleccione una cuenta...</option>
-                {banks
-                  .filter((b: any) => b.id === form.bancoOrigen && b.chart_account_id)
-                  .map((b: any) => {
-                    const acc = accountsById[b.chart_account_id];
-                    if (!acc) return null;
-                    const value = acc.code;
-                    if (form.cuentaOrigen !== value) {
-                      setForm(prev => ({ ...prev, cuentaOrigen: value }));
-                    }
-                    return (
-                      <option key={acc.id} value={value}>
-                        {acc.code} - {acc.name}
-                      </option>
-                    );
-                  })}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Banco Destino (opcional)</label>
               <input
                 type="text"
-                value={form.bancoDestino}
-                onChange={(e) => handleChange('bancoDestino', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Código o nombre del banco destino"
+                value={originBankAccountLabel || ''}
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+                placeholder="Se asigna automáticamente según el banco de origen seleccionado"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Destino (opcional)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Banco Destino (opcional)</label>
+              <select
+                value={form.bancoDestino}
+                onChange={(e) => handleDestBankChange(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">Sin banco destino (solo salida de fondos)</option>
+                {banks.map((b: any) => (
+                  <option key={b.id} value={b.id}>{b.bank_name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Destino (Cuenta Contable, opcional)</label>
               <input
                 type="text"
-                value={form.cuentaDestino}
-                onChange={(e) => handleChange('cuentaDestino', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Cuenta contable o número de cuenta destino"
+                value={destBankAccountLabel || ''}
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+                placeholder="Se asigna automáticamente si selecciona un banco destino"
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
-              <select
+              <input
+                type="text"
                 value={form.moneda}
-                onChange={(e) => handleChange('moneda', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                {currencies.length === 0 && (
-                  <option value="DOP">Peso Dominicano (DOP)</option>
-                )}
-                {currencies.map((c: any) => (
-                  <option key={c.id} value={c.code}>
-                    {c.name} ({c.code})
-                  </option>
-                ))}
-              </select>
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+              />
             </div>
 
             <div>

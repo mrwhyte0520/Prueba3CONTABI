@@ -100,7 +100,8 @@ export default function PaymentsPage() {
     }
     try {
       const rows = await apInvoicesService.getAll(user.id);
-      setApInvoices(rows || []);
+      const pending = (rows || []).filter((inv: any) => inv.status !== 'paid');
+      setApInvoices(pending);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error loading AP invoices for supplier payments', error);
@@ -507,10 +508,10 @@ export default function PaymentsPage() {
                     >
                       <option value="">Sin factura seleccionada</option>
                       {apInvoices
-                        .filter((inv: any) => String(inv.supplier_id) === String(formData.supplierId))
+                        .filter((inv: any) => String(inv.supplier_id) === String(formData.supplierId) && inv.status !== 'paid')
                         .map((inv: any) => (
                           <option key={inv.id} value={inv.invoice_number || ''}>
-                            {(inv.invoice_number || 'SIN-NUM').toString()} - {(inv.currency || 'DOP')} {Number(inv.total_to_pay || inv.total_gross || 0).toLocaleString()}
+                            {(inv.invoice_number || 'SIN-NUM').toString()} - {(inv.currency || 'DOP')} {Number(inv.balance_amount ?? inv.total_to_pay ?? inv.total_gross ?? 0).toLocaleString()}
                           </option>
                         ))}
                     </select>

@@ -3,7 +3,13 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { exportToPdf } from '../../../utils/exportImportUtils';
 import { toast } from 'sonner';
 import { useAuth } from '../../../hooks/useAuth';
-import { quotesService, customersService, invoicesService, paymentTermsService } from '../../../services/database';
+import {
+  quotesService,
+  customersService,
+  invoicesService,
+  paymentTermsService,
+  bankCurrenciesService,
+} from '../../../services/database';
 
 // Tipos de datos
 type StatusType = 'pending' | 'approved' | 'under_review' | 'rejected' | 'expired';
@@ -18,12 +24,13 @@ interface QuoteItem {
 interface NewQuoteFormProps {
   customers: Array<{ id: string; name: string; email: string; phone: string }>;
   paymentTerms: Array<{ id: string; name: string; days?: number }>;
+  currencies: Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>;
   onCancel: () => void;
   onSaved: () => void;
   userId?: string;
 }
 
-function NewQuoteForm({ customers, paymentTerms, onCancel, onSaved, userId }: NewQuoteFormProps) {
+function NewQuoteForm({ customers, paymentTerms, currencies, onCancel, onSaved, userId }: NewQuoteFormProps) {
   const [customerId, setCustomerId] = useState('');
   const [project, setProject] = useState('');
   const [validUntil, setValidUntil] = useState<string>(new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
@@ -32,6 +39,8 @@ function NewQuoteForm({ customers, paymentTerms, onCancel, onSaved, userId }: Ne
   const [items, setItems] = useState<QuoteItem[]>([
     { description: '', quantity: 1, price: 0, total: 0 }
   ]);
+  const baseCurrency = currencies.find(c => c.is_base) || currencies[0];
+  const [currencyCode, setCurrencyCode] = useState<string>(baseCurrency?.code || 'DOP');
   const ITBIS_RATE = 0.18;
 
   const recomputeTotals = (its: QuoteItem[]) => {
@@ -41,6 +50,9 @@ function NewQuoteForm({ customers, paymentTerms, onCancel, onSaved, userId }: Ne
   const subtotal = items.reduce((s, it) => s + (it.total || 0), 0);
   const tax = Math.round(subtotal * ITBIS_RATE * 100) / 100;
   const total = subtotal + tax;
+
+  const currentCurrency = currencies.find(c => c.code === currencyCode) || baseCurrency;
+  const currencyLabel = currentCurrency?.symbol || currentCurrency?.code || 'RD$';
 
   const addRow = () => setItems(prev => [...prev, { description: '', quantity: 1, price: 0, total: 0 }]);
   const removeRow = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
@@ -83,6 +95,7 @@ function NewQuoteForm({ customers, paymentTerms, onCancel, onSaved, userId }: Ne
         tax,
         total,
         status: 'pending' as StatusType,
+        currency: currencyCode,
       };
       const linePayloads = items
         .filter(it => it.description && it.quantity > 0 && it.price >= 0)
@@ -110,6 +123,23 @@ function NewQuoteForm({ customers, paymentTerms, onCancel, onSaved, userId }: Ne
             <option value="">Seleccionar cliente...</option>
             {customers.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Moneda</label>
+          <select
+            value={currencyCode}
+            onChange={e => setCurrencyCode(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+          >
+            {currencies.length === 0 && (
+              <option value="DOP">DOP - Peso Dominicano</option>
+            )}
+            {currencies.map(c => (
+              <option key={c.code} value={c.code}>
+                {c.code} - {c.name}
+              </option>
             ))}
           </select>
         </div>
@@ -231,16 +261,16 @@ function NewQuoteForm({ customers, paymentTerms, onCancel, onSaved, userId }: Ne
           <div className="space-y-2">
             <div className="flex justify-between">
               <span className="text-sm text-gray-600">Subtotal:</span>
-              <span className="text-sm font-medium">RD$ {subtotal.toLocaleString('es-DO')}</span>
+              <span className="text-sm font-medium">{currencyCode} {subtotal.toLocaleString('es-DO')}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-gray-600">ITBIS (18%):</span>
-              <span className="text-sm font-medium">RD$ {tax.toLocaleString('es-DO')}</span>
+              <span className="text-sm font-medium">{currencyCode} {tax.toLocaleString('es-DO')}</span>
             </div>
             <div className="border-t border-gray-200 pt-2">
               <div className="flex justify-between">
                 <span className="text-base font-semibold">Total:</span>
-                <span className="text-base font-semibold">RD$ {total.toLocaleString('es-DO')}</span>
+                <span className="text-base font-semibold">{currencyCode} {total.toLocaleString('es-DO')}</span>
               </div>
             </div>
           </div>
@@ -269,6 +299,7 @@ interface Quote {
   probability: number;
   items: QuoteItem[];
   created_at?: string;
+  currency: string;
 }
 
 interface Customer {
@@ -312,6 +343,7 @@ export default function QuotesPage() {
   const [customers, setCustomers] = useState<Array<{id: string, name: string, email: string, phone: string}>>([]);
   const [services, setServices] = useState<Array<{id: string, name: string, description: string, price: number}>>([]);
   const [paymentTerms, setPaymentTerms] = useState<Array<{ id: string; name: string; days?: number }>>([]);
+  const [currencies, setCurrencies] = useState<Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>>([]);
 
   // Estado para las cotizaciones
   const [quotes, setQuotes] = useState<Array<{
@@ -333,6 +365,7 @@ export default function QuotesPage() {
       price: number;
       total: number;
     }>;
+    currency: string;
   }>>([]);
 
   // Cargar datos iniciales
@@ -349,10 +382,11 @@ export default function QuotesPage() {
           return;
         }
 
-        const [cust, qts, terms] = await Promise.all([
+        const [cust, qts, terms, currs] = await Promise.all([
           customersService.getAll(user.id),
           quotesService.getAll(user.id),
           paymentTermsService.getAll(user.id),
+          bankCurrenciesService.getAll(user.id),
         ]);
 
         setCustomers((cust || []).map((c: any) => ({
@@ -388,6 +422,7 @@ export default function QuotesPage() {
             amount: subtotal,
             tax,
             total,
+            currency: q.currency || 'DOP',
             status: (q.status || 'pending') as StatusType,
             date: q.date || q.created_at || new Date().toISOString(),
             validUntil: q.valid_until || q.validUntil || new Date().toISOString(),
@@ -396,6 +431,15 @@ export default function QuotesPage() {
           };
         });
         setQuotes(mapped);
+
+        const mappedCurrencies = (currs || []).map((c: any) => ({
+          code: c.code as string,
+          name: c.name as string,
+          symbol: c.symbol as string,
+          is_base: !!c.is_base,
+          is_active: c.is_active !== false,
+        })).filter(c => c.is_active);
+        setCurrencies(mappedCurrencies);
 
         const mappedTerms = (terms || []).map((t: any) => ({
           id: t.id as string,
@@ -488,7 +532,7 @@ export default function QuotesPage() {
         project: quote.project || 'Sin proyecto',
         date: new Date(quote.date).toLocaleDateString('es-DO'),
         validUntil: new Date(quote.validUntil).toLocaleDateString('es-DO'),
-        total: `RD$ ${quote.total.toLocaleString('es-DO')}`,
+        total: `${quote.currency} ${quote.total.toLocaleString('es-DO')}`,
         status: getStatusText(quote.status),
         probability: `${quote.probability}%`
       }));
@@ -555,7 +599,7 @@ export default function QuotesPage() {
           invoice_number: invoiceNumber,
           invoice_date: todayStr,
           due_date: quote.validUntil || todayStr,
-          currency: 'DOP',
+          currency: quote.currency,
           subtotal: quote.amount,
           tax_amount: quote.tax,
           total_amount: quote.total,
@@ -647,7 +691,7 @@ export default function QuotesPage() {
               </div>
             </div>
             <div className="mt-4">
-              <p className="text-sm text-gray-500">Valor Total: RD$ {totalQuoteValue.toLocaleString()}</p>
+              <p className="text-sm text-gray-500">Valor Total (suma nominal): {quotes.reduce((sum, quote) => sum + quote.total, 0).toLocaleString()}</p>
             </div>
           </div>
 
@@ -664,7 +708,7 @@ export default function QuotesPage() {
               </div>
             </div>
             <div className="mt-4">
-              <p className="text-sm text-gray-500">Valor: RD$ {approvedQuoteValue.toLocaleString()}</p>
+              <p className="text-sm text-gray-500">Valor (nominal): {quotes.filter(q => q.status === 'approved').reduce((sum, quote) => sum + quote.total, 0).toLocaleString()}</p>
             </div>
           </div>
 
@@ -681,7 +725,7 @@ export default function QuotesPage() {
               </div>
             </div>
             <div className="mt-4">
-              <p className="text-sm text-gray-500">Valor: RD$ {pendingQuoteValue.toLocaleString()}</p>
+              <p className="text-sm text-gray-500">Valor (nominal): {quotes.filter(q => q.status === 'pending' || q.status === 'under_review').reduce((sum, quote) => sum + quote.total, 0).toLocaleString()}</p>
             </div>
           </div>
 
@@ -809,7 +853,7 @@ export default function QuotesPage() {
                       {new Date(quote.validUntil).toLocaleDateString('es-DO')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD$ {quote.total.toLocaleString()}
+                      {quote.currency} {quote.total.toLocaleString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`text-sm font-medium ${getProbabilityColor(quote.probability)}`}>
@@ -910,6 +954,7 @@ export default function QuotesPage() {
                 <NewQuoteForm
                   customers={customers}
                   paymentTerms={paymentTerms}
+                  currencies={currencies}
                   onCancel={() => setShowNewQuoteModal(false)}
                   onSaved={async () => {
                     setShowNewQuoteModal(false);
@@ -925,6 +970,7 @@ export default function QuotesPage() {
                         amount: q.amount || 0,
                         tax: q.tax || 0,
                         total: q.total || 0,
+                        currency: q.currency || 'DOP',
                         status: (q.status || 'pending') as StatusType,
                         date: q.date || q.created_at || new Date().toISOString(),
                         validUntil: q.valid_until || q.validUntil || new Date().toISOString(),

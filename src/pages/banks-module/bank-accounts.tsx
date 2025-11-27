@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { toast } from 'sonner';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, chartAccountsService } from '../../services/database';
+import {
+  bankAccountsService,
+  chartAccountsService,
+  bankCurrenciesService,
+  bankExchangeRatesService,
+} from '../../services/database';
 
 interface Bank {
   id: string;
@@ -11,6 +16,7 @@ interface Bank {
   account_type: string;
   balance: number;
   currency: string;
+  baseBalance?: number | null;
   is_active: boolean;
   bank_code: string;
   swift_code?: string;
@@ -23,6 +29,7 @@ interface Bank {
   contact_email?: string | null;
   created_at: string;
   chart_account_id?: string | null;
+  use_payment_requests?: boolean;
 }
 
 interface AccountOption {
@@ -35,6 +42,7 @@ export default function BankAccountsPage() {
   const { user } = useAuth();
   const [banks, setBanks] = useState<Bank[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
   const [loadingAccounts, setLoadingAccounts] = useState(false);
 
   const [showBankModal, setShowBankModal] = useState(false);
@@ -54,27 +62,74 @@ export default function BankAccountsPage() {
       return;
     }
     try {
-      const rows = await bankAccountsService.getAll(user.id);
-      const mapped: Bank[] = (rows || []).map((b: any) => ({
-        id: b.id,
-        name: b.bank_name,
-        account_number: b.account_number,
-        account_type: b.account_type,
-        balance: Number(b.current_balance ?? b.initial_balance ?? 0),
-        currency: b.currency || 'DOP',
-        is_active: b.is_active !== false,
-        bank_code: b.bank_code || '',
-        swift_code: b.swift_bic || '',
-        contact_info: b.contact_info || '',
-        rnc: b.rnc ?? null,
-        address: b.address ?? null,
-        contact_name: b.contact_name ?? null,
-        contact_phone: b.contact_phone ?? null,
-        contact_fax: b.contact_fax ?? null,
-        contact_email: b.contact_email ?? null,
-        created_at: b.created_at,
-        chart_account_id: b.chart_account_id ?? null,
+      const uid = user.id;
+
+      const [rows, currs] = await Promise.all([
+        bankAccountsService.getAll(uid),
+        bankCurrenciesService.getAll(uid),
+      ]);
+
+      const mappedCurrencies = (currs || []).map((c: any) => ({
+        code: c.code as string,
+        is_base: !!c.is_base,
+        is_active: c.is_active !== false,
+      })).filter((c) => c.is_active);
+
+      const baseCurrency = mappedCurrencies.find((c) => c.is_base) || mappedCurrencies[0];
+      const baseCode = baseCurrency?.code || 'DOP';
+      setBaseCurrencyCode(baseCode);
+
+      const today = new Date().toISOString().slice(0, 10);
+
+      const mapped: Bank[] = await Promise.all((rows || []).map(async (b: any) => {
+        const balance = Number(b.current_balance ?? b.initial_balance ?? 0);
+        const currency = (b.currency as string) || baseCode;
+        let baseBalance: number | null = balance;
+
+        if (currency !== baseCode) {
+          try {
+            const rate = await bankExchangeRatesService.getEffectiveRate(
+              uid,
+              currency,
+              baseCode,
+              today,
+            );
+            if (rate && rate > 0) {
+              baseBalance = balance * rate;
+            } else {
+              baseBalance = null;
+            }
+          } catch (fxError) {
+            // eslint-disable-next-line no-console
+            console.error('Error calculando equivalente en moneda base para banco', fxError);
+            baseBalance = null;
+          }
+        }
+
+        return {
+          id: b.id,
+          name: b.bank_name,
+          account_number: b.account_number,
+          account_type: b.account_type,
+          balance,
+          currency,
+          baseBalance,
+          is_active: b.is_active !== false,
+          bank_code: b.bank_code || '',
+          swift_code: b.swift_bic || '',
+          contact_info: b.contact_info || '',
+          rnc: b.rnc ?? null,
+          address: b.address ?? null,
+          contact_name: b.contact_name ?? null,
+          contact_phone: b.contact_phone ?? null,
+          contact_fax: b.contact_fax ?? null,
+          contact_email: b.contact_email ?? null,
+          created_at: b.created_at,
+          chart_account_id: b.chart_account_id ?? null,
+          use_payment_requests: b.use_payment_requests === true,
+        } as Bank;
       }));
+
       setBanks(mapped);
     } catch (error) {
       console.error('Error loading bank accounts', error);
@@ -140,6 +195,7 @@ export default function BankAccountsPage() {
     const initialBalance =
       parseFloat((formData.get('balance') as string) || '0') || 0;
     const chartAccountId = (formData.get('chart_account_id') as string) || null;
+    const usePaymentRequests = formData.get('use_payment_requests') === 'on';
 
     if (!chartAccountId) {
       toast.error('Debes seleccionar una cuenta contable para el banco');
@@ -162,6 +218,7 @@ export default function BankAccountsPage() {
         contact_fax: (formData.get('contact_fax') as string) || null,
         contact_email: (formData.get('contact_email') as string) || null,
         chart_account_id: chartAccountId,
+        use_payment_requests: usePaymentRequests,
       };
 
       if (editingBank) {
@@ -291,6 +348,11 @@ export default function BankAccountsPage() {
                       <div className="text-gray-900">
                         {formatCurrency(bank.balance, bank.currency)}
                       </div>
+                      {bank.baseBalance != null && bank.currency !== baseCurrencyCode && (
+                        <div className="text-gray-500 text-xs">
+                          ≈ {formatCurrency(bank.baseBalance, baseCurrencyCode)}
+                        </div>
+                      )}
                       <div className="text-gray-500 text-xs">{bank.currency}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -565,6 +627,17 @@ export default function BankAccountsPage() {
                       <p className="mt-1 text-xs text-gray-500">
                         Esta cuenta se usará para los asientos contables de este banco.
                       </p>
+                    </div>
+                    <div className="md:col-span-2 flex items-center mt-2">
+                      <input
+                        type="checkbox"
+                        name="use_payment_requests"
+                        defaultChecked={editingBank?.use_payment_requests ?? true}
+                        className="h-4 w-4 text-blue-600 border-gray-300 rounded mr-2"
+                      />
+                      <span className="text-sm text-gray-700">
+                        Usar Solicitudes de Pago para este banco
+                      </span>
                     </div>
                   </div>
 

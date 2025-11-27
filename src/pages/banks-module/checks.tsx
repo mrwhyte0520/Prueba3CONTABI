@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, bankChecksService, bankCurrenciesService, chartAccountsService } from '../../services/database';
+import { apInvoicesService, bankAccountsService, bankChecksService, chartAccountsService } from '../../services/database';
 
 interface BankCheck {
   id: string;
@@ -21,14 +21,15 @@ export default function BankChecksPage() {
   const [checks, setChecks] = useState<BankCheck[]>([]);
   const [banks, setBanks] = useState<any[]>([]);
   const [accountsById, setAccountsById] = useState<Record<string, { id: string; code: string; name: string }>>({});
-  const [currencies, setCurrencies] = useState<any[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<Array<{ id: string; code: string; name: string }>>([]);
+  const [apInvoices, setApInvoices] = useState<any[]>([]);
   const [form, setForm] = useState({
     banco: '',
     cuentaBanco: '',
     numeroCheque: '',
     beneficiario: '',
     cuentaGasto: '',
+    apInvoiceId: '',
     moneda: 'DOP',
     monto: '',
     fecha: new Date().toISOString().slice(0, 10),
@@ -37,6 +38,26 @@ export default function BankChecksPage() {
 
   const handleChange = (field: keyof typeof form, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleBankChange = (bankId: string) => {
+    setForm(prev => {
+      const next = { ...prev, banco: bankId };
+      const selectedBank = (banks || []).find((b: any) => b.id === bankId);
+      if (selectedBank) {
+        const accountId = selectedBank.chart_account_id as string | undefined;
+        if (accountId) {
+          const acc = accountsById[accountId];
+          if (acc) {
+            next.cuentaBanco = acc.code;
+          }
+        }
+        if (selectedBank.currency) {
+          next.moneda = selectedBank.currency;
+        }
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -65,9 +86,10 @@ export default function BankChecksPage() {
     const loadBanksAndAccounts = async () => {
       if (!user?.id) return;
       try {
-        const [bankRows, chartRows] = await Promise.all([
+        const [bankRows, chartRows, invoiceRows] = await Promise.all([
           bankAccountsService.getAll(user.id),
           chartAccountsService.getAll(user.id),
+          apInvoicesService.getAll(user.id),
         ]);
 
         setBanks(bankRows || []);
@@ -90,33 +112,15 @@ export default function BankChecksPage() {
 
         setAccountsById(map);
         setExpenseAccounts(expenses);
+
+        const pendingInvoices = (invoiceRows || []).filter((inv: any) => inv.status !== 'paid');
+        setApInvoices(pendingInvoices);
       } catch (error) {
         console.error('Error cargando bancos y cuentas contables para cheques', error);
       }
     };
 
     loadBanksAndAccounts();
-  }, [user?.id]);
-
-  useEffect(() => {
-    const loadCurrencies = async () => {
-      if (!user?.id) return;
-      try {
-        const data = await bankCurrenciesService.getAll(user.id);
-        const list = data || [];
-        setCurrencies(list);
-
-        if (list.length > 0) {
-          const base = list.find((c: any) => c.is_base);
-          const firstCode = (base || list[0]).code || 'DOP';
-          setForm(prev => ({ ...prev, moneda: prev.moneda || firstCode }));
-        }
-      } catch (error) {
-        console.error('Error cargando monedas para cheques bancarios', error);
-      }
-    };
-
-    loadCurrencies();
   }, [user?.id]);
 
   const handleAddCheck = async (e: React.FormEvent) => {
@@ -156,6 +160,7 @@ export default function BankChecksPage() {
         check_date: form.fecha,
         description: form.descripcion.trim(),
         expense_account_code: form.cuentaGasto,
+        ap_invoice_id: form.apInvoiceId || null,
       });
 
       const mapped: BankCheck = {
@@ -177,6 +182,7 @@ export default function BankChecksPage() {
         numeroCheque: '',
         beneficiario: '',
         cuentaGasto: '',
+        apInvoiceId: '',
         monto: '',
         descripcion: '',
       }));
@@ -185,6 +191,17 @@ export default function BankChecksPage() {
       alert(error?.message || 'Error al registrar el cheque bancario.');
     }
   };
+
+  const selectedBank = (banks || []).find((b: any) => b.id === form.banco);
+  const bankAccountLabel = (() => {
+    if (selectedBank?.chart_account_id) {
+      const acc = accountsById[selectedBank.chart_account_id];
+      if (acc) {
+        return `${acc.code} - ${acc.name}`;
+      }
+    }
+    return form.cuentaBanco;
+  })();
 
   return (
     <DashboardLayout>
@@ -207,7 +224,7 @@ export default function BankChecksPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Banco</label>
               <select
                 value={form.banco}
-                onChange={(e) => handleChange('banco', e.target.value)}
+                onChange={(e) => handleBankChange(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Seleccione un banco...</option>
@@ -218,29 +235,30 @@ export default function BankChecksPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de Banco (Cuenta Contable)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Factura de CxP (opcional)</label>
               <select
-                value={form.cuentaBanco}
-                onChange={(e) => handleChange('cuentaBanco', e.target.value)}
+                value={form.apInvoiceId}
+                onChange={(e) => handleChange('apInvoiceId', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                <option value="">Seleccione una cuenta...</option>
-                {banks
-                  .filter((b: any) => b.id === form.banco && b.chart_account_id)
-                  .map((b: any) => {
-                    const acc = accountsById[b.chart_account_id];
-                    if (!acc) return null;
-                    const value = acc.code;
-                    if (form.cuentaBanco !== value) {
-                      setForm(prev => ({ ...prev, cuentaBanco: value }));
-                    }
-                    return (
-                      <option key={acc.id} value={value}>
-                        {acc.code} - {acc.name}
-                      </option>
-                    );
-                  })}
+                <option value="">Sin factura vinculada</option>
+                {apInvoices.map((inv: any) => (
+                  <option key={inv.id} value={inv.id}>
+                    {inv.invoice_number || inv.document_type || 'FAC'} - {(inv.suppliers as any)?.name || 'Suplidor'} - {inv.balance_amount ?? inv.total_to_pay ?? inv.total_gross}
+                  </option>
+                ))}
               </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de Banco (Cuenta Contable)</label>
+              <input
+                type="text"
+                value={bankAccountLabel || ''}
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+                placeholder="Se asigna automáticamente según el banco seleccionado"
+              />
             </div>
 
             <div>
@@ -283,20 +301,12 @@ export default function BankChecksPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
-              <select
+              <input
+                type="text"
                 value={form.moneda}
-                onChange={(e) => handleChange('moneda', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                {currencies.length === 0 && (
-                  <option value="DOP">Peso Dominicano (DOP)</option>
-                )}
-                {currencies.map((c: any) => (
-                  <option key={c.id} value={c.code}>
-                    {c.name} ({c.code})
-                  </option>
-                ))}
-              </select>
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+              />
             </div>
 
             <div>

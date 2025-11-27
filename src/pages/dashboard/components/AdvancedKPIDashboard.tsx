@@ -228,8 +228,10 @@ export default function AdvancedKPIDashboard() {
     new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(amount || 0);
 
   const formatPercentage = (value: number, total: number) => {
-    if (!total || total === 0) return '0%';
-    return `${((value / total) * 100).toFixed(1)}%`;
+    const base = Math.abs(total);
+    if (!base || base === 0) return '0%';
+    const perc = (Math.abs(value) / base) * 100;
+    return `${perc.toFixed(1)}%`;
   };
 
   if (loading) {
@@ -242,7 +244,12 @@ export default function AdvancedKPIDashboard() {
 
   const maxValue = Math.max(
     1,
-    ...chartData.flatMap((d) => [d.revenue, d.costs, d.expenses, d.profit]),
+    ...chartData.flatMap((d) => [
+      Math.abs(d.revenue),
+      Math.abs(d.costs),
+      Math.abs(d.expenses),
+      Math.abs(d.profit),
+    ]),
   );
 
   return (
@@ -277,7 +284,7 @@ export default function AdvancedKPIDashboard() {
           onClick={() => setShowBankModal(true)}
         >
           <p className="text-sm text-gray-600">Disponibilidades en Bancos</p>
-          <p className="text-2xl font-bold text-blue-600">{formatCurrency(kpi.bankBalance)}</p>
+          <p className="text-2xl font-bold text-blue-600">{formatCurrency(Math.abs(kpi.bankBalance))}</p>
           <p className="text-xs text-gray-400 mt-1">Click para ver detalle</p>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
@@ -296,7 +303,7 @@ export default function AdvancedKPIDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-purple-50 p-4 rounded">
             <p className="text-sm text-gray-600">Ingresos</p>
-            <p className="text-xl font-bold text-purple-600">{formatCurrency(kpi.revenue)}</p>
+            <p className="text-xl font-bold text-purple-600">{formatCurrency(Math.abs(kpi.revenue))}</p>
           </div>
           <div className="bg-orange-50 p-4 rounded">
             <p className="text-sm text-gray-600">Costos</p>
@@ -324,22 +331,22 @@ export default function AdvancedKPIDashboard() {
                   <div className="flex items-end justify-center space-x-1 h-48 w-full">
                     <div
                       className="bg-purple-500 rounded-t flex-1"
-                      style={{ height: `${Math.max((d.revenue / maxValue) * 100, 2)}%` }}
+                      style={{ height: `${Math.max((Math.abs(d.revenue) / maxValue) * 100, 2)}%` }}
                       title={`Ingresos: ${formatCurrency(d.revenue)}`}
                     />
                     <div
                       className="bg-orange-500 rounded-t flex-1"
-                      style={{ height: `${Math.max((d.costs / maxValue) * 100, 2)}%` }}
+                      style={{ height: `${Math.max((Math.abs(d.costs) / maxValue) * 100, 2)}%` }}
                       title={`Costos: ${formatCurrency(d.costs)}`}
                     />
                     <div
                       className="bg-red-500 rounded-t flex-1"
-                      style={{ height: `${Math.max((d.expenses / maxValue) * 100, 2)}%` }}
+                      style={{ height: `${Math.max((Math.abs(d.expenses) / maxValue) * 100, 2)}%` }}
                       title={`Gastos: ${formatCurrency(d.expenses)}`}
                     />
                     <div
                       className="bg-teal-500 rounded-t flex-1"
-                      style={{ height: `${Math.max((d.profit / maxValue) * 100, 2)}%` }}
+                      style={{ height: `${Math.max((Math.abs(d.profit) / maxValue) * 100, 2)}%` }}
                       title={`Utilidad: ${formatCurrency(d.profit)}`}
                     />
                   </div>

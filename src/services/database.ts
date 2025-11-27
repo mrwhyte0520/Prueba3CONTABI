@@ -651,6 +651,7 @@ export const bankChecksService = {
     check_date: string;
     description: string;
     expense_account_code?: string;
+    ap_invoice_id?: string | null;
   }) {
     try {
       if (!userId) throw new Error('userId required');
@@ -715,6 +716,53 @@ export const bankChecksService = {
             ];
 
             await journalEntriesService.createWithLines(userId, entryPayload, lines);
+
+            // Marcar factura de CxP como pagada o parcial y actualizar saldo si el cheque está vinculado a una factura
+            if (check.ap_invoice_id) {
+              try {
+                const { data: invoice, error: invError } = await supabase
+                  .from('ap_invoices')
+                  .select('id, user_id, total_to_pay, paid_amount, balance_amount, status')
+                  .eq('id', check.ap_invoice_id)
+                  .maybeSingle();
+
+                if (!invError && invoice && invoice.user_id === userId) {
+                  const totalToPay = Number(invoice.total_to_pay) || 0;
+                  const currentPaid = Number((invoice as any).paid_amount) || 0;
+                  const currentBalance = Number((invoice as any).balance_amount) || totalToPay;
+
+                  const remainingBefore = totalToPay > 0 ? Math.max(totalToPay - currentPaid, 0) : currentBalance;
+                  const amountToApply = totalToPay > 0 ? Math.min(amount, remainingBefore) : amount;
+
+                  const newPaid = currentPaid + amountToApply;
+                  const newBalance = totalToPay > 0
+                    ? Math.max(totalToPay - newPaid, 0)
+                    : Math.max(currentBalance - amountToApply, 0);
+
+                  let newStatus = invoice.status || 'pending';
+                  if (totalToPay > 0) {
+                    if (newBalance <= 0.01) {
+                      newStatus = 'paid';
+                    } else if (newPaid > 0) {
+                      newStatus = 'partial';
+                    }
+                  }
+
+                  await supabase
+                    .from('ap_invoices')
+                    .update({
+                      status: newStatus,
+                      paid_amount: newPaid,
+                      balance_amount: newBalance,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq('id', invoice.id);
+                }
+              } catch (updateApError) {
+                // No interrumpir el flujo del cheque por errores al actualizar la factura de CxP
+                console.error('Error updating AP invoice status from bankChecksService:', updateApError);
+              }
+            }
           }
         }
       } catch (jeError) {
@@ -781,6 +829,29 @@ export const paymentRequestsService = {
       return data;
     } catch (error) {
       console.error('paymentRequestsService.create error', error);
+      throw error;
+    }
+  },
+
+  async updateStatus(id: string, status: string) {
+    try {
+      const { data, error } = await supabase
+        .from('bank_payment_requests')
+        .update({ status, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select('*');
+
+      if (error) throw error;
+
+      const rows = (data || []) as any[];
+      if (!rows.length) {
+        console.warn('paymentRequestsService.updateStatus: no se encontró la solicitud con id', id);
+        return null;
+      }
+
+      return rows[0];
+    } catch (error) {
+      console.error('paymentRequestsService.updateStatus error', error);
       throw error;
     }
   },
@@ -949,6 +1020,66 @@ export const bankExchangeRatesService = {
     } catch (error) {
       console.error('bankExchangeRatesService.create error', error);
       throw error;
+    }
+  },
+
+  /**
+   * Obtiene la tasa cambiaria vigente para un par de monedas en una fecha dada.
+   * Busca primero el par directo (base -> destino) y, si no existe, intenta el par inverso (destino -> base) invirtiendo la tasa.
+   */
+  async getEffectiveRate(
+    userId: string,
+    baseCurrencyCode: string,
+    targetCurrencyCode: string,
+    onDate: string,
+  ): Promise<number | null> {
+    try {
+      if (!userId) return null;
+      if (!baseCurrencyCode || !targetCurrencyCode) return null;
+      if (baseCurrencyCode === targetCurrencyCode) return 1;
+
+      const asOf = onDate || new Date().toISOString().slice(0, 10);
+
+      // Buscar tasa directa base -> destino
+      const { data: direct, error: directError } = await supabase
+        .from('bank_exchange_rates')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('base_currency_code', baseCurrencyCode)
+        .eq('target_currency_code', targetCurrencyCode)
+        .lte('valid_from', asOf)
+        .or('valid_to.is.null,valid_to.gte.' + asOf)
+        .order('valid_from', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!directError && direct && typeof direct.rate === 'number' && direct.rate > 0) {
+        return Number(direct.rate) || null;
+      }
+
+      // Si no hay directa, intentar tasa inversa destino -> base
+      const { data: inverse, error: inverseError } = await supabase
+        .from('bank_exchange_rates')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('base_currency_code', targetCurrencyCode)
+        .eq('target_currency_code', baseCurrencyCode)
+        .lte('valid_from', asOf)
+        .or('valid_to.is.null,valid_to.gte.' + asOf)
+        .order('valid_from', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!inverseError && inverse && typeof inverse.rate === 'number' && inverse.rate > 0) {
+        return 1 / Number(inverse.rate);
+      }
+
+      return null;
+    } catch (error) {
+      console.error('bankExchangeRatesService.getEffectiveRate error', error);
+      return null;
     }
   },
 };
@@ -2694,6 +2825,50 @@ export const bankReconciliationService = {
     } catch (error) {
       console.error('bankReconciliationService.getOrCreateReconciliation error', error);
       throw error;
+    }
+  },
+
+  async getBookBalanceForBankAccount(
+    userId: string,
+    bankAccountId: string,
+    asOfDate: string,
+  ): Promise<number> {
+    try {
+      if (!userId || !bankAccountId || !asOfDate) {
+        return 0;
+      }
+
+      const { data: bank, error: bankError } = await supabase
+        .from('bank_accounts')
+        .select('chart_account_id')
+        .eq('id', bankAccountId)
+        .maybeSingle();
+
+      if (bankError) {
+        console.error('bankReconciliationService.getBookBalanceForBankAccount bank error', bankError);
+        return 0;
+      }
+
+      const chartAccountId = (bank as any)?.chart_account_id as string | null | undefined;
+      if (!chartAccountId) {
+        return 0;
+      }
+
+      const trial = await financialReportsService.getTrialBalance(
+        userId,
+        '1900-01-01',
+        asOfDate,
+      );
+
+      const accountRow = (trial || []).find((acc: any) => acc.account_id === chartAccountId);
+      const balance = accountRow ? Number(accountRow.balance) || 0 : 0;
+      return balance;
+    } catch (error) {
+      console.error(
+        'bankReconciliationService.getBookBalanceForBankAccount unexpected error',
+        error,
+      );
+      return 0;
     }
   },
 
@@ -4946,6 +5121,11 @@ export const apInvoicesService = {
         user_id: userId,
         created_at: invoice.created_at || now,
         updated_at: invoice.updated_at || now,
+        paid_amount: typeof (invoice as any).paid_amount === 'number' ? (invoice as any).paid_amount : 0,
+        balance_amount:
+          typeof (invoice as any).balance_amount === 'number'
+            ? (invoice as any).balance_amount
+            : invoice.total_to_pay,
       };
       const { data, error } = await supabase
         .from('ap_invoices')
@@ -5373,7 +5553,7 @@ export const supplierPaymentsService = {
         .single();
       if (error) throw error;
 
-      // Best-effort: registrar asiento contable solo cuando el pago se completa
+      // Best-effort: registrar asiento contable y actualizar CxP solo cuando el pago se completa
       if (data && status === 'Completado') {
         try {
           // Obtener configuración contable global
@@ -5428,6 +5608,54 @@ export const supplierPaymentsService = {
             };
 
             await journalEntriesService.createWithLines(data.user_id, entryPayload, lines);
+          }
+
+          // Actualizar saldo de la factura de CxP si el pago está vinculado a una factura
+          if (amount > 0 && data.invoice_number) {
+            try {
+              const { data: invoice, error: invError } = await supabase
+                .from('ap_invoices')
+                .select('id, user_id, supplier_id, invoice_number, total_to_pay, paid_amount, balance_amount, status')
+                .eq('user_id', data.user_id)
+                .eq('supplier_id', data.supplier_id)
+                .eq('invoice_number', data.invoice_number)
+                .maybeSingle();
+
+              if (!invError && invoice) {
+                const totalToPay = Number(invoice.total_to_pay) || 0;
+                const currentPaid = Number((invoice as any).paid_amount) || 0;
+                const currentBalance = Number((invoice as any).balance_amount) || totalToPay;
+
+                const remainingBefore = totalToPay > 0 ? Math.max(totalToPay - currentPaid, 0) : currentBalance;
+                const amountToApply = totalToPay > 0 ? Math.min(amount, remainingBefore) : amount;
+
+                const newPaid = currentPaid + amountToApply;
+                const newBalance = totalToPay > 0
+                  ? Math.max(totalToPay - newPaid, 0)
+                  : Math.max(currentBalance - amountToApply, 0);
+
+                let newStatus = invoice.status || 'pending';
+                if (totalToPay > 0) {
+                  if (newBalance <= 0.01) {
+                    newStatus = 'paid';
+                  } else if (newPaid > 0) {
+                    newStatus = 'partial';
+                  }
+                }
+
+                await supabase
+                  .from('ap_invoices')
+                  .update({
+                    status: newStatus,
+                    paid_amount: newPaid,
+                    balance_amount: newBalance,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', invoice.id);
+              }
+            } catch (updateApError) {
+              console.error('Error updating AP invoice from supplierPaymentsService:', updateApError);
+            }
           }
         } catch (err) {
           console.error('Error posting supplier payment to ledger:', err);

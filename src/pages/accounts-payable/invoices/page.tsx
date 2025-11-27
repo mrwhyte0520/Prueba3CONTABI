@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { apInvoicesService, apInvoiceLinesService, suppliersService, paymentTermsService, chartAccountsService } from '../../../services/database';
+import {
+  apInvoicesService,
+  apInvoiceLinesService,
+  suppliersService,
+  paymentTermsService,
+  chartAccountsService,
+  bankCurrenciesService,
+  bankExchangeRatesService,
+} from '../../../services/database';
 
 interface APInvoice {
   id: string;
@@ -36,6 +44,10 @@ export default function APInvoicesPage() {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<any[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<any[]>([]);
+  const [currencies, setCurrencies] = useState<
+    Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>
+  >([]);
+  const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -88,25 +100,78 @@ export default function APInvoicesPage() {
   const loadInvoices = async () => {
     if (!user?.id) return;
     try {
-      const rows = await apInvoicesService.getAll(user.id);
-      const mapped: APInvoice[] = (rows || []).map((inv: any) => ({
-        id: String(inv.id),
-        supplierId: String(inv.supplier_id),
-        supplierName: (inv.suppliers as any)?.name || 'Suplidor',
-        invoiceNumber: inv.invoice_number || '',
-        documentType: inv.document_type || '',
-        taxId: inv.tax_id || '',
-        legalName: inv.legal_name || '',
-        invoiceDate: inv.invoice_date || '',
-        dueDate: inv.due_date || null,
-        paymentTermsId: inv.payment_terms_id || null,
-        currency: inv.currency || 'DOP',
-        totalGross: Number(inv.total_gross) || 0,
-        totalItbis: Number(inv.total_itbis) || 0,
-        totalIsrWithheld: Number(inv.total_isr_withheld) || 0,
-        totalToPay: Number(inv.total_to_pay) || 0,
-        status: inv.status || 'pending',
+      const uid = user.id;
+
+      const [rows, currs] = await Promise.all([
+        apInvoicesService.getAll(uid),
+        bankCurrenciesService.getAll(uid),
+      ]);
+
+      const mappedCurrencies = (currs || []).map((c: any) => ({
+        code: c.code as string,
+        name: c.name as string,
+        symbol: c.symbol as string,
+        is_base: !!c.is_base,
+        is_active: c.is_active !== false,
+      })).filter((c) => c.is_active);
+      setCurrencies(mappedCurrencies);
+
+      const baseCurrency = mappedCurrencies.find((c) => c.is_base) || mappedCurrencies[0];
+      const baseCode = baseCurrency?.code || 'DOP';
+      setBaseCurrencyCode(baseCode);
+
+      const today = new Date().toISOString().slice(0, 10);
+
+      const mapped: APInvoice[] = await Promise.all((rows || []).map(async (inv: any) => {
+        const currency = (inv.currency as string) || baseCode;
+        const totalGross = Number(inv.total_gross) || 0;
+        const totalItbis = Number(inv.total_itbis) || 0;
+        const totalIsrWithheld = Number(inv.total_isr_withheld) || 0;
+        const totalToPay = Number(inv.total_to_pay) || 0;
+
+        let baseTotalToPay: number | null = totalToPay;
+        if (currency !== baseCode) {
+          try {
+            const rate = await bankExchangeRatesService.getEffectiveRate(
+              uid,
+              currency,
+              baseCode,
+              (inv.invoice_date as string) || today,
+            );
+            if (rate && rate > 0) {
+              baseTotalToPay = totalToPay * rate;
+            } else {
+              baseTotalToPay = null;
+            }
+          } catch (fxError) {
+            // eslint-disable-next-line no-console
+            console.error('Error calculando equivalente en moneda base para factura CxP', fxError);
+            baseTotalToPay = null;
+          }
+        }
+
+        return {
+          id: String(inv.id),
+          supplierId: String(inv.supplier_id),
+          supplierName: (inv.suppliers as any)?.name || 'Suplidor',
+          invoiceNumber: inv.invoice_number || '',
+          documentType: inv.document_type || '',
+          taxId: inv.tax_id || '',
+          legalName: inv.legal_name || '',
+          invoiceDate: inv.invoice_date || '',
+          dueDate: inv.due_date || null,
+          paymentTermsId: inv.payment_terms_id || null,
+          currency,
+          totalGross,
+          totalItbis,
+          totalIsrWithheld,
+          totalToPay,
+          status: inv.status || 'pending',
+          // campo adicional usado solo en UI; TypeScript lo admite porque APInvoice es estructura abierta
+          baseTotalToPay,
+        } as APInvoice;
       }));
+
       setInvoices(mapped);
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -155,7 +220,7 @@ export default function APInvoicesPage() {
       invoiceDate: new Date().toISOString().slice(0, 10),
       dueDate: '',
       paymentTermsId: '',
-      currency: 'DOP',
+      currency: baseCurrencyCode || 'DOP',
     });
     setLines([{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0' }]);
     setEditingInvoice(null);
@@ -397,7 +462,17 @@ export default function APInvoicesPage() {
                       <td className="px-4 py-2 whitespace-nowrap text-gray-900">{inv.dueDate || '-'}</td>
                       <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900">{inv.currency} {inv.totalGross.toLocaleString()}</td>
                       <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900">{inv.currency} {inv.totalItbis.toLocaleString()}</td>
-                      <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900 font-semibold">{inv.currency} {inv.totalToPay.toLocaleString()}</td>
+                      <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900 font-semibold">
+                        <div>
+                          {inv.currency} {inv.totalToPay.toLocaleString()}
+                        </div>
+                        {(inv as any).baseTotalToPay != null && inv.currency !== baseCurrencyCode && (
+                          <div className="text-xs text-gray-500">
+                            ≈ {baseCurrencyCode}{' '}
+                            {(inv as any).baseTotalToPay.toLocaleString()}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-4 py-2 whitespace-nowrap">
                         <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusBadgeClass(inv.status)}`}>
                           {inv.status}
@@ -549,9 +624,19 @@ export default function APInvoicesPage() {
                       onChange={(e) => setHeaderForm(prev => ({ ...prev, currency: e.target.value }))}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
-                      <option value="DOP">DOP</option>
-                      <option value="USD">USD</option>
-                      <option value="EUR">EUR</option>
+                      {currencies.length === 0 ? (
+                        <>
+                          <option value="DOP">DOP</option>
+                          <option value="USD">USD</option>
+                          <option value="EUR">EUR</option>
+                        </>
+                      ) : (
+                        currencies.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.code} - {c.name}
+                          </option>
+                        ))
+                      )}
                     </select>
                   </div>
                 </div>

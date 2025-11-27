@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
 import {
@@ -38,12 +39,14 @@ type StatementBalances = {
 
 export default function BankReconciliationPage() {
   const { user } = useAuth();
+  const location = useLocation();
   const [movements, setMovements] = useState<BankMovement[]>([]);
   const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedBankAccountId, setSelectedBankAccountId] = useState('');
   const [reconciliationDate, setReconciliationDate] = useState(
     new Date().toISOString().split('T')[0],
   );
+  const [selectedMonth, setSelectedMonth] = useState('');
   const [filters, setFilters] = useState<Filters>({
     bankAccountSearch: '',
     fromDate: '',
@@ -56,6 +59,61 @@ export default function BankReconciliationPage() {
   const [reconciledIds, setReconciledIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bookBalance, setBookBalance] = useState<number | null>(null);
+  const [historicalItems, setHistoricalItems] = useState<any[] | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const bankAccountId = params.get('bank_account_id');
+    const dateParam = params.get('date');
+    const reconciliationIdParam = params.get('reconciliation_id');
+
+    if (bankAccountId) {
+      setSelectedBankAccountId(bankAccountId);
+    }
+
+    if (dateParam) {
+      // Si viene una fecha específica, usamos su mes para el filtro de periodo
+      const [yearStr, monthStr] = dateParam.split('-');
+      const year = Number(yearStr);
+      const month = Number(monthStr);
+      if (year && month) {
+        const firstDay = new Date(year, month - 1, 1);
+        const lastDay = new Date(year, month, 0);
+        const from = firstDay.toISOString().slice(0, 10);
+        const to = lastDay.toISOString().slice(0, 10);
+
+        setSelectedMonth(`${yearStr}-${monthStr}`);
+        setFilters((prev) => ({
+          ...prev,
+          fromDate: from,
+          toDate: to,
+        }));
+        setReconciliationDate(to);
+      } else {
+        setReconciliationDate(dateParam);
+        setFilters((prev) => ({
+          ...prev,
+          toDate: dateParam,
+        }));
+      }
+    }
+
+    if (reconciliationIdParam) {
+      bankReconciliationService
+        .getItems(reconciliationIdParam)
+        .then((items: any[]) => {
+          setHistoricalItems(items || []);
+        })
+        .catch((err: any) => {
+          // eslint-disable-next-line no-console
+          console.error('Error loading historical reconciliation items:', err);
+          setHistoricalItems(null);
+        });
+    } else {
+      setHistoricalItems(null);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -63,10 +121,12 @@ export default function BankReconciliationPage() {
     const loadBankAccounts = async () => {
       try {
         const data = await bankAccountsService.getAll(user.id);
-        const mapped = (data || []).map((ba: any) => ({
-          id: ba.id as string,
-          name: `${ba.bank_name} - ${ba.account_number}`,
-        }));
+        const mapped = (data || [])
+          .filter((ba: any) => ba.chart_account_id)
+          .map((ba: any) => ({
+            id: ba.id as string,
+            name: `${ba.bank_name} - ${ba.account_number}`,
+          }));
         setBankAccounts(mapped);
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -173,7 +233,7 @@ export default function BankReconciliationPage() {
         normalized.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
 
         setMovements(normalized);
-        setReconciledIds(new Set());
+        setReconciledIds(new Set(normalized.map((m) => m.id)));
       } catch (e: any) {
         setError(e?.message || 'Error cargando movimientos bancarios para conciliación');
       } finally {
@@ -183,6 +243,38 @@ export default function BankReconciliationPage() {
 
     load();
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !selectedBankAccountId || !reconciliationDate) {
+      setBookBalance(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const balance = await bankReconciliationService.getBookBalanceForBankAccount(
+          user.id,
+          selectedBankAccountId,
+          reconciliationDate,
+        );
+        if (!cancelled) {
+          setBookBalance(balance);
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading book balance for bank reconciliation:', err);
+        if (!cancelled) {
+          setBookBalance(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, selectedBankAccountId, reconciliationDate]);
 
   const handleFilterChange = (field: keyof Filters, value: string) => {
     setFilters((prev) => ({
@@ -196,6 +288,28 @@ export default function BankReconciliationPage() {
       ...prev,
       [field]: value,
     }));
+  };
+
+  const handleMonthChange = (value: string) => {
+    setSelectedMonth(value);
+    if (!value) return;
+
+    const [yearStr, monthStr] = value.split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    if (!year || !month) return;
+
+    const firstDay = new Date(year, month - 1, 1);
+    const lastDay = new Date(year, month, 0);
+    const from = firstDay.toISOString().slice(0, 10);
+    const to = lastDay.toISOString().slice(0, 10);
+
+    setFilters((prev) => ({
+      ...prev,
+      fromDate: from,
+      toDate: to,
+    }));
+    setReconciliationDate(to);
   };
 
   const toggleReconciled = (id: string) => {
@@ -212,6 +326,10 @@ export default function BankReconciliationPage() {
 
   const filteredMovements = useMemo(() => {
     return movements.filter((m) => {
+      if (selectedBankAccountId && m.bank_id !== selectedBankAccountId) {
+        return false;
+      }
+
       if (
         filters.bankAccountSearch &&
         !(
@@ -227,7 +345,7 @@ export default function BankReconciliationPage() {
 
       return true;
     });
-  }, [movements, filters]);
+  }, [movements, filters, selectedBankAccountId]);
 
   const getSignedAmount = (m: BankMovement) => {
     // Para conciliación, tratamos:
@@ -265,6 +383,53 @@ export default function BankReconciliationPage() {
       difference,
     };
   }, [filteredMovements, reconciledIds, statement]);
+
+  const reconciliationMetrics = useMemo(() => {
+    let chargesTotal = 0;
+    let depositsInTransit = 0;
+    let checksInTransit = 0;
+
+    filteredMovements.forEach((m) => {
+      const signed = getSignedAmount(m);
+      if (m.type === 'charge') {
+        chargesTotal += signed;
+      }
+      if (!reconciledIds.has(m.id)) {
+        if (m.type === 'deposit') {
+          depositsInTransit += signed;
+        }
+        if (m.type === 'check') {
+          checksInTransit += Math.abs(signed);
+        }
+      }
+    });
+
+    const saldoConciliado = totals.calculatedClosing;
+    const saldoPorConciliar = totals.difference;
+
+    return {
+      chargesTotal,
+      depositsInTransit,
+      checksInTransit,
+      saldoConciliado,
+      saldoPorConciliar,
+    };
+  }, [filteredMovements, reconciledIds, totals]);
+
+  const inTransitMovements = useMemo(
+    () => filteredMovements.filter((m) => !reconciledIds.has(m.id)),
+    [filteredMovements, reconciledIds],
+  );
+
+  const historicalConciliated = useMemo(
+    () => (historicalItems || []).filter((i: any) => i.is_reconciled),
+    [historicalItems],
+  );
+
+  const historicalInTransit = useMemo(
+    () => (historicalItems || []).filter((i: any) => !i.is_reconciled),
+    [historicalItems],
+  );
 
   const formatCurrency = (value: number) =>
     value.toLocaleString(undefined, {
@@ -305,16 +470,23 @@ export default function BankReconciliationPage() {
       return;
     }
 
+    const closingStr = statement.closing.trim();
+    if (!closingStr) {
+      alert('Debe indicar el saldo final del extracto del banco.');
+      return;
+    }
+
     try {
-      const opening = Number(statement.opening.replace(',', '.')) || 0;
-      const bookBalance = totals.calculatedClosing;
+      const closing = Number(closingStr.replace(',', '.')) || 0;
+      const bookBalanceValue =
+        bookBalance !== null && !Number.isNaN(bookBalance) ? bookBalance : totals.calculatedClosing;
 
       const reconciliation = await bankReconciliationService.getOrCreateReconciliation(
         user.id,
         selectedBankAccountId,
         reconciliationDate,
-        opening,
-        bookBalance,
+        closing,
+        bookBalanceValue,
       );
 
       // Persistir items de conciliación para todos los movimientos visibles
@@ -355,7 +527,7 @@ export default function BankReconciliationPage() {
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="space-y-1">
                 <label className="block text-sm font-medium text-gray-700">
                   Cuenta de Banco
@@ -372,6 +544,16 @@ export default function BankReconciliationPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-sm font-medium text-gray-700">Mes a conciliar</label>
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => handleMonthChange(e.target.value)}
+                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                />
               </div>
 
               <div className="space-y-1">
@@ -448,11 +630,23 @@ export default function BankReconciliationPage() {
           <div className="bg-white rounded-lg shadow p-4 space-y-3">
             <h2 className="text-lg font-semibold">Resumen de conciliación</h2>
 
-            <div className="text-sm">
+            <div className="text-sm space-y-2">
+              <div className="flex justify-between py-1 border-b border-dashed border-gray-200">
+                <span className="text-gray-600">Saldo en Libros (contable):</span>
+                <span className="font-mono">
+                  {bookBalance !== null ? formatCurrency(bookBalance) : '-'}
+                </span>
+              </div>
               <div className="flex justify-between py-1 border-b border-dashed border-gray-200">
                 <span className="text-gray-600">Saldo inicial extracto:</span>
                 <span className="font-mono">
                   {formatCurrency(totals.opening)}
+                </span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-dashed border-gray-200">
+                <span className="text-gray-600">Saldo final extracto (banco):</span>
+                <span className="font-mono">
+                  {formatCurrency(totals.closing)}
                 </span>
               </div>
               <div className="flex justify-between py-1 border-b border-dashed border-gray-200">
@@ -462,34 +656,45 @@ export default function BankReconciliationPage() {
                 </span>
               </div>
               <div className="flex justify-between py-1 border-b border-dashed border-gray-200">
-                <span className="text-gray-600">Saldo calculado (sist.+conc.):</span>
+                <span className="text-gray-600">Saldo conciliado (sist.+conc.):</span>
                 <span className="font-mono">
-                  {formatCurrency(totals.calculatedClosing)}
+                  {formatCurrency(reconciliationMetrics.saldoConciliado)}
                 </span>
               </div>
               <div className="flex justify-between py-1 border-b border-dashed border-gray-200">
-                <span className="text-gray-600">Saldo final extracto:</span>
+                <span className="text-gray-600">Cargos bancarios del periodo:</span>
                 <span className="font-mono">
-                  {formatCurrency(totals.closing)}
+                  {formatCurrency(reconciliationMetrics.chargesTotal)}
+                </span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-dashed border-gray-200">
+                <span className="text-gray-600">Depósitos en tránsito:</span>
+                <span className="font-mono">
+                  {formatCurrency(reconciliationMetrics.depositsInTransit)}
+                </span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-dashed border-gray-200">
+                <span className="text-gray-600">Cheques en tránsito:</span>
+                <span className="font-mono">
+                  {formatCurrency(reconciliationMetrics.checksInTransit)}
                 </span>
               </div>
               <div className="flex justify-between py-1 mt-1">
-                <span className="font-medium text-gray-700">Diferencia:</span>
+                <span className="font-medium text-gray-700">Saldo por conciliar:</span>
                 <span
                   className={`font-mono font-semibold ${
-                    Math.abs(totals.difference) < 0.01
+                    Math.abs(reconciliationMetrics.saldoPorConciliar) < 0.01
                       ? 'text-emerald-600'
                       : 'text-red-600'
                   }`}
                 >
-                  {formatCurrency(totals.difference)}
+                  {formatCurrency(reconciliationMetrics.saldoPorConciliar)}
                 </span>
               </div>
             </div>
 
             <div className="text-xs text-gray-500">
-              Para una conciliación perfecta, la diferencia debe ser 0.00.
-              Esta primera versión no guarda la conciliación; es solo para análisis en pantalla.
+              Para una conciliación perfecta, el saldo por conciliar debe ser 0.00.
             </div>
           </div>
         </div>
@@ -567,6 +772,143 @@ export default function BankReconciliationPage() {
             </div>
           )}
         </div>
+
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold">Transacciones en tránsito (no conciliadas)</h2>
+          </div>
+
+          {inTransitMovements.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              No hay transacciones en tránsito para los filtros actuales.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Fecha</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Tipo</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Cuenta/Banco</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Moneda</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-700">Monto (+/-)</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Referencia</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Descripción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {inTransitMovements.map((m) => {
+                    const signed = getSignedAmount(m);
+                    return (
+                      <tr key={`${m.type}-${m.id}`}>
+                        <td className="px-3 py-2 text-xs text-gray-600">
+                          {m.date ? new Date(m.date).toLocaleDateString() : ''}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          <span className="inline-flex items-center rounded-full bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-700">
+                            {formatTypeLabel(m.type)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-700">
+                          {m.bank_account_code || m.bank_id || '-'}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-700">{m.currency}</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs">
+                          {signed >= 0 ? '+' : '-'}
+                          {formatCurrency(Math.abs(signed))}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-700">
+                          {m.reference || '-'}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-gray-700 max-w-xs truncate">
+                          {m.description || ''}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {historicalItems && historicalItems.length > 0 && (
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold">Detalle histórico de la conciliación guardada</h2>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800 mb-2">Movimientos conciliados</h3>
+                {historicalConciliated.length === 0 ? (
+                  <p className="text-xs text-gray-500">No hay movimientos conciliados en esta conciliación.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200 text-xs">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Fecha</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Descripción</th>
+                          <th className="px-3 py-2 text-right font-medium text-gray-700">Monto</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {historicalConciliated.map((item: any) => (
+                          <tr key={item.id}>
+                            <td className="px-3 py-2 text-gray-600">
+                              {item.transaction_date
+                                ? new Date(item.transaction_date).toLocaleDateString()
+                                : ''}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700 max-w-xs truncate">{item.description}</td>
+                            <td className="px-3 py-2 text-right font-mono">
+                              {formatCurrency(Number(item.amount) || 0)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800 mb-2">Movimientos en tránsito</h3>
+                {historicalInTransit.length === 0 ? (
+                  <p className="text-xs text-gray-500">No hay movimientos en tránsito en esta conciliación.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200 text-xs">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Fecha</th>
+                          <th className="px-3 py-2 text-left font-medium text-gray-700">Descripción</th>
+                          <th className="px-3 py-2 text-right font-medium text-gray-700">Monto</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {historicalInTransit.map((item: any) => (
+                          <tr key={item.id}>
+                            <td className="px-3 py-2 text-gray-600">
+                              {item.transaction_date
+                                ? new Date(item.transaction_date).toLocaleDateString()
+                                : ''}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700 max-w-xs truncate">{item.description}</td>
+                            <td className="px-3 py-2 text-right font-mono">
+                              {formatCurrency(Number(item.amount) || 0)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

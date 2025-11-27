@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, bankCurrenciesService, chartAccountsService, paymentRequestsService } from '../../services/database';
+import { bankAccountsService, chartAccountsService, paymentRequestsService } from '../../services/database';
 
 interface PaymentRequest {
   id: string;
@@ -20,7 +20,6 @@ export default function BankPaymentRequestsPage() {
   const [requests, setRequests] = useState<PaymentRequest[]>([]);
   const [banks, setBanks] = useState<any[]>([]);
   const [accountsById, setAccountsById] = useState<Record<string, { id: string; code: string; name: string }>>({});
-  const [currencies, setCurrencies] = useState<any[]>([]);
   const [form, setForm] = useState({
     banco: '',
     cuentaBanco: '',
@@ -33,6 +32,26 @@ export default function BankPaymentRequestsPage() {
 
   const handleChange = (field: keyof typeof form, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleBankChange = (bankId: string) => {
+    setForm(prev => {
+      const next = { ...prev, banco: bankId };
+      const selectedBank = (banks || []).find((b: any) => b.id === bankId);
+      if (selectedBank) {
+        const accountId = selectedBank.chart_account_id as string | undefined;
+        if (accountId) {
+          const acc = accountsById[accountId];
+          if (acc) {
+            next.cuentaBanco = acc.code;
+          }
+        }
+        if (selectedBank.currency) {
+          next.moneda = selectedBank.currency;
+        }
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -82,27 +101,6 @@ export default function BankPaymentRequestsPage() {
     };
 
     loadBanksAndAccounts();
-  }, [user?.id]);
-
-  useEffect(() => {
-    const loadCurrencies = async () => {
-      if (!user?.id) return;
-      try {
-        const data = await bankCurrenciesService.getAll(user.id);
-        const list = data || [];
-        setCurrencies(list);
-
-        if (list.length > 0) {
-          const base = list.find((c: any) => c.is_base);
-          const firstCode = (base || list[0]).code || 'DOP';
-          setForm(prev => ({ ...prev, moneda: prev.moneda || firstCode }));
-        }
-      } catch (error) {
-        console.error('Error cargando monedas para solicitudes de pago', error);
-      }
-    };
-
-    loadCurrencies();
   }, [user?.id]);
 
   const handleAddRequest = async (e: React.FormEvent) => {
@@ -159,6 +157,35 @@ export default function BankPaymentRequestsPage() {
     }
   };
 
+  const handleChangeStatus = async (requestId: string, newStatus: 'approved' | 'rejected') => {
+    if (!user?.id) {
+      alert('Usuario no autenticado. Inicie sesión nuevamente.');
+      return;
+    }
+    try {
+      const updated = await paymentRequestsService.updateStatus(requestId, newStatus);
+      setRequests(prev => prev.map(req =>
+        req.id === requestId
+          ? { ...req, estado: updated?.status || newStatus }
+          : req,
+      ));
+    } catch (error: any) {
+      console.error('Error actualizando estado de solicitud de pago:', error);
+      alert(error?.message || 'Error al actualizar el estado de la solicitud de pago.');
+    }
+  };
+
+  const selectedBank = (banks || []).find((b: any) => b.id === form.banco);
+  const bankAccountLabel = (() => {
+    if (selectedBank?.chart_account_id) {
+      const acc = accountsById[selectedBank.chart_account_id];
+      if (acc) {
+        return `${acc.code} - ${acc.name}`;
+      }
+    }
+    return form.cuentaBanco;
+  })();
+
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6">
@@ -180,40 +207,27 @@ export default function BankPaymentRequestsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Banco</label>
               <select
                 value={form.banco}
-                onChange={(e) => handleChange('banco', e.target.value)}
+                onChange={(e) => handleBankChange(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Seleccione un banco...</option>
-                {banks.map((b: any) => (
-                  <option key={b.id} value={b.id}>{b.bank_name}</option>
-                ))}
+                {banks
+                  .filter((b: any) => b.use_payment_requests !== false)
+                  .map((b: any) => (
+                    <option key={b.id} value={b.id}>{b.bank_name}</option>
+                  ))}
               </select>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de Banco (Cuenta Contable)</label>
-              <select
-                value={form.cuentaBanco}
-                onChange={(e) => handleChange('cuentaBanco', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Seleccione una cuenta...</option>
-                {banks
-                  .filter((b: any) => b.id === form.banco && b.chart_account_id)
-                  .map((b: any) => {
-                    const acc = accountsById[b.chart_account_id];
-                    if (!acc) return null;
-                    const value = acc.code;
-                    if (form.cuentaBanco !== value) {
-                      setForm(prev => ({ ...prev, cuentaBanco: value }));
-                    }
-                    return (
-                      <option key={acc.id} value={value}>
-                        {acc.code} - {acc.name}
-                      </option>
-                    );
-                  })}
-              </select>
+              <input
+                type="text"
+                value={bankAccountLabel || ''}
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+                placeholder="Se asigna automáticamente según el banco seleccionado"
+              />
             </div>
 
             <div>
@@ -229,20 +243,12 @@ export default function BankPaymentRequestsPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
-              <select
+              <input
+                type="text"
                 value={form.moneda}
-                onChange={(e) => handleChange('moneda', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                {currencies.length === 0 && (
-                  <option value="DOP">Peso Dominicano (DOP)</option>
-                )}
-                {currencies.map((c: any) => (
-                  <option key={c.id} value={c.code}>
-                    {c.name} ({c.code})
-                  </option>
-                ))}
-              </select>
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+              />
             </div>
 
             <div>
@@ -312,6 +318,7 @@ export default function BankPaymentRequestsPage() {
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Moneda</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Estado</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Descripción</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-600">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
@@ -344,6 +351,28 @@ export default function BankPaymentRequestsPage() {
                         <td className="px-4 py-2 whitespace-nowrap text-gray-900">{currencyLabel}</td>
                         <td className="px-4 py-2 whitespace-nowrap text-gray-900">{statusLabel}</td>
                         <td className="px-4 py-2 text-gray-900">{req.descripcion}</td>
+                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">
+                          {req.estado === 'pending' ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleChangeStatus(req.id, 'approved')}
+                                className="px-2 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700"
+                              >
+                                Aprobar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleChangeStatus(req.id, 'rejected')}
+                                className="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700"
+                              >
+                                Rechazar
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-500">Sin acciones</span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
