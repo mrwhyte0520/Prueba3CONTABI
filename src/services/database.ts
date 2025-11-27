@@ -1661,10 +1661,14 @@ export const chartAccountsService = {
       const liabilities = data?.filter((account: any) => account.type === 'liability') || [];
       const equity = data?.filter((account: any) => account.type === 'equity') || [];
 
-      const totalAssets = assets.reduce((sum: number, account: any) => sum + Math.abs(account.balance || 0), 0);
-      const totalLiabilities = liabilities.reduce((sum: number, account: any) => sum + Math.abs(account.balance || 0), 0);
-      const totalEquity = equity.reduce((sum: number, account: any) => sum + Math.abs(account.balance || 0), 0);
+      // Para el balance general, usamos el signo del saldo para que las contra-cuentas
+      // (por ejemplo, depreciaciones acumuladas como contra-activo) reduzcan el total.
+      const totalAssets = assets.reduce((sum: number, account: any) => sum + (account.balance || 0), 0);
+      const totalLiabilities = liabilities.reduce((sum: number, account: any) => sum + (account.balance || 0), 0);
+      const totalEquity = equity.reduce((sum: number, account: any) => sum + (account.balance || 0), 0);
 
+      // A nivel de detalle, seguimos exponiendo el saldo en valor absoluto para no
+      // cambiar el formato de presentación de líneas individuales.
       return {
         assets: assets.map((acc: any) => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
         liabilities: liabilities.map((acc: any) => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
@@ -1747,8 +1751,10 @@ export const chartAccountsService = {
     if (!userId) {
       return {
         income: [],
+        costs: [],
         expenses: [],
         totalIncome: 0,
+        totalCosts: 0,
         totalExpenses: 0,
         netIncome: 0,
         fromDate,
@@ -1766,11 +1772,12 @@ export const chartAccountsService = {
 
       if (error) {
         console.error('Error in generateIncomeStatement:', error);
-        // Retornar datos de ejemplo
         return {
           income: [],
+          costs: [],
           expenses: [],
           totalIncome: 0,
+          totalCosts: 0,
           totalExpenses: 0,
           netIncome: 0,
           fromDate,
@@ -1779,17 +1786,26 @@ export const chartAccountsService = {
       }
 
       const income = data?.filter(account => account.type === 'income') || [];
-      // Por ahora, tratar las cuentas de tipo 'cost' como parte de gastos en el estado de resultados
-      const expenses = data?.filter(account => account.type === 'expense' || account.type === 'cost') || [];
+      const costs = data?.filter(account => account.type === 'cost') || [];
+      const expenses = data?.filter(account => account.type === 'expense') || [];
 
-      const totalIncome = income.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
+      // Para ingresos usamos el signo del saldo; esto permite que cuentas como
+      // devoluciones o descuentos sobre ventas (registradas con movimientos en
+      // sentido contrario) disminuyan el ingreso total.
+      const totalIncome = income.reduce((sum, account) => sum + (account.balance || 0), 0);
+
+      // Para costos y gastos seguimos utilizando el valor absoluto como magnitud
+      // de consumo, y los restamos del ingreso total para obtener la utilidad.
+      const totalCosts = costs.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
       const totalExpenses = expenses.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
-      const netIncome = totalIncome - totalExpenses;
+      const netIncome = totalIncome - totalCosts - totalExpenses;
 
       return {
         income: income.map(acc => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
+        costs: costs.map(acc => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
         expenses: expenses.map(acc => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
         totalIncome,
+        totalCosts,
         totalExpenses,
         netIncome,
         fromDate,
@@ -1799,8 +1815,10 @@ export const chartAccountsService = {
       console.error('Error generating income statement:', error);
       return {
         income: [],
+        costs: [],
         expenses: [],
         totalIncome: 0,
+        totalCosts: 0,
         totalExpenses: 0,
         netIncome: 0,
         fromDate,

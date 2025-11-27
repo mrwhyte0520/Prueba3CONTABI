@@ -152,6 +152,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Estados Financieros', href: '/accounting/financial-statements' },
         { name: 'Diario General', href: '/accounting/general-journal' },
         { name: 'Mayor General', href: '/accounting/general-ledger' },
+        { name: 'Balanza de Comprobación', href: '/accounting/trial-balance' },
         { name: 'Períodos Contables', href: '/accounting/periods' }
       ]
     },

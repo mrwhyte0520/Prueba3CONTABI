@@ -34,18 +34,57 @@ interface Account {
   type: string;
 }
 
+interface AccountingPeriod {
+  id: string;
+  name: string;
+  start_date: string;
+  end_date: string;
+  fiscal_year: string;
+  status: string;
+}
+
+const getEntryDocumentType = (entry: JournalEntry): string => {
+  const num = entry.entry_number || '';
+  const desc = (entry.description || '').toLowerCase();
+
+  if (num.startsWith('JE-')) return 'Asiento manual';
+  if (num.startsWith('BCG-')) return 'Cargo bancario';
+  if (num.startsWith('DEP-')) return 'Depósito bancario';
+  if (num.startsWith('CRD-')) return 'Crédito bancario';
+  if (num.startsWith('TRF-')) return 'Transferencia bancaria';
+  if (num.startsWith('CHK-')) return 'Cheque';
+  if (num.startsWith('INV-MOV-')) return 'Movimiento de inventario';
+  if (num.endsWith('-COGS')) return 'Costo de ventas';
+  if (num.startsWith('PCF-')) return 'Fondo de caja chica';
+  if (num.startsWith('PCE-')) return 'Gasto de caja chica';
+  if (num.startsWith('PCT-')) return 'Reembolso de caja chica';
+
+  if (desc.includes('factura suplidor')) return 'Factura de suplidor';
+  if (desc.startsWith('factura ')) return 'Factura de venta';
+  if (desc.includes('pago a proveedor')) return 'Pago a proveedor';
+
+  return 'Otro';
+};
+
 const GeneralJournalPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [periods, setPeriods] = useState<AccountingPeriod[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [documentTypeFilter, setDocumentTypeFilter] = useState('all');
+  const [selectedFiscalYear, setSelectedFiscalYear] = useState('');
+  const [selectedPeriodId, setSelectedPeriodId] = useState('');
 
   // Formulario para nuevo asiento
   const [formData, setFormData] = useState({
@@ -91,9 +130,16 @@ const GeneralJournalPage: React.FC = () => {
         .eq('is_active', true)
         .order('code');
 
-      if (!entriesError && !accountsError) {
+      const { data: periodsData, error: periodsError } = await supabase
+        .from('accounting_periods')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('start_date', { ascending: false });
+
+      if (!entriesError && !accountsError && !periodsError) {
         setEntries(entriesData || []);
         setAccounts(accountsData || []);
+        setPeriods(periodsData || []);
       } else {
         throw new Error('Error loading from Supabase');
       }
@@ -111,7 +157,7 @@ const GeneralJournalPage: React.FC = () => {
     setAccounts([]);
   };
 
-  const handleCreateEntry = async () => {
+  const handleSaveEntry = async () => {
     if (!user) return;
 
     try {
@@ -139,51 +185,92 @@ const GeneralJournalPage: React.FC = () => {
         return;
       }
 
-      // Generar número de asiento
-      const entryNumber = `JE-${Date.now().toString().slice(-6)}`;
-
-      const entryData = {
-        user_id: user.id,
-        entry_number: entryNumber,
-        entry_date: formData.entry_date,
-        description: formData.description,
-        reference: formData.reference,
-        total_debit: totalDebit,
-        total_credit: totalCredit,
-        status: 'posted'
-      };
+      const validLines = formData.lines.filter(line => 
+        line.account_id && (line.debit_amount > 0 || line.credit_amount > 0)
+      );
 
       try {
-        const { data: entry, error: entryError } = await supabase
-          .from('journal_entries')
-          .insert([entryData])
-          .select()
-          .single();
+        if (isEditing && editingEntryId) {
+          // Actualizar asiento existente
+          const { data: updatedEntry, error: entryError } = await supabase
+            .from('journal_entries')
+            .update({
+              entry_date: formData.entry_date,
+              description: formData.description,
+              reference: formData.reference,
+              total_debit: totalDebit,
+              total_credit: totalCredit,
+            })
+            .eq('id', editingEntryId)
+            .eq('user_id', user.id)
+            .select()
+            .single();
 
-        if (entryError) throw entryError;
+          if (entryError) throw entryError;
 
-        // Crear líneas del asiento
-        const validLines = formData.lines.filter(line => 
-          line.account_id && (line.debit_amount > 0 || line.credit_amount > 0)
-        );
+          // Reemplazar líneas del asiento
+          const { error: deleteError } = await supabase
+            .from('journal_entry_lines')
+            .delete()
+            .eq('journal_entry_id', editingEntryId);
 
-        const linesData = validLines.map((line, index) => ({
-          journal_entry_id: entry.id,
-          account_id: line.account_id,
-          debit_amount: line.debit_amount || 0,
-          credit_amount: line.credit_amount || 0,
-          description: line.description,
-          line_number: index + 1,
-        }));
+          if (deleteError) throw deleteError;
 
-        const { error: linesError } = await supabase
-          .from('journal_entry_lines')
-          .insert(linesData);
+          const linesData = validLines.map((line, index) => ({
+            journal_entry_id: updatedEntry.id,
+            account_id: line.account_id,
+            debit_amount: line.debit_amount || 0,
+            credit_amount: line.credit_amount || 0,
+            description: line.description,
+            line_number: index + 1,
+          }));
 
-        if (linesError) throw linesError;
+          const { error: linesError } = await supabase
+            .from('journal_entry_lines')
+            .insert(linesData);
+
+          if (linesError) throw linesError;
+        } else {
+          // Crear nuevo asiento
+          const entryNumber = `JE-${Date.now().toString().slice(-6)}`;
+
+          const entryData = {
+            user_id: user.id,
+            entry_number: entryNumber,
+            entry_date: formData.entry_date,
+            description: formData.description,
+            reference: formData.reference,
+            total_debit: totalDebit,
+            total_credit: totalCredit,
+            status: 'posted'
+          };
+
+          const { data: entry, error: entryError } = await supabase
+            .from('journal_entries')
+            .insert([entryData])
+            .select()
+            .single();
+
+          if (entryError) throw entryError;
+
+          const linesData = validLines.map((line, index) => ({
+            journal_entry_id: entry.id,
+            account_id: line.account_id,
+            debit_amount: line.debit_amount || 0,
+            credit_amount: line.credit_amount || 0,
+            description: line.description,
+            line_number: index + 1,
+          }));
+
+          const { error: linesError } = await supabase
+            .from('journal_entry_lines')
+            .insert(linesData);
+
+          if (linesError) throw linesError;
+        }
       } catch (supabaseError) {
         console.error('Supabase error:', supabaseError);
-        alert('No se pudo crear el asiento en la base de datos. Inténtelo nuevamente.');
+        alert('No se pudo guardar el asiento en la base de datos. Inténtelo nuevamente.');
         return;
       }
       
@@ -197,9 +284,10 @@ const GeneralJournalPage: React.FC = () => {
           { account_id: '', debit_amount: 0, credit_amount: 0, description: '' }
         ]
       });
-      
+      setIsEditing(false);
+      setEditingEntryId(null);
       setShowCreateModal(false);
-      alert('Asiento contable creado exitosamente');
+      alert('Asiento contable guardado exitosamente');
       loadData();
     } catch (error) {
       console.error('Error creating entry:', error);
@@ -296,6 +384,23 @@ const GeneralJournalPage: React.FC = () => {
     }));
   };
 
+  const handleEditClick = (entry: JournalEntry) => {
+    setIsEditing(true);
+    setEditingEntryId(entry.id);
+    setFormData({
+      entry_date: entry.entry_date.slice(0, 10),
+      description: entry.description || '',
+      reference: entry.reference || '',
+      lines: entry.journal_entry_lines.map(line => ({
+        account_id: line.account_id,
+        debit_amount: line.debit_amount || 0,
+        credit_amount: line.credit_amount || 0,
+        description: line.description || '',
+      }))
+    });
+    setShowCreateModal(true);
+  };
+
   const removeLine = (index: number) => {
     if (formData.lines.length > 2) {
       setFormData(prev => ({
@@ -370,6 +475,10 @@ const GeneralJournalPage: React.FC = () => {
     }
   };
 
+  const documentTypes = Array.from(
+    new Set(entries.map((entry) => getEntryDocumentType(entry)))
+  ).sort();
+
   const filteredEntries = entries.filter(entry => {
     const matchesSearch = entry.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          entry.entry_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -379,9 +488,17 @@ const GeneralJournalPage: React.FC = () => {
     const matchesTo = !dateTo || entry.entry_date <= dateTo;
     const matchesDate = matchesFrom && matchesTo;
     const matchesStatus = statusFilter === 'all' || entry.status === statusFilter;
+    const matchesAccount =
+      !selectedAccountId ||
+      entry.journal_entry_lines?.some(line => line.account_id === selectedAccountId);
+    const entryType = getEntryDocumentType(entry);
+    const matchesDocumentType = documentTypeFilter === 'all' || entryType === documentTypeFilter;
     
-    return matchesSearch && matchesDate && matchesStatus;
+    return matchesSearch && matchesDate && matchesStatus && matchesAccount && matchesDocumentType;
   });
+
+  const totalDebitsFiltered = filteredEntries.reduce((sum, entry) => sum + (entry.total_debit || 0), 0);
+  const totalCreditsFiltered = filteredEntries.reduce((sum, entry) => sum + (entry.total_credit || 0), 0);
 
   const totalDebit = formData.lines.reduce((sum, line) => sum + (line.debit_amount || 0), 0);
   const totalCredit = formData.lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
@@ -403,6 +520,19 @@ const GeneralJournalPage: React.FC = () => {
     noInvalidLines &&
     hasBothSides &&
     !!formData.description;
+
+  const fiscalYears = Array.from(new Set(periods.map((p) => p.fiscal_year))).sort((a, b) => Number(b) - Number(a));
+
+  const visiblePeriods = periods.filter((p) => !selectedFiscalYear || p.fiscal_year === selectedFiscalYear);
+
+  const handlePeriodChange = (periodId: string) => {
+    setSelectedPeriodId(periodId);
+    const period = periods.find((p) => p.id === periodId);
+    if (period) {
+      setDateFrom(period.start_date.slice(0, 10));
+      setDateTo(period.end_date.slice(0, 10));
+    }
+  };
 
   if (loading) {
     return (
@@ -511,7 +641,7 @@ const GeneralJournalPage: React.FC = () => {
       <div className="bg-white rounded-lg shadow mb-6">
         <div className="p-6 border-b border-gray-200">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4">
               <div className="relative">
                 <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
                 <input
@@ -519,27 +649,77 @@ const GeneralJournalPage: React.FC = () => {
                   placeholder="Buscar asientos..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
-              
+              <select
+                value={selectedFiscalYear}
+                onChange={(e) => {
+                  setSelectedFiscalYear(e.target.value);
+                  setSelectedPeriodId('');
+                }}
+                className="w-full sm:w-40 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+              >
+                <option value="">Año fiscal (todos)</option>
+                {fiscalYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={selectedPeriodId}
+                onChange={(e) => handlePeriodChange(e.target.value)}
+                className="w-full sm:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+              >
+                <option value="">Período contable (todos)</option>
+                {visiblePeriods.map((period) => (
+                  <option key={period.id} value={period.id}>
+                    {period.name} ({new Date(period.start_date).toLocaleDateString('es-DO')} - {new Date(period.end_date).toLocaleDateString('es-DO')})
+                  </option>
+                ))}
+              </select>
               <input
                 type="date"
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full sm:w-40 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <input
                 type="date"
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full sm:w-40 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+              <select
+                value={selectedAccountId}
+                onChange={(e) => setSelectedAccountId(e.target.value)}
+                className="w-full sm:w-72 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+              >
+                <option value="">Todas las cuentas</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.code} - {account.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={documentTypeFilter}
+                onChange={(e) => setDocumentTypeFilter(e.target.value)}
+                className="w-full sm:w-60 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+              >
+                <option value="all">Todos los documentos</option>
+                {documentTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
               
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+                className="w-full sm:w-48 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
               >
                 <option value="all">Todos los estados</option>
                 <option value="draft">Borrador</option>
@@ -560,6 +740,9 @@ const GeneralJournalPage: React.FC = () => {
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Fecha
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Documento
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Descripción
@@ -589,6 +772,9 @@ const GeneralJournalPage: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {new Date(entry.entry_date).toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {getEntryDocumentType(entry)}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-900">
                     {entry.description}
@@ -625,7 +811,7 @@ const GeneralJournalPage: React.FC = () => {
                     <button 
                       className="text-gray-600 hover:text-gray-900 mr-3" 
                       title="Editar"
-                      onClick={() => alert('Función de edición en desarrollo')}
+                      onClick={() => handleEditClick(entry)}
                     >
                       <i className="ri-edit-line"></i>
                     </button>
@@ -640,6 +826,20 @@ const GeneralJournalPage: React.FC = () => {
                 </tr>
               ))}
             </tbody>
+            <tfoot className="bg-gray-50">
+              <tr>
+                <td colSpan={4} className="px-6 py-3 text-right font-semibold text-gray-900">
+                  Totales del reporte:
+                </td>
+                <td className="px-6 py-3 font-bold text-gray-900">
+                  RD${totalDebitsFiltered.toLocaleString()}
+                </td>
+                <td className="px-6 py-3 font-bold text-gray-900">
+                  RD${totalCreditsFiltered.toLocaleString()}
+                </td>
+                <td colSpan={2}></td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       </div>
@@ -831,11 +1031,11 @@ const GeneralJournalPage: React.FC = () => {
                   Cancelar
                 </button>
                 <button
-                  onClick={handleCreateEntry}
+                  onClick={handleSaveEntry}
                   disabled={!canSave}
                   className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
-                  Crear Asiento
+                  {isEditing ? 'Guardar Cambios' : 'Crear Asiento'}
                 </button>
               </div>
             </div>

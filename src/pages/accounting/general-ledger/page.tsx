@@ -13,6 +13,15 @@ interface Account {
   normalBalance: string;
 }
 
+interface AccountingPeriod {
+  id: string;
+  name: string;
+  start_date: string;
+  end_date: string;
+  fiscal_year: string;
+  status: string;
+}
+
 interface LedgerEntry {
   id: string;
   date: string;
@@ -24,17 +33,44 @@ interface LedgerEntry {
   entryNumber: string;
 }
 
+const getEntryDocumentType = (entry: LedgerEntry): string => {
+  const num = entry.entryNumber || '';
+  const desc = (entry.description || '').toLowerCase();
+
+  if (num.startsWith('JE-')) return 'Asiento manual';
+  if (num.startsWith('BCG-')) return 'Cargo bancario';
+  if (num.startsWith('DEP-')) return 'Depósito bancario';
+  if (num.startsWith('CRD-')) return 'Crédito bancario';
+  if (num.startsWith('TRF-')) return 'Transferencia bancaria';
+  if (num.startsWith('CHK-')) return 'Cheque';
+  if (num.startsWith('INV-MOV-')) return 'Movimiento de inventario';
+  if (num.endsWith('-COGS')) return 'Costo de ventas';
+  if (num.startsWith('PCF-')) return 'Fondo de caja chica';
+  if (num.startsWith('PCE-')) return 'Gasto de caja chica';
+  if (num.startsWith('PCT-')) return 'Reembolso de caja chica';
+
+  if (desc.includes('factura suplidor')) return 'Factura de suplidor';
+  if (desc.startsWith('factura ')) return 'Factura de venta';
+  if (desc.includes('pago a proveedor')) return 'Pago a proveedor';
+
+  return 'Otro';
+};
+
 const GeneralLedgerPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
+  const [periods, setPeriods] = useState<AccountingPeriod[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [accountTypeFilter, setAccountTypeFilter] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [selectedFiscalYear, setSelectedFiscalYear] = useState('');
+  const [selectedPeriodId, setSelectedPeriodId] = useState('');
+  const [documentTypeFilter, setDocumentTypeFilter] = useState<string[]>([]);
 
   useEffect(() => {
     loadAccounts();
@@ -44,7 +80,7 @@ const GeneralLedgerPage: React.FC = () => {
     if (selectedAccount) {
       loadLedgerEntries(selectedAccount.id);
     }
-  }, [selectedAccount, dateFrom, dateTo]);
+  }, [selectedAccount]);
 
   const loadAccounts = async () => {
     if (!user) return;
@@ -52,14 +88,20 @@ const GeneralLedgerPage: React.FC = () => {
     try {
       setLoading(true);
       
-      const { data: accountsData, error } = await supabase
+      const { data: accountsData, error: accountsError } = await supabase
         .from('chart_accounts')
         .select('*')
         .eq('user_id', user.id)
         .eq('is_active', true)
         .order('code');
 
-      if (!error && accountsData) {
+      const { data: periodsData, error: periodsError } = await supabase
+        .from('accounting_periods')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('start_date', { ascending: false });
+
+      if (!accountsError && accountsData && !periodsError && periodsData) {
         const processedAccounts = accountsData.map(account => ({
           id: account.id,
           code: account.code,
@@ -69,6 +111,7 @@ const GeneralLedgerPage: React.FC = () => {
           normalBalance: account.normal_balance || 'debit'
         }));
         setAccounts(processedAccounts);
+        setPeriods(periodsData);
       } else {
         throw new Error('Error loading from Supabase');
       }
@@ -101,13 +144,6 @@ const GeneralLedgerPage: React.FC = () => {
           chart_accounts:chart_accounts!inner(id)
         `)
         .eq('account_id', accountId);
-
-      if (dateFrom) {
-        query = query.gte('journal_entries.entry_date', dateFrom);
-      }
-      if (dateTo) {
-        query = query.lte('journal_entries.entry_date', dateTo);
-      }
 
       // Orden por fecha de asiento ascendente para balance acumulado
       const { data, error } = await query.order('entry_date', { ascending: true, foreignTable: 'journal_entries' });
@@ -216,6 +252,66 @@ const GeneralLedgerPage: React.FC = () => {
     const isNormal = (normalBalance === 'debit' && isPositive) || (normalBalance === 'credit' && !isPositive);
     return isNormal ? 'text-green-600' : 'text-red-600';
   };
+
+  const fiscalYears = Array.from(new Set(periods.map((p) => p.fiscal_year))).sort(
+    (a, b) => Number(b) - Number(a)
+  );
+
+  const visiblePeriods = periods.filter(
+    (p) => !selectedFiscalYear || p.fiscal_year === selectedFiscalYear
+  );
+
+  const handlePeriodChange = (periodId: string) => {
+    setSelectedPeriodId(periodId);
+    const period = periods.find((p) => p.id === periodId);
+    if (period) {
+      setDateFrom(period.start_date.slice(0, 10));
+      setDateTo(period.end_date.slice(0, 10));
+    }
+  };
+
+  const filteredByDate = ledgerEntries.filter((entry) => {
+    const entryDate = entry.date;
+    const matchesFrom = !dateFrom || entryDate >= dateFrom;
+    const matchesTo = !dateTo || entryDate <= dateTo;
+    return matchesFrom && matchesTo;
+  });
+
+  const filteredByDocumentType = filteredByDate.filter((entry) => {
+    if (documentTypeFilter.length === 0) return true;
+    const type = getEntryDocumentType(entry);
+    return documentTypeFilter.includes(type);
+  });
+
+  const filteredLedgerEntries = filteredByDocumentType;
+
+  let openingBalance = 0;
+  if (dateFrom) {
+    for (const entry of ledgerEntries) {
+      if (entry.date < dateFrom) {
+        openingBalance = entry.balance;
+      } else {
+        break;
+      }
+    }
+  }
+
+  const totalDebits = filteredLedgerEntries.reduce(
+    (sum, entry) => sum + entry.debit,
+    0
+  );
+  const totalCredits = filteredLedgerEntries.reduce(
+    (sum, entry) => sum + entry.credit,
+    0
+  );
+  const finalBalance =
+    filteredLedgerEntries.length > 0
+      ? filteredLedgerEntries[filteredLedgerEntries.length - 1].balance
+      : openingBalance;
+
+  const documentTypes = Array.from(
+    new Set(ledgerEntries.map((entry) => getEntryDocumentType(entry)))
+  ).sort();
 
   if (loading) {
     return (
@@ -418,6 +514,69 @@ const GeneralLedgerPage: React.FC = () => {
                 </div>
 
                 {/* Date Filters */}
+                <div className="flex flex-col sm:flex-row gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Año Fiscal
+                    </label>
+                    <select
+                      value={selectedFiscalYear}
+                      onChange={(e) => {
+                        setSelectedFiscalYear(e.target.value);
+                        setSelectedPeriodId('');
+                      }}
+                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm pr-8"
+                    >
+                      <option value="">Todos</option>
+                      {fiscalYears.map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Período Contable
+                    </label>
+                    <select
+                      value={selectedPeriodId}
+                      onChange={(e) => handlePeriodChange(e.target.value)}
+                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm pr-8"
+                    >
+                      <option value="">Todos</option>
+                      {visiblePeriods.map((period) => (
+                        <option key={period.id} value={period.id}>
+                          {period.name} ({new Date(period.start_date).toLocaleDateString('es-DO')} -{' '}
+                          {new Date(period.end_date).toLocaleDateString('es-DO')})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Tipo de documento
+                    </label>
+                    <select
+                      multiple
+                      value={documentTypeFilter}
+                      onChange={(e) => {
+                        const options = Array.from(e.target.selectedOptions).map((option) => option.value);
+                        setDocumentTypeFilter(options);
+                      }}
+                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    >
+                      {documentTypes.map((type) => (
+                        <option key={type} value={type}>
+                          {type}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Si no seleccionas ningún tipo, se muestran todos.
+                    </p>
+                  </div>
+                </div>
                 <div className="flex flex-col sm:flex-row gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -446,6 +605,9 @@ const GeneralLedgerPage: React.FC = () => {
                       onClick={() => {
                         setDateFrom('');
                         setDateTo('');
+                        setSelectedFiscalYear('');
+                        setSelectedPeriodId('');
+                        setDocumentTypeFilter([]);
                       }}
                       className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
                     >
@@ -461,10 +623,13 @@ const GeneralLedgerPage: React.FC = () => {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Fecha
+                        Asiento
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Asiento
+                        Documento
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Fecha
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Descripción
@@ -484,57 +649,87 @@ const GeneralLedgerPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {ledgerEntries.length > 0 ? (
-                      ledgerEntries.map((entry, index) => (
-                        <tr key={entry.id} className="hover:bg-gray-50">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {new Date(entry.date).toLocaleDateString()}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
-                            {entry.entryNumber}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-900">
-                            {entry.description}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {entry.reference}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {entry.debit > 0 ? `RD$${entry.debit.toLocaleString()}` : '-'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {entry.credit > 0 ? `RD$${entry.credit.toLocaleString()}` : '-'}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            RD${Math.abs(entry.balance).toLocaleString()}
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
+                    {ledgerEntries.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                        <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
                           <div className="flex flex-col items-center">
                             <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
                             <p>No hay movimientos para esta cuenta en el período seleccionado</p>
                           </div>
                         </td>
                       </tr>
+                    ) : (
+                      <>
+                        <tr className="bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"></td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            Balance inicial
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900"></td>
+                          <td className="px-6 py-4 text-sm text-gray-900"></td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500"></td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            RD${Math.abs(openingBalance).toLocaleString()}
+                          </td>
+                        </tr>
+                        {filteredLedgerEntries.length > 0 ? (
+                          filteredLedgerEntries.map((entry) => (
+                            <tr key={entry.id} className="hover:bg-gray-50">
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
+                                {entry.entryNumber}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {getEntryDocumentType(entry)}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {new Date(entry.date).toLocaleDateString()}
+                              </td>
+                              <td className="px-6 py-4 text-sm text-gray-900">
+                                {entry.description}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {entry.reference}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {entry.debit > 0 ? `RD$${entry.debit.toLocaleString()}` : '-'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {entry.credit > 0 ? `RD$${entry.credit.toLocaleString()}` : '-'}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                RD${Math.abs(entry.balance).toLocaleString()}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
+                              <div className="flex flex-col items-center">
+                                <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
+                                <p>No hay movimientos para esta cuenta en el período seleccionado</p>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
                     )}
                   </tbody>
                   {ledgerEntries.length > 0 && (
                     <tfoot className="bg-gray-50">
                       <tr>
-                        <td colSpan={4} className="px-6 py-3 text-right font-medium text-gray-900">
+                        <td colSpan={5} className="px-6 py-3 text-right font-medium text-gray-900">
                           Totales:
                         </td>
                         <td className="px-6 py-3 font-bold text-gray-900">
-                          RD${ledgerEntries.reduce((sum, entry) => sum + entry.debit, 0).toLocaleString()}
+                          RD${totalDebits.toLocaleString()}
                         </td>
                         <td className="px-6 py-3 font-bold text-gray-900">
-                          RD${ledgerEntries.reduce((sum, entry) => sum + entry.credit, 0).toLocaleString()}
+                          RD${totalCredits.toLocaleString()}
                         </td>
                         <td className="px-6 py-3 font-bold text-gray-900">
-                          RD${Math.abs(ledgerEntries[ledgerEntries.length - 1]?.balance || 0).toLocaleString()}
+                          RD${Math.abs(finalBalance).toLocaleString()}
                         </td>
                       </tr>
                     </tfoot>
@@ -548,24 +743,24 @@ const GeneralLedgerPage: React.FC = () => {
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Movimientos</div>
-                      <div className="text-lg font-bold text-gray-900">{ledgerEntries.length}</div>
+                      <div className="text-lg font-bold text-gray-900">{filteredLedgerEntries.length}</div>
                     </div>
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Débitos</div>
                       <div className="text-lg font-bold text-green-600">
-                        RD${ledgerEntries.reduce((sum, entry) => sum + entry.debit, 0).toLocaleString()}
+                        RD${totalDebits.toLocaleString()}
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Créditos</div>
                       <div className="text-lg font-bold text-red-600">
-                        RD${ledgerEntries.reduce((sum, entry) => sum + entry.credit, 0).toLocaleString()}
+                        RD${totalCredits.toLocaleString()}
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Balance Final</div>
-                      <div className={`text-lg font-bold ${getBalanceColor(selectedAccount.balance, selectedAccount.normalBalance)}`}>
-                        RD${Math.abs(ledgerEntries[ledgerEntries.length - 1]?.balance || 0).toLocaleString()}
+                      <div className={`text-lg font-bold ${getBalanceColor(finalBalance, selectedAccount.normalBalance)}`}>
+                        RD${Math.abs(finalBalance).toLocaleString()}
                       </div>
                     </div>
                   </div>

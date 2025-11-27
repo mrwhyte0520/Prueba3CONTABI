@@ -1,298 +1,426 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
-import { chartAccountsService, invoicesService } from '../../../services/database';
+import { chartAccountsService, accountingSettingsService } from '../../../services/database';
+
+type PeriodType = 'weekly' | 'monthly' | 'quarterly' | 'semiannual' | 'annual';
 
 interface KPIData {
-  totalRevenue: number;
-  totalExpenses: number;
-  netProfit: number;
-  pendingInvoices: number;
-  cashFlow: number;
-  profitMargin: number;
-  liquidityRatio: number;
-  efficiency: number;
-  monthlyGrowth: number;
-  customerSatisfaction: number;
+  bankBalance: number;
+  receivables: number;
+  payables: number;
+  revenue: number;
+  costs: number;
+  expenses: number;
+  profit: number;
 }
 
 interface ChartData {
-  month: string;
-  ingresos: number;
-  gastos: number;
+  label: string;
+  revenue: number;
+  costs: number;
+  expenses: number;
+  profit: number;
 }
 
-interface ExpenseData {
-  category: string;
-  amount: number;
-  color: string;
+interface BankAccountInfo {
+  id: string;
+  code: string;
+  name: string;
+  balance: number;
 }
 
 export default function AdvancedKPIDashboard() {
   const { user } = useAuth();
-  const [kpiData, setKpiData] = useState<KPIData>({
-    totalRevenue: 0,
-    totalExpenses: 0,
-    netProfit: 0,
-    pendingInvoices: 0,
-    cashFlow: 0,
-    profitMargin: 0,
-    liquidityRatio: 0,
-    efficiency: 0,
-    monthlyGrowth: 0,
-    customerSatisfaction: 0
+  const [loading, setLoading] = useState(true);
+  const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>('monthly');
+
+  const [kpi, setKpi] = useState<KPIData>({
+    bankBalance: 0,
+    receivables: 0,
+    payables: 0,
+    revenue: 0,
+    costs: 0,
+    expenses: 0,
+    profit: 0,
   });
+
   const [chartData, setChartData] = useState<ChartData[]>([]);
-  const [expenseData, setExpenseData] = useState<ExpenseData[]>([]);
-  const [pendingAmount, setPendingAmount] = useState(0);
+  const [bankAccounts, setBankAccounts] = useState<BankAccountInfo[]>([]);
+  const [showBankModal, setShowBankModal] = useState(false);
+
+  interface PeriodRange {
+    label: string;
+    from: string;
+    to: string;
+  }
+
+  const getPeriodRanges = (period: PeriodType): PeriodRange[] => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const today = now.getDate();
+
+    switch (period) {
+      case 'weekly': {
+        const ranges: PeriodRange[] = [];
+        for (let i = 3; i >= 0; i--) {
+          const end = new Date(year, month, today);
+          end.setDate(end.getDate() - i * 7);
+          const start = new Date(end);
+          start.setDate(end.getDate() - 6);
+          ranges.push({
+            label: `Sem ${4 - i}`,
+            from: start.toISOString().slice(0, 10),
+            to: end.toISOString().slice(0, 10),
+          });
+        }
+        return ranges;
+      }
+      case 'monthly': {
+        const start = new Date(year, month, 1);
+        const end = new Date(year, month + 1, 0);
+        return [
+          {
+            label: now.toLocaleString('es-DO', { month: 'short' }),
+            from: start.toISOString().slice(0, 10),
+            to: end.toISOString().slice(0, 10),
+          },
+        ];
+      }
+      case 'quarterly': {
+        const currentQuarter = Math.floor(month / 3);
+        const ranges: PeriodRange[] = [];
+        const startQuarter = Math.max(0, currentQuarter - 3);
+        for (let q = startQuarter; q <= currentQuarter; q++) {
+          const start = new Date(year, q * 3, 1);
+          const end = q === currentQuarter ? now : new Date(year, q * 3 + 3, 0);
+          ranges.push({
+            label: `Q${q + 1}`,
+            from: start.toISOString().slice(0, 10),
+            to: end.toISOString().slice(0, 10),
+          });
+        }
+        return ranges;
+      }
+      case 'semiannual': {
+        const currentSemester = Math.floor(month / 6);
+        const ranges: PeriodRange[] = [];
+        for (let s = 0; s <= currentSemester; s++) {
+          const start = new Date(year, s * 6, 1);
+          const end = s === currentSemester ? now : new Date(year, s * 6 + 6, 0);
+          ranges.push({
+            label: `S${s + 1}`,
+            from: start.toISOString().slice(0, 10),
+            to: end.toISOString().slice(0, 10),
+          });
+        }
+        return ranges;
+      }
+      case 'annual': {
+        const start = new Date(year, 0, 1);
+        return [
+          {
+            label: year.toString(),
+            from: start.toISOString().slice(0, 10),
+            to: now.toISOString().slice(0, 10),
+          },
+        ];
+      }
+      default:
+        return [];
+    }
+  };
+
+  const fetchData = async () => {
+    if (!user?.id) return;
+    setLoading(true);
+
+    try {
+      const uid = user.id;
+      const ranges = getPeriodRanges(selectedPeriod);
+      if (ranges.length === 0) {
+        setLoading(false);
+        return;
+      }
+      const fromDate = ranges[0].from;
+      const toDate = ranges[ranges.length - 1].to;
+
+      const [incomeStmt, accounts, settings] = await Promise.all([
+        chartAccountsService.generateIncomeStatement(uid, fromDate, toDate),
+        chartAccountsService.getAll(uid),
+        accountingSettingsService.get(uid),
+      ]);
+
+      const revenue = incomeStmt.totalIncome || 0;
+      const costs = incomeStmt.totalCosts || 0;
+      const expenses = incomeStmt.totalExpenses || 0;
+      const profit = incomeStmt.netIncome || 0;
+
+      let bankTotal = 0;
+      let arTotal = 0;
+      let apTotal = 0;
+      const bankList: BankAccountInfo[] = [];
+
+      const arId = settings?.ar_account_id || null;
+      const apId = settings?.ap_account_id || null;
+
+      (accounts || []).forEach((acc: any) => {
+        const bal = Number(acc.balance || 0);
+        if (acc.isBankAccount) {
+          bankTotal += bal;
+          bankList.push({ id: acc.id, code: acc.code, name: acc.name, balance: bal });
+        }
+        if (arId && acc.id === arId) {
+          arTotal += bal;
+        }
+        if (apId && acc.id === apId) {
+          apTotal += Math.abs(bal);
+        }
+      });
+
+      setKpi({
+        bankBalance: bankTotal,
+        receivables: arTotal,
+        payables: apTotal,
+        revenue,
+        costs,
+        expenses,
+        profit,
+      });
+
+      setBankAccounts(bankList);
+
+      const chartPoints: ChartData[] = [];
+      for (const r of ranges) {
+        const stmt = await chartAccountsService.generateIncomeStatement(uid, r.from, r.to);
+        chartPoints.push({
+          label: r.label,
+          revenue: stmt.totalIncome || 0,
+          costs: stmt.totalCosts || 0,
+          expenses: stmt.totalExpenses || 0,
+          profit: stmt.netIncome || 0,
+        });
+      }
+      setChartData(chartPoints);
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+      setKpi({
+        bankBalance: 0,
+        receivables: 0,
+        payables: 0,
+        revenue: 0,
+        costs: 0,
+        expenses: 0,
+        profit: 0,
+      });
+      setChartData([]);
+      setBankAccounts([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const uid = user?.id || '';
-        // Rango del mes actual
-        const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth(), 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-        const fromDate = start.toISOString().slice(0, 10);
-        const toDate = end.toISOString().slice(0, 10);
-
-        const [incomeStmt, cashFlowRes, invoices] = await Promise.all([
-          chartAccountsService.generateIncomeStatement(uid, fromDate, toDate),
-          chartAccountsService.generateCashFlowStatement(uid, fromDate, toDate),
-          invoicesService.getAll(uid)
-        ]);
-
-        const totalRevenue = incomeStmt.totalIncome || 0;
-        const totalExpenses = incomeStmt.totalExpenses || 0;
-        const netProfit = incomeStmt.netIncome || 0;
-        const cashFlow = cashFlowRes.netCashFlow || 0;
-        const pendingInvoices = (invoices || []).filter((inv: any) => {
-          const status = (inv.status || '').toLowerCase();
-          return status === 'pending' || status === 'unpaid' || status === 'vencida';
-        }).length;
-        const pendingAmountCalc = (invoices || []).filter((inv: any) => {
-          const status = (inv.status || '').toLowerCase();
-          return status === 'pending' || status === 'unpaid' || status === 'vencida';
-        }).reduce((sum: number, inv: any) => sum + (inv.total_amount || inv.total || 0), 0);
-
-        const profitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
-
-        setKpiData(prev => ({
-          ...prev,
-          totalRevenue,
-          totalExpenses,
-          netProfit,
-          cashFlow,
-          pendingInvoices,
-          profitMargin,
-        }));
-        setPendingAmount(pendingAmountCalc);
-
-        // Datos para gráfico: una sola barra del mes actual
-        setChartData([{ month: now.toLocaleString('es-DO', { month: 'short' }), ingresos: totalRevenue, gastos: totalExpenses }]);
-
-        // Distribución de gastos: si hay detalle disponible, podríamos armar por categorías.
-        // De momento, dejamos vacío para evitar datos de prueba.
-        setExpenseData([]);
-      } catch (e) {
-        // En caso de error, dejamos los datos en cero (sin mocks)
-        setChartData([]);
-        setExpenseData([]);
-      }
-    };
-
     fetchData();
-  }, [user]);
+  }, [user, selectedPeriod]);
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('es-DO', {
-      style: 'currency',
-      currency: 'DOP'
-    }).format(amount);
+  const formatCurrency = (amount: number) =>
+    new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(amount || 0);
+
+  const formatPercentage = (value: number, total: number) => {
+    if (!total || total === 0) return '0%';
+    return `${((value / total) * 100).toFixed(1)}%`;
   };
 
-  const formatPercentage = (value: number) => {
-    return `${value.toFixed(1)}%`;
-  };
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600" />
+      </div>
+    );
+  }
+
+  const maxValue = Math.max(
+    1,
+    ...chartData.flatMap((d) => [d.revenue, d.costs, d.expenses, d.profit]),
+  );
 
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-600">Ingresos Totales</p>
-              <p className="text-lg sm:text-xl md:text-2xl font-bold text-green-600 whitespace-normal break-words leading-tight">{formatCurrency(kpiData.totalRevenue)}</p>
-            </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <i className="ri-money-dollar-circle-line text-2xl text-green-600"></i>
-            </div>
-          </div>
-          <div className="mt-4 flex items-center">
-            <span className="text-sm text-green-600 font-medium">+{formatPercentage(kpiData.monthlyGrowth)}</span>
-            <span className="text-sm text-gray-500 ml-2">vs mes anterior</span>
-          </div>
-        </div>
+      {/* Selector de período */}
+      <div className="bg-white rounded-lg shadow p-4 flex flex-wrap gap-2">
+        {([
+          { key: 'weekly', label: 'Semanal' },
+          { key: 'monthly', label: 'Mensual' },
+          { key: 'quarterly', label: 'Trimestral' },
+          { key: 'semiannual', label: 'Semestral' },
+          { key: 'annual', label: 'Anual' },
+        ] as { key: PeriodType; label: string }[]).map((opt) => (
+          <button
+            key={opt.key}
+            onClick={() => setSelectedPeriod(opt.key)}
+            className={`px-3 py-1 rounded-full text-sm font-medium border transition-colors ${
+              selectedPeriod === opt.key
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
 
-        <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-600">Gastos Totales</p>
-              <p className="text-lg sm:text-xl md:text-2xl font-bold text-red-600 whitespace-normal break-words leading-tight">{formatCurrency(kpiData.totalExpenses)}</p>
-            </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <i className="ri-money-dollar-circle-line text-2xl text-red-600"></i>
-            </div>
-          </div>
+      {/* Primera línea: Bancos, CxC, CxP */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div
+          className="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-lg transition-shadow"
+          onClick={() => setShowBankModal(true)}
+        >
+          <p className="text-sm text-gray-600">Disponibilidades en Bancos</p>
+          <p className="text-2xl font-bold text-blue-600">{formatCurrency(kpi.bankBalance)}</p>
+          <p className="text-xs text-gray-400 mt-1">Click para ver detalle</p>
         </div>
-
-        <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-600">Utilidad Neta</p>
-              <p className="text-lg sm:text-xl md:text-2xl font-bold text-blue-600 whitespace-normal break-words leading-tight">{formatCurrency(kpiData.netProfit)}</p>
-            </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <i className="ri-line-chart-line text-2xl text-blue-600"></i>
-            </div>
-          </div>
-          <div className="mt-4 flex items-center">
-            <span className="text-sm text-blue-600 font-medium">Margen: {formatPercentage(kpiData.profitMargin)}</span>
-          </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-sm text-gray-600">Cuentas por Cobrar</p>
+          <p className="text-2xl font-bold text-green-600">{formatCurrency(kpi.receivables)}</p>
         </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-sm text-gray-600">Cuentas por Pagar</p>
+          <p className="text-2xl font-bold text-red-600">{formatCurrency(kpi.payables)}</p>
+        </div>
+      </div>
 
-        <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-600">Facturas Pendientes</p>
-              <p className="text-lg sm:text-xl md:text-2xl font-bold text-orange-600 whitespace-normal break-words leading-tight">{kpiData.pendingInvoices}</p>
-            </div>
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <i className="ri-file-list-3-line text-2xl text-orange-600"></i>
-            </div>
+      {/* Segunda línea: Ingresos, Costos, Gastos y Utilidad */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold mb-4">Ingresos, Costos, Gastos y Utilidad</h3>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-purple-50 p-4 rounded">
+            <p className="text-sm text-gray-600">Ingresos</p>
+            <p className="text-xl font-bold text-purple-600">{formatCurrency(kpi.revenue)}</p>
           </div>
-          <div className="mt-4 flex items-center">
-            <span className="text-sm text-orange-600 font-medium">Valor: {formatCurrency(pendingAmount)}</span>
+          <div className="bg-orange-50 p-4 rounded">
+            <p className="text-sm text-gray-600">Costos</p>
+            <p className="text-xl font-bold text-orange-600">{formatCurrency(kpi.costs)}</p>
+          </div>
+          <div className="bg-red-50 p-4 rounded">
+            <p className="text-sm text-gray-600">Gastos</p>
+            <p className="text-xl font-bold text-red-600">{formatCurrency(kpi.expenses)}</p>
+          </div>
+          <div className="bg-teal-50 p-4 rounded">
+            <p className="text-sm text-gray-600">Utilidad</p>
+            <p className="text-xl font-bold text-teal-600">{formatCurrency(kpi.profit)}</p>
           </div>
         </div>
       </div>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Revenue vs Expenses Chart */}
-        <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Ingresos vs Gastos</h3>
-          {(() => {
-            const maxValue = Math.max(1, ...chartData.flatMap(d => [d.ingresos, d.gastos]));
-            return (
-              <div className="h-64 flex items-end justify-between space-x-2">
-                {chartData.map((data, index) => (
-                  <div key={index} className="flex flex-col items-center space-y-2 flex-1">
-                    <div className="flex items-end space-x-1 h-48">
-                      <div 
-                        className="bg-green-500 rounded-t w-4"
-                        style={{ height: `${Math.min((data.ingresos / maxValue) * 100, 100)}%` }}
-                        title={`Ingresos: ${formatCurrency(data.ingresos)}`}
-                      ></div>
-                      <div 
-                        className="bg-red-500 rounded-t w-4"
-                        style={{ height: `${Math.min((data.gastos / maxValue) * 100, 100)}%` }}
-                        title={`Gastos: ${formatCurrency(data.gastos)}`}
-                      ></div>
+      {/* Gráfico de barras porcentual */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold mb-4">Comportamiento financiero por período</h3>
+        {chartData.length > 0 ? (
+          <>
+            <div className="h-64 flex items-end justify-around space-x-2">
+              {chartData.map((d) => (
+                <div key={d.label} className="flex flex-col items-center space-y-2 flex-1 max-w-[100px]">
+                  <div className="flex items-end justify-center space-x-1 h-48 w-full">
+                    <div
+                      className="bg-purple-500 rounded-t flex-1"
+                      style={{ height: `${Math.max((d.revenue / maxValue) * 100, 2)}%` }}
+                      title={`Ingresos: ${formatCurrency(d.revenue)}`}
+                    />
+                    <div
+                      className="bg-orange-500 rounded-t flex-1"
+                      style={{ height: `${Math.max((d.costs / maxValue) * 100, 2)}%` }}
+                      title={`Costos: ${formatCurrency(d.costs)}`}
+                    />
+                    <div
+                      className="bg-red-500 rounded-t flex-1"
+                      style={{ height: `${Math.max((d.expenses / maxValue) * 100, 2)}%` }}
+                      title={`Gastos: ${formatCurrency(d.expenses)}`}
+                    />
+                    <div
+                      className="bg-teal-500 rounded-t flex-1"
+                      style={{ height: `${Math.max((d.profit / maxValue) * 100, 2)}%` }}
+                      title={`Utilidad: ${formatCurrency(d.profit)}`}
+                    />
+                  </div>
+                  <span className="text-xs text-gray-600 text-center">{d.label}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Porcentajes */}
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {chartData.map((d) => (
+                <div key={d.label} className="bg-gray-50 rounded-lg p-4 text-xs space-y-1">
+                  <p className="font-semibold text-gray-700 text-center mb-1">{d.label}</p>
+                  <div className="flex justify-between">
+                    <span className="text-purple-600 font-medium">Ingresos</span>
+                    <span className="font-semibold">100%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-orange-600 font-medium">Costos</span>
+                    <span className="font-semibold">{formatPercentage(d.costs, d.revenue)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-red-600 font-medium">Gastos</span>
+                    <span className="font-semibold">{formatPercentage(d.expenses, d.revenue)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-teal-600 font-medium">Utilidad</span>
+                    <span className="font-semibold">{formatPercentage(d.profit, d.revenue)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="text-gray-500 text-sm">No hay datos para el período seleccionado.</div>
+        )}
+      </div>
+
+      {/* Modal de bancos */}
+      {showBankModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-auto">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Cuentas bancarias</h2>
+              <button
+                onClick={() => setShowBankModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <i className="ri-close-line text-2xl" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              {bankAccounts.length > 0 ? (
+                <>
+                  {bankAccounts.map((b) => (
+                    <div
+                      key={b.id}
+                      className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3"
+                    >
+                      <div>
+                        <p className="font-medium text-gray-900">
+                          {b.code} - {b.name}
+                        </p>
+                      </div>
+                      <p className="text-blue-600 font-semibold">{formatCurrency(b.balance)}</p>
                     </div>
-                    <span className="text-xs text-gray-600">{data.month}</span>
+                  ))}
+                  <div className="border-t pt-3 mt-2 flex items-center justify-between">
+                    <p className="font-semibold text-gray-900">Total bancos</p>
+                    <p className="text-blue-600 font-bold">{formatCurrency(kpi.bankBalance)}</p>
                   </div>
-                ))}
-              </div>
-            );
-          })()}
-          <div className="flex justify-center space-x-6 mt-4">
-            <div className="flex items-center">
-              <div className="w-3 h-3 bg-green-500 rounded mr-2"></div>
-              <span className="text-sm text-gray-600">Ingresos</span>
-            </div>
-            <div className="flex items-center">
-              <div className="w-3 h-3 bg-red-500 rounded mr-2"></div>
-              <span className="text-sm text-gray-600">Gastos</span>
+                </>
+              ) : (
+                <div className="text-gray-500 text-sm text-center py-6">
+                  No hay cuentas bancarias configuradas.
+                </div>
+              )}
             </div>
           </div>
         </div>
-
-        {/* Expense Distribution */}
-        <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Distribución de Gastos</h3>
-          <div className="space-y-4">
-            {expenseData.map((expense, index) => (
-              <div key={index} className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div 
-                    className="w-4 h-4 rounded"
-                    style={{ backgroundColor: expense.color }}
-                  ></div>
-                  <span className="text-sm font-medium text-gray-700">{expense.category}</span>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-semibold text-gray-900">{formatCurrency(expense.amount)}</div>
-                  <div className="text-xs text-gray-500">
-                    {((expense.amount / kpiData.totalExpenses) * 100).toFixed(1)}%
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Financial Indicators */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">Liquidez</h3>
-            <i className="ri-drop-line text-2xl text-blue-600"></i>
-          </div>
-          <div className="text-3xl font-bold text-blue-600 mb-2">{kpiData.liquidityRatio.toFixed(1)}</div>
-          <div className="text-sm text-gray-600">Ratio de liquidez corriente</div>
-          <div className="mt-4 bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-blue-600 h-2 rounded-full"
-              style={{ width: `${Math.min((kpiData.liquidityRatio / 3) * 100, 100)}%` }}
-            ></div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">Rentabilidad</h3>
-            <i className="ri-percent-line text-2xl text-green-600"></i>
-          </div>
-          <div className="text-3xl font-bold text-green-600 mb-2">{formatPercentage(kpiData.profitMargin)}</div>
-          <div className="text-sm text-gray-600">Margen de utilidad</div>
-          <div className="mt-4 bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-green-600 h-2 rounded-full"
-              style={{ width: `${kpiData.profitMargin}%` }}
-            ></div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-lg p-6 border border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">Eficiencia</h3>
-            <i className="ri-speed-line text-2xl text-purple-600"></i>
-          </div>
-          <div className="text-3xl font-bold text-purple-600 mb-2">{formatPercentage(kpiData.efficiency)}</div>
-          <div className="text-sm text-gray-600">Eficiencia operacional</div>
-          <div className="mt-4 bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-purple-600 h-2 rounded-full"
-              style={{ width: `${kpiData.efficiency}%` }}
-            ></div>
-          </div>
-        </div>
-      </div>
-
-      
+      )}
     </div>
   );
 }

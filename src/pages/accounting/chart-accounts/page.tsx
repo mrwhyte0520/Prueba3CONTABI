@@ -1009,7 +1009,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                 <i className={`ri-arrow-${isExpanded ? 'down' : 'right'}-s-line`}></i>
               </button>
             )}
-            <div className="flex-1 grid grid-cols-9 gap-1 items-center text-sm">
+            <div className="flex-1 grid grid-cols-9 gap-2 items-center text-sm">
               <div className="flex items-center">
                 <input
                   type="checkbox"
@@ -1017,8 +1017,8 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                   onChange={() => toggleSelectOne(account.id)}
                 />
               </div>
-              <div className="font-semibold text-gray-900 tabular-nums">{account.code}</div>
-              <div className="text-gray-900 break-words" title={account.name}>{account.name}</div>
+              <div className="font-semibold text-gray-900 tabular-nums pr-2">{account.code}</div>
+              <div className="text-gray-900 break-words px-2" title={account.name}>{account.name}</div>
               <div className="flex justify-center">
                 <span
                   className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${getAccountTypeColor(

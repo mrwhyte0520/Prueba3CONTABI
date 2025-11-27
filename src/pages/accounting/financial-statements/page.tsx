@@ -21,17 +21,17 @@ interface FinancialStatement {
 
 interface FinancialData {
   assets: {
-    current: { name: string; amount: number }[];
-    nonCurrent: { name: string; amount: number }[];
+    current: { code: string; name: string; amount: number }[];
+    nonCurrent: { code: string; name: string; amount: number }[];
   };
   liabilities: {
-    current: { name: string; amount: number }[];
-    nonCurrent: { name: string; amount: number }[];
+    current: { code: string; name: string; amount: number }[];
+    nonCurrent: { code: string; name: string; amount: number }[];
   };
-  equity: { name: string; amount: number }[];
-  revenue: { name: string; amount: number }[];
-  costs: { name: string; amount: number }[];
-  expenses: { name: string; amount: number }[];
+  equity: { code: string; name: string; amount: number }[];
+  revenue: { code: string; name: string; amount: number }[];
+  costs: { code: string; name: string; amount: number }[];
+  expenses: { code: string; name: string; amount: number }[];
 }
 
 export default function FinancialStatementsPage() {
@@ -44,6 +44,7 @@ export default function FinancialStatementsPage() {
   const [showViewModal, setShowViewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedStatement, setSelectedStatement] = useState<FinancialStatement | null>(null);
+  const [showExpensesDetail, setShowExpensesDetail] = useState(false);
 
   const [financialData, setFinancialData] = useState<FinancialData>({
     assets: { current: [], nonCurrent: [] },
@@ -59,11 +60,15 @@ export default function FinancialStatementsPage() {
     investingCashFlow: number;
     financingCashFlow: number;
     netCashFlow: number;
+    openingCash: number;
+    closingCash: number;
   }>({
     operatingCashFlow: 0,
     investingCashFlow: 0,
     financingCashFlow: 0,
     netCashFlow: 0,
+    openingCash: 0,
+    closingCash: 0,
   });
 
   useEffect(() => {
@@ -104,33 +109,49 @@ export default function FinancialStatementsPage() {
           const balance = Number(acc.balance) || 0;
           if (Math.abs(balance) < 0.005) return; // omitir saldos cero
 
-          const label = `${acc.code} - ${acc.name}`;
+          const code = String(acc.code || '');
+          const baseName = String(acc.name || '');
+          const label = `${code} - ${baseName}`;
 
           switch (acc.type) {
             case 'asset':
-            case 'activo':
-              nextData.assets.current.push({ name: label, amount: balance });
+            case 'activo': {
+              const item = { code, name: label, amount: balance };
+              // Activos corrientes: 10,11,12,13
+              if (code.startsWith('10') || code.startsWith('11') || code.startsWith('12') || code.startsWith('13')) {
+                nextData.assets.current.push(item);
+              } else {
+                nextData.assets.nonCurrent.push(item);
+              }
               break;
+            }
             case 'liability':
-            case 'pasivo':
-              nextData.liabilities.current.push({ name: label, amount: balance });
+            case 'pasivo': {
+              const item = { code, name: label, amount: balance };
+              // Pasivos corrientes: 20,21
+              if (code.startsWith('20') || code.startsWith('21')) {
+                nextData.liabilities.current.push(item);
+              } else {
+                nextData.liabilities.nonCurrent.push(item);
+              }
               break;
+            }
             case 'equity':
             case 'patrimonio':
-              nextData.equity.push({ name: label, amount: balance });
+              nextData.equity.push({ code, name: label, amount: balance });
               break;
             case 'income':
             case 'ingreso':
-              nextData.revenue.push({ name: label, amount: balance });
+              nextData.revenue.push({ code, name: label, amount: balance });
               break;
             case 'cost':
             case 'costo':
             case 'costos':
-              nextData.costs.push({ name: label, amount: balance });
+              nextData.costs.push({ code, name: label, amount: Math.abs(balance) });
               break;
             case 'expense':
             case 'gasto':
-              nextData.expenses.push({ name: label, amount: balance });
+              nextData.expenses.push({ code, name: label, amount: Math.abs(balance) });
               break;
             default:
               break;
@@ -147,16 +168,54 @@ export default function FinancialStatementsPage() {
     const loadCashFlow = async () => {
       try {
         const result = await chartAccountsService.generateCashFlowStatement(user.id, fromDate, toDate);
+
+        const fromDateObj = new Date(fromDate);
+        const prevToObj = new Date(fromDateObj.getTime() - 24 * 60 * 60 * 1000);
+        const prevToDate =
+          prevToObj.getFullYear() <= 1900
+            ? null
+            : prevToObj.toISOString().slice(0, 10);
+
+        const [prevTrial, finalTrial] = await Promise.all([
+          prevToDate
+            ? financialReportsService.getTrialBalance(user.id, '1900-01-01', prevToDate)
+            : Promise.resolve([]),
+          financialReportsService.getTrialBalance(user.id, '1900-01-01', toDate),
+        ]);
+
+        const sumCash = (trial: any[]) => {
+          return (trial || []).reduce((sum, acc: any) => {
+            const code = String(acc.code || '');
+            const type = String(acc.type || '');
+            if (!(type === 'asset' || type === 'activo')) return sum;
+            if (!code.startsWith('111')) return sum; // Caja y bancos
+            const balance = Number(acc.balance) || 0;
+            return sum + balance;
+          }, 0);
+        };
+
+        const openingCash = prevTrial ? sumCash(prevTrial as any[]) : 0;
+        const closingCash = sumCash(finalTrial as any[]);
+
         setCashFlow({
           operatingCashFlow: result.operatingCashFlow || 0,
           investingCashFlow: result.investingCashFlow || 0,
           financingCashFlow: result.financingCashFlow || 0,
           netCashFlow: result.netCashFlow || 0,
+          openingCash,
+          closingCash,
         });
       } catch (error) {
         // eslint-disable-next-line no-console
         console.error('Error loading cash flow statement:', error);
-        setCashFlow({ operatingCashFlow: 0, investingCashFlow: 0, financingCashFlow: 0, netCashFlow: 0 });
+        setCashFlow({
+          operatingCashFlow: 0,
+          investingCashFlow: 0,
+          financingCashFlow: 0,
+          netCashFlow: 0,
+          openingCash: 0,
+          closingCash: 0,
+        });
       }
     };
 
@@ -166,6 +225,123 @@ export default function FinancialStatementsPage() {
       void loadCashFlow();
     }
   }, [user, selectedPeriod, activeTab]);
+
+  useEffect(() => {
+    const loadCostOfSales = async () => {
+      try {
+        if (!user) return;
+
+        const period = selectedPeriod || new Date().toISOString().slice(0, 7); // YYYY-MM
+        const [yearStr, monthStr] = period.split('-');
+        const year = parseInt(yearStr, 10);
+        const month = parseInt(monthStr, 10);
+        if (!year || !month) return;
+
+        const fromDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
+        const toDate = new Date(year, month, 0).toISOString().slice(0, 10);
+
+        const fromDateObj = new Date(fromDate);
+        const prevToObj = new Date(fromDateObj.getTime() - 24 * 60 * 60 * 1000);
+        const prevToDate =
+          prevToObj.getFullYear() <= 1900
+            ? null
+            : prevToObj.toISOString().slice(0, 10);
+
+        const [prevTrial, finalTrial, periodTrial] = await Promise.all([
+          prevToDate
+            ? financialReportsService.getTrialBalance(user.id, '1900-01-01', prevToDate)
+            : Promise.resolve([]),
+          // Para inventario final necesitamos todo el historial hasta la fecha de corte
+          financialReportsService.getTrialBalance(user.id, '1900-01-01', toDate),
+          // Para compras del período solo necesitamos el rango del período actual
+          financialReportsService.getTrialBalance(user.id, fromDate, toDate),
+        ]);
+
+        const sumInventory = (trial: any[]) => {
+          return (trial || []).reduce((sum, acc: any) => {
+            const code = String(acc.code || '');
+            const type = String(acc.type || '');
+            if (!(type === 'asset' || type === 'activo')) return sum;
+            if (!code.startsWith('12')) return sum; // Inventarios
+            const balance = Number(acc.balance) || 0;
+            return sum + balance;
+          }, 0);
+        };
+
+        const openingInventory = prevTrial ? sumInventory(prevTrial as any[]) : 0;
+        const closingInventory = sumInventory(finalTrial as any[]);
+
+        const totalCosts = totals.totalCosts; // costo de ventas del período desde cuentas de costo
+
+        // Fórmula: Costo de ventas = InvInicial + ComprasTotales - InvFinal
+        // => ComprasTotales = Costo + InvFinal - InvInicial
+        const totalPurchasesFromFormula = totalCosts + closingInventory - openingInventory;
+
+        // Si el usuario define cuentas específicas para compras locales e importaciones,
+        // las usamos para repartir las compras respetando la fórmula anterior.
+        const sumCostByPrefixes = (trial: any[], prefixes: string[]) => {
+          return (trial || []).reduce((sum, acc: any) => {
+            const code = String(acc.code || '');
+            const type = String(acc.type || '');
+            if (!(type === 'cost' || type === 'costo' || type === 'costos')) return sum;
+            if (!prefixes.some((p) => code.startsWith(p))) return sum;
+            const balance = Number(acc.balance) || 0;
+            return sum + Math.abs(balance);
+          }, 0);
+        };
+
+        const rawLocal = sumCostByPrefixes(periodTrial as any[], ['500101']);
+        const rawImports = sumCostByPrefixes(periodTrial as any[], ['500102']);
+        const rawTotal = rawLocal + rawImports;
+
+        let purchasesLocal = 0;
+        let purchasesImports = 0;
+        let totalPurchases = totalPurchasesFromFormula;
+
+        if (rawTotal > 0 && totalPurchasesFromFormula !== 0) {
+          const factor = totalPurchasesFromFormula / rawTotal;
+          purchasesLocal = rawLocal * factor;
+          purchasesImports = rawImports * factor;
+          totalPurchases = purchasesLocal + purchasesImports;
+        } else {
+          // Si aún no se usan 500101/500102, consideramos todas las compras como locales
+          purchasesLocal = totalPurchasesFromFormula;
+          purchasesImports = 0;
+          totalPurchases = totalPurchasesFromFormula;
+        }
+
+        const indirectCosts = 0; // Placeholder para futuros desarrollos
+        const availableForSale = openingInventory + totalPurchases + indirectCosts;
+
+        setCostOfSalesData({
+          openingInventory,
+          purchasesLocal,
+          purchasesImports,
+          totalPurchases,
+          indirectCosts,
+          availableForSale,
+          closingInventory,
+        });
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading cost of sales data:', error);
+        setCostOfSalesData({
+          openingInventory: 0,
+          purchasesLocal: 0,
+          purchasesImports: 0,
+          totalPurchases: 0,
+          indirectCosts: 0,
+          availableForSale: 0,
+          closingInventory: 0,
+        });
+      }
+    };
+
+    // Solo tiene sentido recalcular cuando cambian usuario, período o los costos asociados
+    if (activeTab === 'costs' && user) {
+      void loadCostOfSales();
+    }
+  }, [user, selectedPeriod, activeTab, financialData.costs]);
 
   const loadStatements = async () => {
     try {
@@ -260,12 +436,105 @@ export default function FinancialStatementsPage() {
 
   // Derivados para Estado de Resultados en formato profesional
   const grossProfit = totals.totalRevenue - totals.totalCosts;
-  const operatingExpenses = totals.totalExpenses;
-  const operatingIncome = grossProfit - operatingExpenses;
-  const financialExpenses = 0;
-  const incomeBeforeTaxReserves = operatingIncome - financialExpenses;
+
+  // Helpers para agrupar por prefijos de código
+  const sumByPrefixes = (
+    items: { code: string; name: string; amount: number }[],
+    prefixes: string[],
+  ) => {
+    return items.reduce((sum, item) => {
+      const code = item.code || '';
+      return prefixes.some((p) => code.startsWith(p)) ? sum + item.amount : sum;
+    }, 0);
+  };
+
+  // ACTIVO: grupos principales
+  const currentAssets = financialData.assets.current;
+  const nonCurrentAssets = financialData.assets.nonCurrent;
+  const currentLiabilities = financialData.liabilities.current;
+  const nonCurrentLiabilities = financialData.liabilities.nonCurrent;
+  const equityItems = financialData.equity;
+
+  const efectivoCajaBancos = sumByPrefixes(currentAssets, ['1001']);
+  const cxcClientes = sumByPrefixes(currentAssets, ['110101', '110102', '110103']);
+  const otrasCxc = sumByPrefixes(currentAssets, ['110104', '110105', '110106', '110107', '1102', '1199']);
+  const inventarios = sumByPrefixes(currentAssets, ['12']);
+  const anticiposISR = sumByPrefixes(currentAssets, ['130101', '130102']);
+  const gastosPagadosAnticipado = sumByPrefixes(currentAssets, ['13']) - anticiposISR;
+
+  const activosFijos = sumByPrefixes(nonCurrentAssets, ['15']);
+  const invAcciones = sumByPrefixes(nonCurrentAssets, ['1401']);
+  const invCertificados = sumByPrefixes(nonCurrentAssets, ['1402']);
+  const fianzasDepositos = sumByPrefixes(nonCurrentAssets, ['1601']);
+  const licenciasSoftware = sumByPrefixes(nonCurrentAssets, ['1602']);
+  const otrosActivos = sumByPrefixes(nonCurrentAssets, ['1699']);
+
+  // PASIVOS Y PATRIMONIO
+  const cppProveedores = sumByPrefixes(currentLiabilities, ['2001']);
+  const prestamosCortoPlazo = sumByPrefixes(currentLiabilities, ['2002']);
+  const otrasCxPCorrientes = sumByPrefixes(currentLiabilities, ['2003', '2004', '2099']);
+  const acumulacionesPorPagar = sumByPrefixes(currentLiabilities, ['21']);
+  const pasivosCorrientes = cppProveedores + prestamosCortoPlazo + otrasCxPCorrientes + acumulacionesPorPagar;
+
+  const pasivosLargoPlazo = sumByPrefixes(nonCurrentLiabilities, ['22']);
+
+  const capitalSuscrito = sumByPrefixes(equityItems, ['3001']);
+  const reservas = sumByPrefixes(equityItems, ['3002']);
+  const resultadosAcumulados = sumByPrefixes(equityItems, ['3003']);
+  const patrimonioTotal = capitalSuscrito + reservas + resultadosAcumulados;
+
+  // GASTOS por grupo en Estado de Resultados
+  const expenseItems = financialData.expenses;
+  const gastosPersonal = sumByPrefixes(expenseItems, ['6001']);
+  const gastosGeneralesAdm = sumByPrefixes(expenseItems, ['6002']);
+  const gastosMantenimientoAF = sumByPrefixes(expenseItems, ['6003']);
+  const gastosDepreciacion = sumByPrefixes(expenseItems, ['6004']);
+  const gastosImpuestosNoDeducibles = sumByPrefixes(expenseItems, ['6005', '6102']);
+  const gastosFinancieros = sumByPrefixes(expenseItems, ['6101']);
+
+  const filterExpensesByPrefixes = (
+    items: { code: string; name: string; amount: number }[],
+    prefixes: string[],
+  ) => {
+    return items.filter((item) => {
+      const code = item.code || '';
+      return prefixes.some((p) => code.startsWith(p));
+    });
+  };
+
+  const expenseItemsPersonal = filterExpensesByPrefixes(expenseItems, ['6001']);
+  const expenseItemsGeneralesAdm = filterExpensesByPrefixes(expenseItems, ['6002']);
+  const expenseItemsMantenimientoAF = filterExpensesByPrefixes(expenseItems, ['6003']);
+  const expenseItemsDepreciacion = filterExpensesByPrefixes(expenseItems, ['6004']);
+  const expenseItemsImpuestosNoDeducibles = filterExpensesByPrefixes(expenseItems, ['6005', '6102']);
+  const expenseItemsFinancieros = filterExpensesByPrefixes(expenseItems, ['6101']);
+
+  const operatingExpenses =
+    gastosPersonal +
+    gastosGeneralesAdm +
+    gastosMantenimientoAF +
+    gastosDepreciacion +
+    gastosImpuestosNoDeducibles;
+
+  const financialExpenses = gastosFinancieros;
+  const operatingIncome = grossProfit - operatingExpenses - financialExpenses;
+  const incomeBeforeTaxReserves = operatingIncome;
   const incomeTax = 0;
   const legalReserve = 0;
+
+  // =========================
+  // Estado de Costos de Ventas
+  // =========================
+
+  const [costOfSalesData, setCostOfSalesData] = useState({
+    openingInventory: 0,
+    purchasesLocal: 0,
+    purchasesImports: 0,
+    totalPurchases: 0,
+    indirectCosts: 0,
+    availableForSale: 0,
+    closingInventory: 0,
+  });
 
   const downloadExcel = () => {
     try {
@@ -418,13 +687,88 @@ export default function FinancialStatementsPage() {
     }
   };
 
+  const downloadExpensesStatementExcel = () => {
+    try {
+      const rows: any[] = [];
+
+      const addCategory = (
+        categoryName: string,
+        total: number,
+        items: { name: string; amount: number }[],
+      ) => {
+        rows.push([categoryName, '', total]);
+        items.forEach((item) => {
+          rows.push(['', item.name, item.amount]);
+        });
+        rows.push(['', '', null]);
+      };
+
+      addCategory('Gastos de Personal', gastosPersonal, expenseItemsPersonal);
+      addCategory('Gastos Generales y Administrativos', gastosGeneralesAdm, expenseItemsGeneralesAdm);
+      addCategory('Gastos de Mantenimiento de Activos Fijos', gastosMantenimientoAF, expenseItemsMantenimientoAF);
+      addCategory('Gastos de Depreciación', gastosDepreciacion, expenseItemsDepreciacion);
+      addCategory('Gastos de Impuestos No Deducibles', gastosImpuestosNoDeducibles, expenseItemsImpuestosNoDeducibles);
+      addCategory('Gastos Financieros', gastosFinancieros, expenseItemsFinancieros);
+
+      rows.push(['Total gastos del Periodo', '', totals.totalExpenses]);
+
+      exportToExcel({
+        sheetName: 'Gastos',
+        fileName: `estado_gastos_${new Date().toISOString().split('T')[0]}`,
+        columns: [
+          { header: 'Categoría', width: 32 },
+          { header: 'Cuenta', width: 42 },
+          { header: 'Monto', width: 16, numFmt: '#,##0.00' },
+        ],
+        rows,
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error downloading Expenses Statement:', error);
+      alert('Error al descargar el Estado de Gastos');
+    }
+  };
+
+  const downloadCostOfSalesExcel = () => {
+    try {
+      const rows: any[] = [];
+
+      rows.push(['Inventario Inicial', costOfSalesData.openingInventory]);
+      rows.push(['Compras Proveedores Locales', costOfSalesData.purchasesLocal]);
+      rows.push(['Importaciones', costOfSalesData.purchasesImports]);
+      rows.push(['Total Compras del Periodo', costOfSalesData.totalPurchases]);
+      rows.push(['Costos Indirectos', costOfSalesData.indirectCosts]);
+      rows.push(['Mercancía Disponible para la venta', costOfSalesData.availableForSale]);
+      rows.push(['Inventario Final', costOfSalesData.closingInventory]);
+      rows.push(['Costo de Venta del Periodo', totals.totalCosts]);
+
+      exportToExcel({
+        sheetName: 'Costos de Ventas',
+        fileName: `estado_costos_ventas_${new Date().toISOString().split('T')[0]}`,
+        columns: [
+          { header: 'Concepto', width: 45 },
+          { header: 'Monto', width: 18, numFmt: '#,##0.00' },
+        ],
+        rows,
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error downloading Cost of Sales Statement:', error);
+      alert('Error al descargar el Estado de Costos de Ventas');
+    }
+  };
+
   const downloadCashFlowExcel = () => {
     try {
       const rows: any[] = [];
+      const openingCash = cashFlow.openingCash || 0;
+      const closingCash = cashFlow.closingCash || 0;
+      const netChange = closingCash - openingCash;
+
       rows.push(['ACTIVIDADES DE OPERACIÓN', 'Efectivo de Actividades de Operación', cashFlow.operatingCashFlow]);
       rows.push(['ACTIVIDADES DE INVERSIÓN', 'Efectivo de Actividades de Inversión', cashFlow.investingCashFlow]);
       rows.push(['ACTIVIDADES DE FINANCIAMIENTO', 'Efectivo de Actividades de Financiamiento', cashFlow.financingCashFlow]);
-      rows.push(['RESUMEN', 'Aumento Neto en Efectivo', cashFlow.netCashFlow]);
+      rows.push(['RESUMEN', 'Aumento Neto en Efectivo', netChange]);
 
       exportToExcel({
         sheetName: 'Flujo',
@@ -635,6 +979,17 @@ export default function FinancialStatementsPage() {
         {activeTab === 'expenses' && (
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
+              {/* Header con botón de descarga */}
+              <div className="flex justify-end mb-4">
+                <button
+                  onClick={downloadExpensesStatementExcel}
+                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
+                >
+                  <i className="ri-download-line mr-2"></i>
+                  Descargar Excel
+                </button>
+              </div>
+
               {/* Header y título */}
               <div className="text-center mb-8">
                 <h1 className="text-base font-semibold text-gray-800 mb-1">
@@ -652,23 +1007,115 @@ export default function FinancialStatementsPage() {
                   </h2>
                 </div>
 
+                <div className="flex justify-end">
+                  <label className="inline-flex items-center space-x-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      checked={showExpensesDetail}
+                      onChange={(e) => setShowExpensesDetail(e.target.checked)}
+                    />
+                    <span>Ver detalle por cuenta</span>
+                  </label>
+                </div>
+
                 {/* Categorías de gastos */}
                 <div className="space-y-1">
-                  <div className="flex justify-between py-0.5 pl-4">
-                    <span className="text-sm text-gray-700">Gastos de Personal</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
+                  <div className="py-0.5 pl-4">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-700">Gastos de Personal</span>
+                      <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosPersonal)}</span>
+                    </div>
+                    {showExpensesDetail && expenseItemsPersonal.length > 0 && (
+                      <div className="mt-1 space-y-0.5 pl-4">
+                        {expenseItemsPersonal.map((item) => (
+                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                            <span>{item.name}</span>
+                            <span className="tabular-nums">{formatCurrency(item.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex justify-between py-0.5 pl-4">
-                    <span className="text-sm text-gray-700">Gastos Grales. Y Adm.</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
+                  <div className="py-0.5 pl-4">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-700">Gastos Generales y Administrativos</span>
+                      <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosGeneralesAdm)}</span>
+                    </div>
+                    {showExpensesDetail && expenseItemsGeneralesAdm.length > 0 && (
+                      <div className="mt-1 space-y-0.5 pl-4">
+                        {expenseItemsGeneralesAdm.map((item) => (
+                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                            <span>{item.name}</span>
+                            <span className="tabular-nums">{formatCurrency(item.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex justify-between py-0.5 pl-4">
-                    <span className="text-sm text-gray-700">Gastos de Activos Fijos</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
+                  <div className="py-0.5 pl-4">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-700">Gastos de Mantenimiento de Activos Fijos</span>
+                      <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosMantenimientoAF)}</span>
+                    </div>
+                    {showExpensesDetail && expenseItemsMantenimientoAF.length > 0 && (
+                      <div className="mt-1 space-y-0.5 pl-4">
+                        {expenseItemsMantenimientoAF.map((item) => (
+                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                            <span>{item.name}</span>
+                            <span className="tabular-nums">{formatCurrency(item.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex justify-between py-0.5 pl-4">
-                    <span className="text-sm text-gray-700">Gastos Financieros</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
+                  <div className="py-0.5 pl-4">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-700">Gastos de Depreciación</span>
+                      <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosDepreciacion)}</span>
+                    </div>
+                    {showExpensesDetail && expenseItemsDepreciacion.length > 0 && (
+                      <div className="mt-1 space-y-0.5 pl-4">
+                        {expenseItemsDepreciacion.map((item) => (
+                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                            <span>{item.name}</span>
+                            <span className="tabular-nums">{formatCurrency(item.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="py-0.5 pl-4">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-700">Gastos de Impuestos No Deducibles</span>
+                      <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosImpuestosNoDeducibles)}</span>
+                    </div>
+                    {showExpensesDetail && expenseItemsImpuestosNoDeducibles.length > 0 && (
+                      <div className="mt-1 space-y-0.5 pl-4">
+                        {expenseItemsImpuestosNoDeducibles.map((item) => (
+                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                            <span>{item.name}</span>
+                            <span className="tabular-nums">{formatCurrency(item.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="py-0.5 pl-4">
+                    <div className="flex justify-between">
+                      <span className="text-sm text-gray-700">Gastos Financieros</span>
+                      <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosFinancieros)}</span>
+                    </div>
+                    {showExpensesDetail && expenseItemsFinancieros.length > 0 && (
+                      <div className="mt-1 space-y-0.5 pl-4">
+                        {expenseItemsFinancieros.map((item) => (
+                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                            <span>{item.name}</span>
+                            <span className="tabular-nums">{formatCurrency(item.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -687,6 +1134,17 @@ export default function FinancialStatementsPage() {
         {activeTab === 'costs' && (
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
+              {/* Header con botón de descarga */}
+              <div className="flex justify-end mb-4">
+                <button
+                  onClick={downloadCostOfSalesExcel}
+                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
+                >
+                  <i className="ri-download-line mr-2"></i>
+                  Descargar Excel
+                </button>
+              </div>
+
               {/* Header y título */}
               <div className="text-center mb-8">
                 <h1 className="text-base font-semibold text-gray-800 mb-1">NOTAS A LOS ESTADOS FINANCIEROS</h1>
@@ -706,7 +1164,7 @@ export default function FinancialStatementsPage() {
                 <div className="space-y-1">
                   <div className="flex justify-between py-0.5 pl-4">
                     <span className="text-sm text-gray-700">Inventario Inicial</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
+                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(costOfSalesData.openingInventory)}</span>
                   </div>
                 </div>
 
@@ -715,16 +1173,16 @@ export default function FinancialStatementsPage() {
                   <div className="text-sm font-semibold text-gray-800 pl-2">Más:</div>
                   <div className="flex justify-between py-0.5 pl-6">
                     <span className="text-sm text-gray-700">Compras Proveedores Locales</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
+                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(costOfSalesData.purchasesLocal)}</span>
                   </div>
                   <div className="flex justify-between py-0.5 pl-6">
                     <span className="text-sm text-gray-700">Importaciones</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
+                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(costOfSalesData.purchasesImports)}</span>
                   </div>
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-6">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Total Compras del Periodo</span>
-                      <span className="text-sm tabular-nums">{formatCurrency(0)}</span>
+                      <span className="text-sm tabular-nums">{formatCurrency(costOfSalesData.totalPurchases)}</span>
                     </div>
                   </div>
                 </div>
@@ -734,7 +1192,7 @@ export default function FinancialStatementsPage() {
                   <div className="text-sm font-semibold text-gray-800 pl-2">Más:</div>
                   <div className="flex justify-between py-0.5 pl-6">
                     <span className="text-sm text-gray-700">Costos Indirectos</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
+                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(costOfSalesData.indirectCosts)}</span>
                   </div>
                 </div>
 
@@ -742,7 +1200,7 @@ export default function FinancialStatementsPage() {
                 <div className="border-t border-gray-800 pt-2 mt-3">
                   <div className="flex justify-between font-bold">
                     <span className="text-sm">Mercancía Disponible para la venta</span>
-                    <span className="text-sm tabular-nums">{formatCurrency(0)}</span>
+                    <span className="text-sm tabular-nums">{formatCurrency(costOfSalesData.availableForSale)}</span>
                   </div>
                 </div>
 
@@ -751,7 +1209,7 @@ export default function FinancialStatementsPage() {
                   <div className="text-sm font-semibold text-gray-800 pl-2">Menos:</div>
                   <div className="flex justify-between py-0.5 pl-6">
                     <span className="text-sm text-gray-700">Inventario Final</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
+                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(costOfSalesData.closingInventory)}</span>
                   </div>
                 </div>
 
@@ -792,16 +1250,36 @@ export default function FinancialStatementsPage() {
                 {/* ACTIVOS */}
                 <div>
                   <h2 className="text-base font-bold text-gray-900 mb-3 pb-1 border-b-2 border-gray-300">ACTIVOS</h2>
-                  
-                  {/* ACTIVOS CIRCULANTES */}
+
+                  {/* ACTIVOS CORRIENTES */}
                   <div className="mb-4">
-                    <h3 className="text-sm font-bold text-gray-800 mb-2 underline">ACTIVOS CIRCULANTES</h3>
-                    {financialData.assets.current.map((item, index) => (
-                      <div key={index} className="flex justify-between py-0.5 pl-4">
-                        <span className="text-sm text-gray-700">{item.name}</span>
-                        <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(item.amount)}</span>
-                      </div>
-                    ))}
+                    <h3 className="text-sm font-bold text-gray-800 mb-2 underline">ACTIVOS CORRIENTES</h3>
+
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Efectivo en Caja y Bancos</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(efectivoCajaBancos)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Cuentas por Cobrar Clientes</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(cxcClientes)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Otras Cuentas por Cobrar</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(otrasCxc)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Inventarios</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(inventarios)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Gastos Pagados por Anticipado</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosPagadosAnticipado)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Anticipos sobre la Renta Pagados</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(anticiposISR)}</span>
+                    </div>
+
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Activos Corrientes</span>
@@ -810,15 +1288,39 @@ export default function FinancialStatementsPage() {
                     </div>
                   </div>
 
+                  {/* ACTIVOS FIJOS */}
+                  <div className="mb-4">
+                    <h3 className="text-sm font-bold text-gray-800 mb-2 underline">ACTIVOS FIJOS</h3>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Activos Fijos</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(activosFijos)}</span>
+                    </div>
+                  </div>
+
                   {/* OTROS ACTIVOS */}
                   <div className="mb-4">
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">OTROS ACTIVOS</h3>
-                    {financialData.assets.nonCurrent.map((item, index) => (
-                      <div key={index} className="flex justify-between py-0.5 pl-4">
-                        <span className="text-sm text-gray-700">{item.name}</span>
-                        <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(item.amount)}</span>
-                      </div>
-                    ))}
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Inversiones en Otras Compañías</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(invAcciones)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Certificados Bancarios y Títulos Financieros</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(invCertificados)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Fianzas y Depósitos</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(fianzasDepositos)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Licencias y Softwares</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(licenciasSoftware)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Otros Activos</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(otrosActivos)}</span>
+                    </div>
+
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Otros Activos</span>
@@ -839,20 +1341,31 @@ export default function FinancialStatementsPage() {
                 {/* PASIVO Y PATRIMONIO */}
                 <div className="pt-4">
                   <h2 className="text-base font-bold text-gray-900 mb-3 pb-1 border-b-2 border-gray-300">PASIVO Y PATRIMONIO DE LOS SOCIOS</h2>
-                  
+
                   {/* PASIVOS CIRCULANTES */}
                   <div className="mb-4">
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">PASIVOS CIRCULANTES</h3>
-                    {financialData.liabilities.current.map((item, index) => (
-                      <div key={index} className="flex justify-between py-0.5 pl-4">
-                        <span className="text-sm text-gray-700">{item.name}</span>
-                        <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(item.amount)}</span>
-                      </div>
-                    ))}
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Cuentas por Pagar Proveedores</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(cppProveedores)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Acumulaciones y Provisiones por Pagar</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(acumulacionesPorPagar)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Préstamos por Pagar a Corto Plazo</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(prestamosCortoPlazo)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Otras Cuentas por Pagar</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(otrasCxPCorrientes)}</span>
+                    </div>
+
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Pasivos Corrientes</span>
-                        <span className="text-sm tabular-nums">{formatCurrency(totals.totalCurrentLiabilities)}</span>
+                        <span className="text-sm tabular-nums">{formatCurrency(pasivosCorrientes)}</span>
                       </div>
                     </div>
                   </div>
@@ -860,17 +1373,15 @@ export default function FinancialStatementsPage() {
                   {/* PASIVOS A LARGO PLAZO */}
                   <div className="mb-4">
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">PASIVOS A LARGO PLAZO</h3>
-                    {financialData.liabilities.nonCurrent.map((item, index) => (
-                      <div key={index} className="flex justify-between py-0.5 pl-4">
-                        <span className="text-sm text-gray-700">{item.name}</span>
-                        <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(item.amount)}</span>
-                      </div>
-                    ))}
-                    {financialData.liabilities.nonCurrent.length > 0 && (
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Pasivos a Largo Plazo</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(pasivosLargoPlazo)}</span>
+                    </div>
+                    {nonCurrentLiabilities.length > 0 && (
                       <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Total Pasivos a Largo Plazo</span>
-                          <span className="text-sm tabular-nums">{formatCurrency(totals.totalNonCurrentLiabilities)}</span>
+                          <span className="text-sm tabular-nums">{formatCurrency(pasivosLargoPlazo)}</span>
                         </div>
                       </div>
                     )}
@@ -887,16 +1398,22 @@ export default function FinancialStatementsPage() {
                   {/* PATRIMONIO */}
                   <div className="mb-4">
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">PATRIMONIO</h3>
-                    {financialData.equity.map((item, index) => (
-                      <div key={index} className="flex justify-between py-0.5 pl-4">
-                        <span className="text-sm text-gray-700">{item.name}</span>
-                        <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(item.amount)}</span>
-                      </div>
-                    ))}
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Capital Suscrito y Pagado</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(capitalSuscrito)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Reservas (incluye Reserva Legal)</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(reservas)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5 pl-4">
+                      <span className="text-sm text-gray-700">Beneficios o Pérdidas Acumuladas</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(resultadosAcumulados)}</span>
+                    </div>
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Patrimonio</span>
-                        <span className="text-sm tabular-nums">{formatCurrency(totals.totalEquity)}</span>
+                        <span className="text-sm tabular-nums">{formatCurrency(patrimonioTotal)}</span>
                       </div>
                     </div>
                   </div>
@@ -981,12 +1498,28 @@ export default function FinancialStatementsPage() {
                 {/* GASTOS DE OPERACIONES */}
                 <div className="pt-4">
                   <h2 className="text-sm font-bold text-gray-900 mb-2 underline">GASTOS DE OPERACIONES</h2>
-                  {financialData.expenses.map((item, index) => (
-                    <div key={index} className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">{item.name}</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(item.amount)}</span>
+                  <div className="space-y-0.5 pl-4">
+                    <div className="flex justify-between py-0.5">
+                      <span className="text-sm text-gray-700">Gastos de Personal</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosPersonal)}</span>
                     </div>
-                  ))}
+                    <div className="flex justify-between py-0.5">
+                      <span className="text-sm text-gray-700">Gastos Generales y Administrativos</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosGeneralesAdm)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5">
+                      <span className="text-sm text-gray-700">Gastos de Mantenimiento de Activos Fijos</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosMantenimientoAF)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5">
+                      <span className="text-sm text-gray-700">Gastos de Depreciación</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosDepreciacion)}</span>
+                    </div>
+                    <div className="flex justify-between py-0.5">
+                      <span className="text-sm text-gray-700">Gastos de Impuestos No Deducibles</span>
+                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosImpuestosNoDeducibles)}</span>
+                    </div>
+                  </div>
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Total Gastos de Operaciones</span>
@@ -1071,9 +1604,9 @@ export default function FinancialStatementsPage() {
               </div>
 
               {(() => {
-                const openingCash = 0;
-                const netChange = cashFlow.netCashFlow;
-                const endingCash = openingCash + netChange;
+                const openingCash = cashFlow.openingCash || 0;
+                const endingCash = cashFlow.closingCash || 0;
+                const netChange = endingCash - openingCash;
 
                 return (
                   <div className="max-w-4xl mx-auto space-y-6">

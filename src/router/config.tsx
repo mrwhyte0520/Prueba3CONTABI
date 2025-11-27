@@ -45,6 +45,7 @@ const FinancialStatementsPage = lazy(() => import('../pages/accounting/financial
 const GeneralJournalPage = lazy(() => import('../pages/accounting/general-journal/page'));
 const GeneralLedgerPage = lazy(() => import('../pages/accounting/general-ledger/page'));
 const AccountingPeriodsPage = lazy(() => import('../pages/accounting/periods/page'));
+const TrialBalancePage = lazy(() => import('../pages/accounting/trial-balance/page'));
 
 const POSPage = lazy(() => import('../pages/pos/page'));
 const ProductsPage = lazy(() => import('../pages/products/page'));
@@ -181,6 +182,10 @@ const routes: RouteObject[] = [
   {
     path: '/accounting/general-ledger',
     element: <ProtectedRoute><GeneralLedgerPage /></ProtectedRoute>
+  },
+  {
+    path: '/accounting/trial-balance',
+    element: <ProtectedRoute><TrialBalancePage /></ProtectedRoute>
   },
   {
     path: '/accounting/periods',

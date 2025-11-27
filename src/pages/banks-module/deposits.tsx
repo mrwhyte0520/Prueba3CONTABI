@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, bankCurrenciesService, bankDepositsService, chartAccountsService, journalEntriesService } from '../../services/database';
+import { bankAccountsService, bankDepositsService, chartAccountsService, journalEntriesService } from '../../services/database';
 
 interface BankDeposit {
   id: string;
@@ -19,7 +19,6 @@ export default function BankDepositsPage() {
   const [deposits, setDeposits] = useState<BankDeposit[]>([]);
   const [banks, setBanks] = useState<any[]>([]);
   const [accountsById, setAccountsById] = useState<Record<string, { id: string; code: string; name: string }>>({});
-  const [currencies, setCurrencies] = useState<any[]>([]);
   const [originAccounts, setOriginAccounts] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [form, setForm] = useState({
     banco: '',
@@ -34,6 +33,26 @@ export default function BankDepositsPage() {
 
   const handleChange = (field: keyof typeof form, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleBankChange = (bankId: string) => {
+    setForm((prev) => {
+      const next = { ...prev, banco: bankId };
+      const selectedBank = (banks || []).find((b: any) => b.id === bankId);
+      if (selectedBank) {
+        const accountId = selectedBank.chart_account_id as string | undefined;
+        if (accountId) {
+          const acc = accountsById[accountId];
+          if (acc) {
+            next.cuentaBanco = acc.code;
+          }
+        }
+        if (selectedBank.currency) {
+          next.moneda = selectedBank.currency;
+        }
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -93,26 +112,7 @@ export default function BankDepositsPage() {
     loadBanksAndAccounts();
   }, [user?.id]);
 
-  useEffect(() => {
-    const loadCurrencies = async () => {
-      if (!user?.id) return;
-      try {
-        const data = await bankCurrenciesService.getAll(user.id);
-        const list = data || [];
-        setCurrencies(list);
-
-        if (list.length > 0) {
-          const base = list.find((c: any) => c.is_base);
-          const firstCode = (base || list[0]).code || 'DOP';
-          setForm(prev => ({ ...prev, moneda: prev.moneda || firstCode }));
-        }
-      } catch (error) {
-        console.error('Error cargando monedas para depósitos bancarios', error);
-      }
-    };
-
-    loadCurrencies();
-  }, [user?.id]);
+  // La moneda se asume desde la configuración del banco (campo currency en bank_accounts)
 
   const handleAddDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -198,6 +198,17 @@ export default function BankDepositsPage() {
     }
   };
 
+  const selectedBank = (banks || []).find((b: any) => b.id === form.banco);
+  const bankAccountLabel = (() => {
+    if (selectedBank?.chart_account_id) {
+      const acc = accountsById[selectedBank.chart_account_id];
+      if (acc) {
+        return `${acc.code} - ${acc.name}`;
+      }
+    }
+    return form.cuentaBanco;
+  })();
+
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6">
@@ -219,7 +230,7 @@ export default function BankDepositsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Banco</label>
               <select
                 value={form.banco}
-                onChange={(e) => handleChange('banco', e.target.value)}
+                onChange={(e) => handleBankChange(e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Seleccione un banco...</option>
@@ -231,29 +242,13 @@ export default function BankDepositsPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de Banco (Cuenta Contable)</label>
-              <select
-                value={form.cuentaBanco}
-                onChange={(e) => handleChange('cuentaBanco', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Seleccione una cuenta...</option>
-                {banks
-                  .filter((b: any) => b.id === form.banco && b.chart_account_id)
-                  .map((b: any) => {
-                    const acc = accountsById[b.chart_account_id];
-                    if (!acc) return null;
-                    const value = acc.code;
-                    if (form.cuentaBanco !== value) {
-                      // sincronizar automáticamente la cuenta contable con el banco seleccionado
-                      setForm(prev => ({ ...prev, cuentaBanco: value }));
-                    }
-                    return (
-                      <option key={acc.id} value={value}>
-                        {acc.code} - {acc.name}
-                      </option>
-                    );
-                  })}
-              </select>
+              <input
+                type="text"
+                value={bankAccountLabel || ''}
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+                placeholder="Se asigna automáticamente según el banco seleccionado"
+              />
             </div>
 
             <div>
@@ -274,20 +269,12 @@ export default function BankDepositsPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
-              <select
+              <input
+                type="text"
                 value={form.moneda}
-                onChange={(e) => handleChange('moneda', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                {currencies.length === 0 && (
-                  <option value="DOP">Peso Dominicano (DOP)</option>
-                )}
-                {currencies.map((c: any) => (
-                  <option key={c.id} value={c.code}>
-                    {c.name} ({c.code})
-                  </option>
-                ))}
-              </select>
+                disabled
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+              />
             </div>
 
             <div>
