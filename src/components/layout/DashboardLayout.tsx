@@ -322,8 +322,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Impuestos', href: '/settings/taxes' },
         { name: 'Inventario', href: '/settings/inventory' },
         { name: 'Nómina', href: '/settings/payroll' },
-        { name: 'Respaldos', href: '/settings/backup' },
-        { name: 'Integraciones', href: '/settings/integrations' }
+        { name: 'Respaldos', href: '/settings/backup' }
       ]
     }
   ];
