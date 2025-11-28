@@ -1,9 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 import { useAuth } from '../../../hooks/useAuth';
-import { pettyCashService, chartAccountsService, pettyCashCategoriesService, bankAccountsService } from '../../../services/database';
+import {
+  pettyCashService,
+  chartAccountsService,
+  pettyCashCategoriesService,
+  bankAccountsService,
+  suppliersService,
+} from '../../../services/database';
 
 interface PettyCashFund {
   id: string;
@@ -31,6 +38,8 @@ interface PettyCashExpense {
   expenseAccountId?: string;
   ncf?: string;
   itbis?: number | null;
+  supplierTaxId?: string;
+  supplierName?: string;
 }
 
 interface PettyCashReimbursement {
@@ -55,12 +64,17 @@ const PettyCashPage: React.FC = () => {
 
   const [selectedFund, setSelectedFund] = useState<PettyCashFund | null>(null);
   const [selectedExpense, setSelectedExpense] = useState<PettyCashExpense | null>(null);
+  const [selectedReimbursementFundId, setSelectedReimbursementFundId] = useState('');
 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<any | null>(null);
+  const [selectedSupplierTaxId, setSelectedSupplierTaxId] = useState('');
+  const [showExpenseDetailsModal, setShowExpenseDetailsModal] = useState(false);
+  const receiptInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loadingFunds, setLoadingFunds] = useState(false);
   const [loadingExpenses, setLoadingExpenses] = useState(false);
@@ -75,6 +89,7 @@ const PettyCashPage: React.FC = () => {
   useEffect(() => {
     const loadData = async () => {
       if (!user) return;
+
       try {
         setLoadingFunds(true);
         const [fundsData, accountsData, expensesData, reimbursementsData, categoriesData, bankAccountsData] = await Promise.all([
@@ -109,10 +124,6 @@ const PettyCashPage: React.FC = () => {
           });
           if (criticalFunds.length > 0) {
             const names = criticalFunds.map((f) => `${f.name} (RD$ ${f.currentBalance.toLocaleString()} de RD$ ${f.initialAmount.toLocaleString()})`).join('\n');
-            alert(
-              'Atención: Existen fondos de caja chica con disponibilidad igual o inferior al 10% del monto inicial.\n\n' +
-              names
-            );
           }
         } catch (e) {
           // eslint-disable-next-line no-console
@@ -136,6 +147,8 @@ const PettyCashPage: React.FC = () => {
           expenseAccountId: e.expense_account_id || undefined,
           ncf: e.ncf || '',
           itbis: e.itbis != null ? Number(e.itbis) : null,
+          supplierTaxId: e.supplier_tax_id || '',
+          supplierName: e.supplier_name || '',
         }));
         setExpenses(mappedExpenses);
 
@@ -159,6 +172,22 @@ const PettyCashPage: React.FC = () => {
 
     loadData();
   }, [user]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const loadSuppliers = async () => {
+      try {
+        const rows = await suppliersService.getAll(user.id);
+        setSuppliers(rows || []);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading suppliers for petty cash expenses:', error);
+      }
+    };
+
+    loadSuppliers();
+  }, [user?.id]);
 
   const handleSubmitFund = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -264,181 +293,85 @@ const PettyCashPage: React.FC = () => {
     return false;
   });
 
-  const hasDbCategories = categories && categories.length > 0;
-  const categoryOptions: { value: string; label: string }[] = hasDbCategories
-    ? categories.map((c: any) => ({ value: String(c.name || '').trim(), label: String(c.name || '').trim() })).filter(c => c.value)
-    : [
-        { value: 'Suministros de Oficina', label: 'Suministros de Oficina' },
-        { value: 'Viáticos', label: 'Viáticos' },
-        { value: 'Transporte', label: 'Transporte' },
-        { value: 'Mantenimiento', label: 'Mantenimiento' },
-        { value: 'Comunicaciones', label: 'Comunicaciones' },
-        { value: 'Otros', label: 'Otros' },
-      ];
+  const totalReimbursementsByFund: Record<string, number> = reimbursements.reduce((acc, r) => {
+    const fundId = r.fundId;
+    const amount = Number(r.amount) || 0;
+    if (!fundId || amount <= 0) return acc;
+    acc[fundId] = (acc[fundId] || 0) + amount;
+    return acc;
+  }, {} as Record<string, number>);
 
-  const handleCreateExpense = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) return;
+  const totalExpensesByFund: Record<string, number> = expenses.reduce((acc, e) => {
+    const fundId = e.fundId;
+    const amount = Number(e.amount) || 0;
+    if (!fundId || amount <= 0) return acc;
+    if (e.status === 'rejected') return acc;
+    acc[fundId] = (acc[fundId] || 0) + amount;
+    return acc;
+  }, {} as Record<string, number>);
 
-    const formData = new FormData(e.target as HTMLFormElement);
-    const fundId = String(formData.get('fundId') || '');
-    const date = String(formData.get('date') || '').trim();
-    const description = String(formData.get('description') || '').trim();
-    const category = String(formData.get('category') || '').trim();
-    const amount = parseFloat(String(formData.get('amount') || '0')) || 0;
-    const receipt = String(formData.get('receipt') || '').trim();
-    const ncf = String(formData.get('ncf') || '').trim();
-    const itbisRaw = String(formData.get('itbis') || '').trim();
-    const itbis = itbisRaw ? (parseFloat(itbisRaw) || 0) : null;
-    const expenseAccountId = String(formData.get('expenseAccountId') || '');
-
-    if (!fundId) {
-      alert('Debe seleccionar un fondo de caja chica.');
-      return;
-    }
-    if (!expenseAccountId) {
-      alert('Debe seleccionar la cuenta contable del gasto.');
-      return;
-    }
-
-    try {
-      const created = await pettyCashService.createExpense(user.id, {
-        fund_id: fundId,
-        expense_date: date || new Date().toISOString().split('T')[0],
-        description,
-        category,
-        amount,
-        receipt_number: receipt,
-        ncf: ncf || null,
-        itbis,
-        expense_account_id: expenseAccountId,
-      });
-
-      const mapped: PettyCashExpense = {
-        id: created.id,
-        fundId: created.fund_id,
-        date: created.expense_date,
-        description: created.description,
-        category: created.category || '',
-        amount: Number(created.amount) || 0,
-        receipt: created.receipt_number || '',
-        approvedBy: created.approved_by || '',
-        status: (created.status as 'pending' | 'approved' | 'rejected') || 'pending',
-        expenseAccountId: created.expense_account_id || undefined,
-        ncf: created.ncf || ncf,
-        itbis: created.itbis != null ? Number(created.itbis) : itbis,
-      };
-
-      setExpenses(prev => [mapped, ...prev]);
-      setShowExpenseModal(false);
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Error creating petty cash expense:', error);
-      alert('Error al registrar el gasto de caja chica');
-    }
+  const getTotalFunds = () => {
+    return funds.reduce((sum, fund) => {
+      const amount = Number(fund.currentBalance) || 0;
+      return sum + amount;
+    }, 0);
   };
 
-  const handleApproveExpense = async (expenseId: string) => {
-    if (!user) return;
-    const expense = expenses.find(e => e.id === expenseId);
-    if (!expense) return;
-    if (expense.status === 'approved') return;
-
-    if (!confirm('¿Desea aprobar este gasto de caja chica?')) return;
-
-    try {
-      const updated = await pettyCashService.approveExpense(user.id, expenseId, user.email || null);
-
-      // Actualizar gastos en UI
-      setExpenses(prev => prev.map(e => (
-        e.id === expenseId
-          ? {
-              ...e,
-              status: (updated.status as 'pending' | 'approved' | 'rejected') || 'approved',
-              approvedBy: updated.approved_by || e.approvedBy,
-            }
-          : e
-      )));
-
-      // Recargar fondos para reflejar nuevo balance
-      if (user) {
-        const fundsData = await pettyCashService.getFunds(user.id);
-        const mappedFunds: PettyCashFund[] = (fundsData || []).map((f: any) => ({
-          id: f.id,
-          name: f.name,
-          location: f.location || '',
-          custodian: f.custodian || '',
-          initialAmount: Number(f.initial_amount) || 0,
-          currentBalance: Number(f.current_balance) || 0,
-          status: (f.status as 'active' | 'inactive') || 'active',
-          createdAt: f.created_at ? String(f.created_at).split('T')[0] : '',
-          pettyCashAccountId: f.petty_cash_account_id || undefined,
-          bankAccountId: f.bank_account_id || undefined,
-        }));
-        setFunds(mappedFunds);
-      }
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Error approving petty cash expense:', error);
-      alert('Error al aprobar el gasto de caja chica');
-    }
+  const getPendingExpenses = () => {
+    return expenses.filter((e) => e.status === 'pending').length;
   };
 
-  const handleRejectExpense = async (expenseId: string) => {
-    if (!user) return;
-    const expense = expenses.find(e => e.id === expenseId);
-    if (!expense) return;
-    if (expense.status === 'rejected') return;
-
-    if (!confirm('¿Desea marcar este gasto de caja chica como RECHAZADO?')) return;
-
-    try {
-      const updated = await pettyCashService.rejectExpense(user.id, expenseId, user.email || null);
-
-      setExpenses(prev => prev.map(e => (
-        e.id === expenseId
-          ? {
-              ...e,
-              status: (updated.status as 'pending' | 'approved' | 'rejected') || 'rejected',
-              approvedBy: updated.approved_by || e.approvedBy,
-            }
-          : e
-      )));
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Error rejecting petty cash expense:', error);
-      alert('Error al rechazar el gasto de caja chica');
-    }
+  const getTotalExpenses = () => {
+    return expenses.reduce((sum, e) => {
+      if (e.status === 'rejected') return sum;
+      const amount = Number(e.amount) || 0;
+      if (amount <= 0) return sum;
+      return sum + amount;
+    }, 0);
   };
-
-  const getTotalFunds = () => funds.reduce((sum, fund) => sum + fund.currentBalance, 0);
-  const getTotalExpenses = () => expenses.reduce((sum, expense) => sum + expense.amount, 0);
-  const getPendingExpenses = () => expenses.filter(expense => expense.status === 'pending').length;
-  const getTotalReimbursements = () => reimbursements.reduce((sum, r) => sum + r.amount, 0);
 
   const downloadExcel = () => {
     try {
       const today = new Date().toISOString().split('T')[0];
+
       if (activeTab === 'funds') {
         const headers = [
           { key: 'name', title: 'Fondo' },
           { key: 'location', title: 'Ubicación' },
           { key: 'custodian', title: 'Custodio' },
           { key: 'initialAmount', title: 'Monto Inicial' },
+          { key: 'totalReplenishments', title: 'Total Reposiciones' },
+          { key: 'fundTotal', title: 'Monto Fondo (Inicial + Reposición)' },
+          { key: 'totalExpenses', title: 'Total Gastos' },
+          { key: 'theoreticalCash', title: 'Saldo Teórico en Caja' },
           { key: 'currentBalance', title: 'Balance Actual' },
+          { key: 'difference', title: 'Diferencia' },
           { key: 'status', title: 'Estado' },
           { key: 'createdAt', title: 'Creado' },
         ];
+
         const rows = funds.map(f => ({
           name: f.name,
           location: f.location,
           custodian: f.custodian,
           initialAmount: f.initialAmount || 0,
+          totalReplenishments: totalReimbursementsByFund[f.id] || 0,
+          fundTotal: (f.initialAmount || 0) + (totalReimbursementsByFund[f.id] || 0),
+          totalExpenses: totalExpensesByFund[f.id] || 0,
+          theoreticalCash: ((f.initialAmount || 0) + (totalReimbursementsByFund[f.id] || 0)) - (totalExpensesByFund[f.id] || 0),
           currentBalance: f.currentBalance || 0,
+          difference: (f.currentBalance || 0) - (((f.initialAmount || 0) + (totalReimbursementsByFund[f.id] || 0)) - (totalExpensesByFund[f.id] || 0)),
           status: f.status === 'active' ? 'Activo' : 'Inactivo',
           createdAt: f.createdAt,
         }));
-        exportToExcelWithHeaders(rows, headers, `caja_chica_fondos_${today}`, 'Fondos', [24,18,18,16,16,12,14]);
+
+        exportToExcelWithHeaders(
+          rows,
+          headers,
+          `caja_chica_fondos_${today}`,
+          'Fondos',
+          [24, 18, 18, 16, 18, 18, 18, 16, 12, 14]
+        );
         return;
       }
 
@@ -454,6 +387,7 @@ const PettyCashPage: React.FC = () => {
           { key: 'ncf', title: 'NCF' },
           { key: 'itbis', title: 'ITBIS' },
         ];
+
         const fundNameById = new Map(funds.map(f => [f.id, f.name] as const));
         const rows = expenses.map(e => ({
           date: e.date,
@@ -461,12 +395,23 @@ const PettyCashPage: React.FC = () => {
           description: e.description,
           category: e.category,
           amount: e.amount || 0,
-          status: e.status === 'approved' ? 'Aprobado' : e.status === 'pending' ? 'Pendiente' : 'Rechazado',
+          status: e.status === 'approved'
+            ? 'Aprobado'
+            : e.status === 'pending'
+            ? 'Pendiente'
+            : 'Rechazado',
           approvedBy: e.approvedBy || 'N/A',
           ncf: e.ncf || '',
           itbis: e.itbis || 0,
         }));
-        exportToExcelWithHeaders(rows, headers, `caja_chica_gastos_${today}`, 'Gastos', [12,22,40,18,14,12,18,12,12]);
+
+        exportToExcelWithHeaders(
+          rows,
+          headers,
+          `caja_chica_gastos_${today}`,
+          'Gastos',
+          [12, 22, 40, 18, 14, 12, 18, 12, 12]
+        );
         return;
       }
 
@@ -477,6 +422,7 @@ const PettyCashPage: React.FC = () => {
           { key: 'amount', title: 'Monto' },
           { key: 'description', title: 'Descripción' },
         ];
+
         const fundNameById = new Map(funds.map(f => [f.id, f.name] as const));
         const rows = reimbursements.map(r => ({
           date: r.date,
@@ -484,7 +430,14 @@ const PettyCashPage: React.FC = () => {
           amount: r.amount || 0,
           description: r.description || '',
         }));
-        exportToExcelWithHeaders(rows, headers, `caja_chica_reembolsos_${today}`, 'Reembolsos', [12,22,14,40]);
+
+        exportToExcelWithHeaders(
+          rows,
+          headers,
+          `caja_chica_reposiciones_${today}`,
+          'Reposiciones',
+          [12, 22, 14, 40]
+        );
         return;
       }
 
@@ -513,6 +466,13 @@ const PettyCashPage: React.FC = () => {
               <i className="ri-file-excel-line mr-2"></i>
               Descargar Excel
             </button>
+            <Link
+              to="/accounting/petty-cash/report"
+              className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors whitespace-nowrap flex items-center"
+            >
+              <i className="ri-file-list-2-line mr-2"></i>
+              Reporte de Caja Chica
+            </Link>
             <button
               onClick={() => window.location.href = '/dashboard'}
               className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
@@ -623,7 +583,7 @@ const PettyCashPage: React.FC = () => {
                 }`}
               >
                 <i className="ri-shopping-cart-line mr-2"></i>
-                Gastos y Comprobantes
+                Desembolsos
               </button>
               <button
                 onClick={() => setActiveTab('reimbursements')}
@@ -634,7 +594,18 @@ const PettyCashPage: React.FC = () => {
                 }`}
               >
                 <i className="ri-refund-2-line mr-2"></i>
-                Reembolsos
+                Reposiciones
+              </button>
+              <button
+                onClick={() => setActiveTab('categories')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
+                  activeTab === 'categories'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <i className="ri-price-tag-3-line mr-2"></i>
+                Categorías
               </button>
             </nav>
           </div>
@@ -728,17 +699,17 @@ const PettyCashPage: React.FC = () => {
               </div>
             )}
 
-            {/* Tab: Gastos */}
+            {/* Tab: Desembolsos */}
             {activeTab === 'expenses' && (
               <div className="space-y-6">
                 <div className="flex justify-between items-center">
-                  <h2 className="text-lg font-semibold text-gray-900">Gastos y Comprobantes</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Desembolsos</h2>
                   <button
                     onClick={() => setShowExpenseModal(true)}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                   >
                     <i className="ri-add-line mr-2"></i>
-                    Registrar Gasto
+                    Registrar Desembolso
                   </button>
                 </div>
 
@@ -776,7 +747,7 @@ const PettyCashPage: React.FC = () => {
                       {loadingExpenses && expenses.length === 0 && (
                         <tr>
                           <td colSpan={8} className="px-6 py-4 text-center text-sm text-gray-500">
-                            Cargando gastos de caja chica...
+                            Cargando desembolsos de caja chica...
                           </td>
                         </tr>
                       )}
@@ -809,7 +780,10 @@ const PettyCashPage: React.FC = () => {
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                             <button
                               className="text-blue-600 hover:text-blue-900 mr-3"
-                              onClick={() => setSelectedExpense(expense)}
+                              onClick={() => {
+                                setSelectedExpense(expense);
+                                setShowExpenseDetailsModal(true);
+                              }}
                             >
                               Ver
                             </button>
@@ -848,13 +822,13 @@ const PettyCashPage: React.FC = () => {
             {activeTab === 'reimbursements' && (
               <div className="space-y-6">
                 <div className="flex justify-between items-center">
-                  <h2 className="text-lg font-semibold text-gray-900">Solicitudes de Reembolso</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Solicitudes de Reposición</h2>
                   <button
                     onClick={() => setShowReimbursementModal(true)}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                   >
                     <i className="ri-add-line mr-2"></i>
-                    Nueva Solicitud
+                    Nueva Solicitud de Reposición
                   </button>
                 </div>
 
@@ -863,11 +837,11 @@ const PettyCashPage: React.FC = () => {
                     <i className="ri-information-line text-yellow-600 mr-3 mt-1"></i>
                     <div>
                       <h3 className="text-sm font-medium text-yellow-800">
-                        Proceso de Reembolso
+                        Proceso de Reposición
                       </h3>
                       <p className="text-sm text-yellow-700 mt-1">
-                        Los reembolsos se registran cuando se repone el fondo de caja chica desde la cuenta bancaria.
-                        Cada reembolso aumenta el saldo del fondo y genera un asiento contable Banco vs Caja Chica.
+                        Las reposiciones se registran cuando se repone el fondo de caja chica desde la cuenta bancaria.
+                        Cada reposición aumenta el saldo del fondo y genera un asiento contable Banco vs Caja Chica.
                       </p>
                     </div>
                   </div>
@@ -887,7 +861,7 @@ const PettyCashPage: React.FC = () => {
                       {reimbursements.length === 0 && (
                         <tr>
                           <td colSpan={4} className="px-6 py-4 text-center text-sm text-gray-500">
-                            No hay reembolsos registrados.
+                            No hay reposiciones registradas.
                           </td>
                         </tr>
                       )}
@@ -913,7 +887,7 @@ const PettyCashPage: React.FC = () => {
             {activeTab === 'categories' && (
               <div className="space-y-6">
                 <div className="flex justify-between items-center">
-                  <h2 className="text-lg font-semibold text-gray-900">Categorías de Gastos de Caja Chica</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">Categorías de Desembolsos de Caja Chica</h2>
                   <button
                     onClick={() => {
                       setEditingCategory(null);
@@ -970,7 +944,7 @@ const PettyCashPage: React.FC = () => {
                               onClick={async () => {
                                 if (!user) return;
                                 const confirmMsg = cat.is_active
-                                  ? '¿Desea desactivar esta categoría? Ya no estará disponible para nuevos gastos.'
+                                  ? '¿Desea desactivar esta categoría? Ya no estará disponible para nuevos desembolsos.'
                                   : '¿Desea activar nuevamente esta categoría?';
                                 if (!confirm(confirmMsg)) return;
                                 try {
@@ -995,6 +969,104 @@ const PettyCashPage: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Modal: Crear / Editar Categoría */}
+        {showCategoryModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                {editingCategory ? 'Editar Categoría' : 'Nueva Categoría'}
+              </h3>
+
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!user) return;
+
+                  const formData = new FormData(e.currentTarget as HTMLFormElement);
+                  const name = String(formData.get('name') || '').trim();
+                  const description = String(formData.get('description') || '').trim();
+
+                  if (!name) {
+                    alert('Debe indicar el nombre de la categoría.');
+                    return;
+                  }
+
+                  try {
+                    if (editingCategory) {
+                      const updated = await pettyCashCategoriesService.update(editingCategory.id, {
+                        name,
+                        description,
+                      });
+                      setCategories((prev) => prev.map((c: any) => (c.id === updated.id ? updated : c)));
+                    } else {
+                      const created = await pettyCashCategoriesService.create(user.id, {
+                        name,
+                        description,
+                        is_active: true,
+                      });
+                      setCategories((prev) => [created, ...prev]);
+                    }
+
+                    setShowCategoryModal(false);
+                    setEditingCategory(null);
+                  } catch (error) {
+                    // eslint-disable-next-line no-console
+                    console.error('Error guardando categoría de caja chica:', error);
+                    alert('Error al guardar la categoría de desembolsos de caja chica');
+                  }
+                }}
+                className="space-y-4"
+              >
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nombre de la Categoría
+                  </label>
+                  <input
+                    type="text"
+                    name="name"
+                    required
+                    defaultValue={editingCategory?.name || ''}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Ej: Suministros de Oficina, Viáticos, Transporte"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Descripción (opcional)
+                  </label>
+                  <textarea
+                    name="description"
+                    rows={3}
+                    defaultValue={editingCategory?.description || ''}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                    placeholder="Descripción interna de la categoría"
+                  />
+                </div>
+
+                <div className="flex space-x-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowCategoryModal(false);
+                      setEditingCategory(null);
+                    }}
+                    className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                  >
+                    Guardar
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* Modal: Crear Fondo */}
         {showFundModal && (
@@ -1133,11 +1205,11 @@ const PettyCashPage: React.FC = () => {
           </div>
         )}
 
-        {/* Modal: Registrar Gasto */}
+        {/* Modal: Registrar Desembolso */}
         {showExpenseModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Registrar Gasto</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Registrar Desembolso</h3>
               
               <form onSubmit={handleCreateExpense} className="space-y-4">
                 <div>
@@ -1219,13 +1291,34 @@ const PettyCashPage: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Número de Recibo
                   </label>
-                  <input
-                    type="text"
-                    name="receipt"
-                    required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Ej: REC-001"
-                  />
+                  <div className="flex space-x-2">
+                    <input
+                      type="text"
+                      name="receipt"
+                      required
+                      ref={receiptInputRef}
+                      placeholder="Ej: REC-20251127-1430"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const now = new Date();
+                        const y = now.getFullYear();
+                        const m = String(now.getMonth() + 1).padStart(2, '0');
+                        const d = String(now.getDate()).padStart(2, '0');
+                        const hh = String(now.getHours()).padStart(2, '0');
+                        const mm = String(now.getMinutes()).padStart(2, '0');
+                        const generated = `REC-${y}${m}${d}-${hh}${mm}`;
+                        if (receiptInputRef.current) {
+                          receiptInputRef.current.value = generated;
+                        }
+                      }}
+                      className="px-3 py-2 text-xs bg-gray-100 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-200 whitespace-nowrap"
+                    >
+                      Generar
+                    </button>
+                  </div>
                 </div>
 
                 <div>
@@ -1237,6 +1330,45 @@ const PettyCashPage: React.FC = () => {
                     name="ncf"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Número de comprobante fiscal, si aplica"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Proveedor (requerido si hay NCF)
+                  </label>
+                  <select
+                    name="supplierId"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      const supplierRow = suppliers.find((s: any) => s.id === id);
+                      if (supplierRow) {
+                        setSelectedSupplierTaxId(String(supplierRow.tax_id || ''));
+                      } else {
+                        setSelectedSupplierTaxId('');
+                      }
+                    }}
+                  >
+                    <option value="">Seleccionar proveedor</option>
+                    {suppliers.map((s: any) => (
+                      <option key={s.id} value={s.id}>
+                        {`${s.tax_id || ''}${s.tax_id && s.name ? ' - ' : ''}${s.name || s.legal_name || ''}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    RNC/Cédula del proveedor (solo lectura)
+                  </label>
+                  <input
+                    type="text"
+                    value={selectedSupplierTaxId}
+                    readOnly
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700 cursor-not-allowed"
+                    placeholder="Se completará al seleccionar el proveedor"
                   />
                 </div>
 
@@ -1296,7 +1428,7 @@ const PettyCashPage: React.FC = () => {
         {showReimbursementModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Registrar Reembolso</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Registrar Reposición</h3>
 
               <form
                 onSubmit={async (e) => {
@@ -1307,6 +1439,7 @@ const PettyCashPage: React.FC = () => {
                   const date = String(formData.get('date') || '').trim() || new Date().toISOString().split('T')[0];
                   const amount = parseFloat(String(formData.get('amount') || '0')) || 0;
                   const description = String(formData.get('description') || '').trim();
+                  const startReceiptNumber = String(formData.get('startReceiptNumber') || '').trim();
                   const bankAccountId = String(formData.get('bankAccountId') || '');
 
                   if (!fundId) {
@@ -1325,6 +1458,7 @@ const PettyCashPage: React.FC = () => {
                       amount,
                       description,
                       bank_account_id: bankAccountId,
+                      start_receipt_number: startReceiptNumber || null,
                     });
 
                     const mapped: PettyCashReimbursement = {
@@ -1358,7 +1492,7 @@ const PettyCashPage: React.FC = () => {
                   } catch (error) {
                     // eslint-disable-next-line no-console
                     console.error('Error creating petty cash reimbursement:', error);
-                    alert('Error al registrar el reembolso de caja chica');
+                    alert('Error al registrar la reposición de caja chica');
                   }
                 }}
                 className="space-y-4"
@@ -1371,6 +1505,7 @@ const PettyCashPage: React.FC = () => {
                     name="fundId"
                     required
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    onChange={(e) => setSelectedReimbursementFundId(e.target.value)}
                   >
                     <option value="">Seleccionar fondo</option>
                     {funds.filter(f => f.status === 'active').map(fund => (
@@ -1381,7 +1516,7 @@ const PettyCashPage: React.FC = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Fecha de Reembolso
+                    Fecha de Reposición
                   </label>
                   <input
                     type="date"
@@ -1415,8 +1550,25 @@ const PettyCashPage: React.FC = () => {
                     type="text"
                     name="description"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Descripción del reembolso (opcional)"
+                    placeholder="Descripción de la reposición (opcional)"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Número inicial de recibos de reposición (opcional)
+                  </label>
+                  <select
+                    name="startReceiptNumber"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="">Seleccionar recibo inicial</option>
+                    {reimbursementReceiptOptions.map(receipt => (
+                      <option key={receipt} value={receipt}>
+                        {receipt}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
@@ -1429,11 +1581,18 @@ const PettyCashPage: React.FC = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar cuenta</option>
-                    {bankAccounts.map(acc => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.code} - {acc.name}
-                      </option>
-                    ))}
+                    {bankAccounts
+                      .map((acc: any) => {
+                        const code = acc.code || '';
+                        const name = acc.name || acc.bank_name || '';
+                        return { ...acc, __display: `${code}${code && name ? ' - ' : ''}${name}` };
+                      })
+                      .filter((acc: any) => acc.__display.trim().length > 0)
+                      .map((acc: any) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.__display}
+                        </option>
+                      ))}
                   </select>
                 </div>
 

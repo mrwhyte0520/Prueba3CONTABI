@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { customersService, invoicesService, receiptsService, inventoryService } from '../../services/database';
+import { customersService, invoicesService, receiptsService, inventoryService, customerTypesService } from '../../services/database';
 import { exportToExcelStyled } from '../../utils/exportImportUtils';
 
 interface Product {
@@ -37,6 +37,8 @@ interface Customer {
   email: string;
   address: string;
   type: 'regular' | 'vip';
+  customerTypeId?: string | null;
+  paymentTermId?: string | null;
 }
 
 interface Sale {
@@ -83,6 +85,7 @@ export default function POSPage() {
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const amountInputRef = useRef<HTMLInputElement | null>(null);
   const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+  const [customerTypes, setCustomerTypes] = useState<any[]>([]);
 
   // Helpers: input masks
   const formatDocument = (raw: string) => {
@@ -175,6 +178,23 @@ export default function POSPage() {
       loadSales();
       loadCustomers();
     }
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadCustomerTypes = async () => {
+      if (!user?.id) {
+        setCustomerTypes([]);
+        return;
+      }
+      try {
+        const types = await customerTypesService.getAll(user.id);
+        setCustomerTypes(types || []);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[POS] Error loading customer types', error);
+      }
+    };
+    loadCustomerTypes();
   }, [user?.id]);
 
   const loadProducts = async () => {
@@ -324,7 +344,9 @@ export default function POSPage() {
           phone: c.phone || c.contact_phone || '',
           email: c.email || c.contact_email || '',
           address: c.address || '',
-          type: (c.type === 'vip' ? 'vip' : 'regular') as 'regular' | 'vip'
+          type: (c.type === 'vip' ? 'vip' : 'regular') as 'regular' | 'vip',
+          customerTypeId: c.customerType || null,
+          paymentTermId: c.paymentTermId || null,
         }));
         setCustomers(mapped);
       } else {
@@ -405,8 +427,25 @@ export default function POSPage() {
     }
   };
 
-  const getSubtotal = () => cart.reduce((sum, item) => sum + item.total, 0);
-  const getTax = () => getSubtotal() * 0.18; // 18% ITBIS
+  const getSelectedCustomerType = () => {
+    if (!selectedCustomer || !selectedCustomer.customerTypeId) return null;
+    return customerTypes.find((t: any) => t.id === selectedCustomer.customerTypeId) || null;
+  };
+
+  const getRawSubtotal = () => cart.reduce((sum, item) => sum + item.total, 0);
+  const getDiscountAmount = () => {
+    const type = getSelectedCustomerType();
+    if (!type || !type.fixedDiscount) return 0;
+    const rate = Number(type.fixedDiscount) || 0;
+    if (rate <= 0) return 0;
+    return getRawSubtotal() * (rate / 100);
+  };
+  const getSubtotal = () => getRawSubtotal() - getDiscountAmount();
+  const getTax = () => {
+    const type = getSelectedCustomerType();
+    if (type && type.noTax) return 0;
+    return getSubtotal() * 0.18;
+  };
   const getTotal = () => getSubtotal() + getTax();
 
   const processPayment = async () => {
@@ -450,11 +489,20 @@ export default function POSPage() {
 
           const isImmediatePayment = ['cash', 'card', 'transfer'].includes(newSale.paymentMethod);
 
+          let dueDateStr = todayStr;
+          const type = getSelectedCustomerType();
+          if (type && typeof type.allowedDelayDays === 'number' && type.allowedDelayDays > 0) {
+            const base = new Date(todayStr);
+            const d = new Date(base);
+            d.setDate(base.getDate() + type.allowedDelayDays);
+            dueDateStr = d.toISOString().slice(0, 10);
+          }
+
           const invoicePayload = {
             customer_id: selectedCustomer.id,
             invoice_number: invoiceNumber,
             invoice_date: todayStr,
-            due_date: todayStr,
+            due_date: dueDateStr,
             currency: 'DOP',
             subtotal: newSale.subtotal,
             tax_amount: newSale.tax,

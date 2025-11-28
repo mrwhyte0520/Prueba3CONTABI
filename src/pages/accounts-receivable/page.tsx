@@ -26,6 +26,22 @@ export default function AccountsReceivablePage() {
       stats: ''
     },
     {
+      title: 'Tipos de Clientes',
+      description: 'Configuración de tipos de clientes (descuentos, límites, cuentas CxC)',
+      icon: 'ri-user-settings-line',
+      path: '/accounts-receivable/customer-types',
+      color: 'bg-teal-500',
+      stats: ''
+    },
+    {
+      title: 'Condiciones de Pago',
+      description: 'Catálogo de condiciones de pago para clientes',
+      icon: 'ri-time-line',
+      path: '/accounts-receivable/payment-terms',
+      color: 'bg-yellow-500',
+      stats: ''
+    },
+    {
       title: 'Pagos Recibidos',
       description: 'Registro y seguimiento de pagos',
       icon: 'ri-money-dollar-circle-line',
@@ -47,6 +63,22 @@ export default function AccountsReceivablePage() {
       icon: 'ri-wallet-line',
       path: '/accounts-receivable/advances',
       color: 'bg-orange-500',
+      stats: ''
+    },
+    {
+      title: 'Devoluciones en Ventas',
+      description: 'Reclasificación de ingresos a devoluciones en ventas',
+      icon: 'ri-refresh-line',
+      path: '/accounts-receivable/returns',
+      color: 'bg-amber-500',
+      stats: ''
+    },
+    {
+      title: 'Descuentos en Ventas',
+      description: 'Reclasificación de ingresos a descuentos en ventas',
+      icon: 'ri-percent-line',
+      path: '/accounts-receivable/discounts',
+      color: 'bg-lime-500',
       stats: ''
     },
     {

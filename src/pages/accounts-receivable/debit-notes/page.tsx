@@ -4,7 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, creditDebitNotesService, accountingSettingsService, journalEntriesService } from '../../../services/database';
+import { customersService, invoicesService, creditDebitNotesService, accountingSettingsService, journalEntriesService, chartAccountsService } from '../../../services/database';
 
 interface DebitNote {
   id: string;
@@ -33,9 +33,11 @@ export default function DebitNotesPage() {
   const [debitNotes, setDebitNotes] = useState<DebitNote[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
-  const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number; status: string }>>([]);
+  const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number; status: string; customerId: string }>>([]);
   const [loadingSupport, setLoadingSupport] = useState(false);
   const [customerArAccounts, setCustomerArAccounts] = useState<Record<string, string>>({});
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [noteCustomerId, setNoteCustomerId] = useState<string>('');
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -57,6 +59,14 @@ export default function DebitNotesPage() {
     }
   };
 
+  const arAccounts = accounts.filter(
+    (acc) => acc.allowPosting && acc.type === 'asset'
+  );
+
+  const creditAccounts = accounts.filter(
+    (acc) => acc.allowPosting && acc.type === 'income'
+  );
+
   const filteredNotes = debitNotes.filter(note => {
     const matchesSearch = note.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          note.noteNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -69,9 +79,10 @@ export default function DebitNotesPage() {
     if (!user?.id) return;
     setLoadingSupport(true);
     try {
-      const [custList, invList] = await Promise.all([
+      const [custList, invList, accList] = await Promise.all([
         customersService.getAll(user.id),
         invoicesService.getAll(user.id),
+        chartAccountsService.getAll(user.id),
       ]);
       setCustomers(custList.map((c: any) => ({ id: c.id, name: c.name })));
       setInvoices(
@@ -81,8 +92,11 @@ export default function DebitNotesPage() {
           totalAmount: Number(inv.total_amount) || 0,
           paidAmount: Number(inv.paid_amount) || 0,
           status: (inv.status as string) || 'pending',
+          customerId: String(inv.customer_id),
         }))
       );
+
+      setAccounts(accList || []);
 
       // Mapa de cuentas de CxC por cliente (si tienen arAccountId configurado)
       const arMap: Record<string, string> = {};
@@ -256,6 +270,7 @@ export default function DebitNotesPage() {
 
   const handleNewNote = () => {
     setSelectedNote(null);
+    setNoteCustomerId('');
     setShowNoteModal(true);
   };
 
@@ -299,9 +314,11 @@ export default function DebitNotesPage() {
     const invoiceId = String(formData.get('invoice_id') || '');
     const reason = String(formData.get('reason') || '');
     const concept = String(formData.get('concept') || '');
+    const arAccountIdFromForm = String(formData.get('ar_account_id') || '');
+    const creditAccountId = String(formData.get('credit_account_id') || '');
 
-    if (!customerId || !amount) {
-      alert('Cliente y monto son obligatorios');
+    if (!customerId || !amount || !creditAccountId) {
+      alert('Cliente, monto y cuenta contable de crédito son obligatorios');
       return;
     }
 
@@ -324,16 +341,15 @@ export default function DebitNotesPage() {
     try {
       const created = await creditDebitNotesService.create(user.id, payload);
 
-      // Best-effort: asiento contable de nota de débito (aumento de CxC: Debe CxC, Haber Ventas/Ingresos)
+      // Best-effort: asiento contable de nota de débito (aumento de CxC: Debe CxC, Haber cuenta seleccionada)
       try {
         const settings = await accountingSettingsService.get(user.id);
 
         const customerSpecificArId = customerArAccounts[customerId];
-        const arAccountId = customerSpecificArId || settings?.ar_account_id;
-        const salesAccountId = settings?.sales_account_id;
+        const arAccountId = arAccountIdFromForm || customerSpecificArId || settings?.ar_account_id;
 
-        if (!arAccountId || !salesAccountId) {
-          alert('Nota de débito creada, pero no se pudo crear el asiento: falta configurar la Cuenta de Cuentas por Cobrar o la Cuenta de Ventas en Ajustes Contables / Cliente.');
+        if (!arAccountId) {
+          alert('Nota de débito creada, pero no se pudo crear el asiento: falta configurar o seleccionar la Cuenta de Cuentas por Cobrar.');
         } else {
           const noteAmount = Number(created.total_amount) || amount;
 
@@ -346,8 +362,8 @@ export default function DebitNotesPage() {
               line_number: 1,
             },
             {
-              account_id: salesAccountId,
-              description: 'Nota de débito - Ingresos adicionales',
+              account_id: creditAccountId,
+              description: 'Nota de débito - Cargo a cuenta seleccionada',
               debit_amount: 0,
               credit_amount: noteAmount,
               line_number: 2,
@@ -713,6 +729,8 @@ export default function DebitNotesPage() {
                     <select 
                       required
                       name="customer_id"
+                      value={noteCustomerId}
+                      onChange={(e) => setNoteCustomerId(e.target.value)}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar cliente</option>
@@ -760,9 +778,11 @@ export default function DebitNotesPage() {
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar factura</option>
-                      {invoices.map((inv) => (
-                        <option key={inv.id} value={inv.id}>{inv.invoiceNumber}</option>
-                      ))}
+                      {invoices
+                        .filter((inv) => noteCustomerId && inv.customerId === noteCustomerId)
+                        .map((inv) => (
+                          <option key={inv.id} value={inv.id}>{inv.invoiceNumber}</option>
+                        ))}
                     </select>
                   </div>
                 </div>
@@ -786,6 +806,43 @@ export default function DebitNotesPage() {
                   </select>
                 </div>
                 
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta por Cobrar (opcional)
+                  </label>
+                  <select
+                    name="ar_account_id"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    defaultValue=""
+                  >
+                    <option value="">Usar cuenta CxC del cliente / ajustes</option>
+                    {arAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta contable de crédito
+                  </label>
+                  <select
+                    required
+                    name="credit_account_id"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    defaultValue=""
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {creditAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Concepto
@@ -853,11 +910,14 @@ export default function DebitNotesPage() {
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar factura</option>
-                    {invoices.map((inv) => (
-                      <option key={inv.id} value={inv.id}>
-                        {inv.invoiceNumber}
-                      </option>
-                    ))}
+                    {invoices
+                      .filter((inv) => inv.customerId === selectedNote.customerId)
+                      .filter((inv) => inv.status !== 'Cancelada' && (inv.totalAmount - inv.paidAmount) > 0)
+                      .map((inv) => (
+                        <option key={inv.id} value={inv.id}>
+                          {inv.invoiceNumber}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 

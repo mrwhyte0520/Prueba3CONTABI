@@ -70,6 +70,19 @@ export default function ReceiptsPage() {
     }
   };
 
+  const enrichReceiptWithInvoices = async (receipt: Receipt): Promise<Receipt> => {
+    if (!user?.id) return receipt;
+    try {
+      const apps = await receiptApplicationsService.getByReceipt(user.id, receipt.id);
+      const invoiceNumbers = ((apps || []) as any[])
+        .map((app) => (app.invoices as any)?.invoice_number as string | undefined)
+        .filter((num) => !!num) as string[];
+      return { ...receipt, invoiceNumbers };
+    } catch {
+      return receipt;
+    }
+  };
+
   const filteredReceipts = receipts.filter(receipt => {
     const matchesSearch = receipt.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          receipt.receiptNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -84,7 +97,7 @@ export default function ReceiptsPage() {
     setLoadingCustomers(true);
     try {
       const list = await customersService.getAll(user.id);
-      setCustomers(list.map(c => ({ id: c.id, name: c.name })));
+      setCustomers((list || []).map((c: any) => ({ id: String(c.id), name: String(c.name) })));
 
       // Mapa de cuentas por cobrar específicas por cliente
       const arMap: Record<string, string> = {};
@@ -268,8 +281,8 @@ export default function ReceiptsPage() {
     setLoadingApplyInvoices(true);
     try {
       const data = await invoicesService.getAll(user.id);
-      const mapped = (data as any[])
-        .filter((inv) => String(inv.customer_id) === receipt.customerId)
+      const base = (data as any[])
+        .filter((inv) => String(inv.customer_id) === receipt.customerId && inv.status !== 'Cancelada')
         .map((inv) => {
           const total = Number(inv.total_amount) || 0;
           const paid = Number(inv.paid_amount) || 0;
@@ -281,9 +294,23 @@ export default function ReceiptsPage() {
             paidAmount: paid,
             balance,
           };
-        })
-        .filter((inv) => inv.balance > 0);
-      setApplyInvoices(mapped);
+        });
+
+      const fullyPaid = base.filter((inv) => inv.totalAmount > 0 && inv.balance <= 0);
+
+      const withReceiptInfo = await Promise.all(
+        fullyPaid.map(async (inv) => {
+          const apps = await receiptApplicationsService.getByInvoice(user.id, inv.id);
+          const hasReceipt = (apps || []).length > 0;
+          return { ...inv, hasReceipt };
+        }),
+      );
+
+      const eligibleInvoices = withReceiptInfo
+        .filter((inv) => !inv.hasReceipt)
+        .map(({ hasReceipt, ...rest }) => rest);
+
+      setApplyInvoices(eligibleInvoices);
     } finally {
       setLoadingApplyInvoices(false);
     }
@@ -295,28 +322,29 @@ export default function ReceiptsPage() {
     setShowApplyModal(true);
   };
 
-  const handlePrintReceipt = (receipt: Receipt) => {
+  const handlePrintReceipt = async (receipt: Receipt) => {
+    const enriched = await enrichReceiptWithInvoices(receipt);
     const doc = new jsPDF();
     
     doc.setFontSize(20);
     doc.text('RECIBO DE COBRO', 20, 30);
     
     doc.setFontSize(12);
-    doc.text(`Recibo No: ${receipt.receiptNumber}`, 20, 50);
-    doc.text(`Fecha: ${receipt.date}`, 20, 60);
+    doc.text(`Recibo No: ${enriched.receiptNumber}`, 20, 50);
+    doc.text(`Fecha: ${enriched.date}`, 20, 60);
     
-    doc.text(`Cliente: ${receipt.customerName}`, 20, 80);
-    doc.text(`Concepto: ${receipt.concept}`, 20, 90);
-    doc.text(`Método de Pago: ${getPaymentMethodName(receipt.paymentMethod)}`, 20, 100);
-    doc.text(`Referencia: ${receipt.reference}`, 20, 110);
+    doc.text(`Cliente: ${enriched.customerName}`, 20, 80);
+    doc.text(`Concepto: ${enriched.concept}`, 20, 90);
+    doc.text(`Método de Pago: ${getPaymentMethodName(enriched.paymentMethod)}`, 20, 100);
+    doc.text(`Referencia: ${enriched.reference}`, 20, 110);
     
     doc.setFontSize(16);
-    doc.text(`Monto: RD$ ${receipt.amount.toLocaleString()}`, 20, 130);
+    doc.text(`Monto: RD$ ${enriched.amount.toLocaleString()}`, 20, 130);
     
-    if (receipt.invoiceNumbers.length > 0) {
+    if (enriched.invoiceNumbers.length > 0) {
       doc.setFontSize(12);
       doc.text('Facturas aplicadas:', 20, 150);
-      receipt.invoiceNumbers.forEach((invoice, index) => {
+      enriched.invoiceNumbers.forEach((invoice, index) => {
         doc.text(`- ${invoice}`, 30, 160 + (index * 10));
       });
     }
@@ -350,13 +378,10 @@ export default function ReceiptsPage() {
       alert('La factura seleccionada no es válida');
       return;
     }
-    if (amountToApply > targetInvoice.balance) {
-      alert('El monto a aplicar no puede ser mayor que el saldo de la factura');
+    if (amountToApply > targetInvoice.totalAmount) {
+      alert('El monto a aplicar no puede ser mayor que el monto de la factura');
       return;
     }
-
-    const newPaid = targetInvoice.paidAmount + amountToApply;
-    const newStatus = newPaid >= targetInvoice.totalAmount ? 'paid' : 'partial';
 
     try {
       await receiptApplicationsService.create(user.id, {
@@ -365,8 +390,6 @@ export default function ReceiptsPage() {
         amount_applied: amountToApply,
         notes: notes || null,
       });
-
-      await invoicesService.updatePayment(invoiceId, newPaid, newStatus);
 
       alert('Recibo aplicado exitosamente a la factura');
       setShowApplyModal(false);

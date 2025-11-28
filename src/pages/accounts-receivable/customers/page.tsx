@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, chartAccountsService, salesRepsService } from '../../../services/database';
+import { customersService, chartAccountsService, salesRepsService, customerTypesService, paymentTermsService } from '../../../services/database';
 
 interface Customer {
   id: string;
@@ -25,6 +25,7 @@ interface Customer {
   ncfType?: string | null;
   salesperson?: string | null;
   salesRepId?: string | null;
+  paymentTermId?: string | null;
 }
 
 export default function CustomersPage() {
@@ -38,6 +39,9 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [salesReps, setSalesReps] = useState<Array<{ id: string; name: string; is_active: boolean }>>([]);
+  const [customerTypes, setCustomerTypes] = useState<any[]>([]);
+  const [paymentTerms, setPaymentTerms] = useState<Array<{ id: string; name: string; days?: number }>>([]);
+  const formRef = useRef<HTMLFormElement | null>(null);
 
   const loadCustomers = async () => {
     if (!user?.id) return;
@@ -54,12 +58,21 @@ export default function CustomersPage() {
     const run = async () => {
       await loadCustomers();
       if (!user?.id) return;
-      const [accs, reps] = await Promise.all([
+      const [accs, reps, types, terms] = await Promise.all([
         chartAccountsService.getAll(user.id),
         salesRepsService.getAll(user.id),
+        customerTypesService.getAll(user.id),
+        paymentTermsService.getAll(user.id),
       ]);
       setAccounts(accs || []);
       setSalesReps((reps || []).filter((r: any) => r.is_active));
+      setCustomerTypes(types || []);
+      const mappedTerms = (terms || []).map((t: any) => ({
+        id: t.id as string,
+        name: t.name as string,
+        days: typeof t.days === 'number' ? t.days : undefined,
+      }));
+      setPaymentTerms(mappedTerms);
     };
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -221,6 +234,28 @@ export default function CustomersPage() {
     alert(`Estado de cuenta para ${customer.name}:\n\nSaldo actual: RD$ ${customer.currentBalance.toLocaleString()}\nLímite de crédito: RD$ ${customer.creditLimit.toLocaleString()}`);
   };
 
+  const handleCustomerTypeSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const typeId = e.target.value;
+    if (!typeId || !formRef.current) return;
+    const selectedType = customerTypes.find((t: any) => t.id === typeId);
+    if (!selectedType) return;
+
+    const form = formRef.current;
+    const creditLimitInput = form.elements.namedItem('creditLimit') as HTMLInputElement | null;
+    if (creditLimitInput) {
+      const currentValue = creditLimitInput.value.trim();
+      const suggested = Number(selectedType.creditLimit) || 0;
+      if ((!currentValue || currentValue === '0' || currentValue === '0.00') && suggested > 0) {
+        creditLimitInput.value = String(suggested);
+      }
+    }
+
+    const arAccountSelect = form.elements.namedItem('arAccountId') as HTMLSelectElement | null;
+    if (arAccountSelect && selectedType.arAccountId) {
+      arAccountSelect.value = String(selectedType.arAccountId);
+    }
+  };
+
   const handleSaveCustomer = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!user?.id) {
@@ -228,6 +263,9 @@ export default function CustomersPage() {
       return;
     }
     const formData = new FormData(e.currentTarget);
+    const paymentTermId = String(formData.get('paymentTermId') || '');
+    const selectedPaymentTerm = paymentTerms.find((t) => t.id === paymentTermId);
+    const paymentTermLabel = selectedPaymentTerm ? selectedPaymentTerm.name : '';
     const payload = {
       name: String(formData.get('name') || ''),
       document: String(formData.get('document') || ''),
@@ -243,11 +281,12 @@ export default function CustomersPage() {
       contactPhone: String(formData.get('contactPhone') || ''),
       contactEmail: String(formData.get('contactEmail') || ''),
       customerType: String(formData.get('customerType') || ''),
-      paymentTerms: String(formData.get('paymentTerms') || ''),
+      paymentTerms: paymentTermLabel,
       invoiceType: String(formData.get('invoiceType') || ''),
       ncfType: String(formData.get('ncfType') || ''),
       salesperson: String(formData.get('salesperson') || ''),
       salesRepId: String(formData.get('salesRepId') || '') || null,
+      paymentTermId: paymentTermId || null,
     };
     try {
       if (selectedCustomer) {
@@ -444,7 +483,7 @@ export default function CustomersPage() {
                 </button>
               </div>
               
-              <form onSubmit={handleSaveCustomer} className="space-y-4">
+              <form onSubmit={handleSaveCustomer} ref={formRef} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -462,16 +501,31 @@ export default function CustomersPage() {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      RNC/Cédula
+                      Documento
                     </label>
-                    <input
-                      type="text"
-                      required
-                      name="document"
-                      defaultValue={selectedCustomer?.document || ''}
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="000-0000000-0"
-                    />
+                    <div className="grid grid-cols-3 gap-2">
+                      <select
+                        name="documentType"
+                        defaultValue={(selectedCustomer as any)?.documentType || ''}
+                        className="col-span-1 w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                      >
+                        <option value="">Tipo</option>
+                        <option value="rnc">RNC</option>
+                        <option value="cedula">Cédula</option>
+                        <option value="passport">Pasaporte</option>
+                        <option value="other">Otro</option>
+                      </select>
+                      <div className="col-span-2">
+                        <input
+                          type="text"
+                          required
+                          name="document"
+                          defaultValue={selectedCustomer?.document || ''}
+                          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          placeholder="000-0000000-0"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
                 
@@ -518,6 +572,45 @@ export default function CustomersPage() {
                   />
                 </div>
                 
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Persona de contacto
+                    </label>
+                    <input
+                      type="text"
+                      name="contactName"
+                      defaultValue={(selectedCustomer as any)?.contactName || ''}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Nombre de la persona de contacto"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Teléfono contacto
+                    </label>
+                    <input
+                      type="tel"
+                      name="contactPhone"
+                      defaultValue={(selectedCustomer as any)?.contactPhone || ''}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="809-000-0000"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Email contacto
+                    </label>
+                    <input
+                      type="email"
+                      name="contactEmail"
+                      defaultValue={(selectedCustomer as any)?.contactEmail || ''}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="correo@empresa.com"
+                    />
+                  </div>
+                </div>
+                
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -557,13 +650,15 @@ export default function CustomersPage() {
                     <select
                       name="customerType"
                       defaultValue={(selectedCustomer as any)?.customerType || ''}
+                      onChange={handleCustomerTypeSelectChange}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">No especificado</option>
-                      <option value="retail">Detalle</option>
-                      <option value="wholesale">Mayorista</option>
-                      <option value="government">Gobierno</option>
-                      <option value="other">Otro</option>
+                      {customerTypes.map((t: any) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
@@ -571,16 +666,16 @@ export default function CustomersPage() {
                       Condición de Pago
                     </label>
                     <select
-                      name="paymentTerms"
-                      defaultValue={(selectedCustomer as any)?.paymentTerms || ''}
+                      name="paymentTermId"
+                      defaultValue={(selectedCustomer as any)?.paymentTermId || ''}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">No especificada</option>
-                      <option value="contado">Contado</option>
-                      <option value="15">15 días</option>
-                      <option value="30">30 días</option>
-                      <option value="45">45 días</option>
-                      <option value="60">60 días</option>
+                      {paymentTerms.map((term) => (
+                        <option key={term.id} value={term.id}>
+                          {term.name}{typeof term.days === 'number' ? ` (${term.days} días)` : ''}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>

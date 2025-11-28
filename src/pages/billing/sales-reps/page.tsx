@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { salesRepsService } from '../../../services/database';
+import { salesRepsService, salesRepTypesService } from '../../../services/database';
 
 interface SalesRep {
   id: string;
@@ -13,9 +13,19 @@ interface SalesRep {
   is_active: boolean;
 }
 
+interface SalesRepType {
+  id: string;
+  name: string;
+  description: string | null;
+  default_commission_rate: number | null;
+  max_discount_percent: number | null;
+  is_active: boolean;
+}
+
 export default function SalesRepsPage() {
   const { user } = useAuth();
   const [reps, setReps] = useState<SalesRep[]>([]);
+  const [repTypes, setRepTypes] = useState<SalesRepType[]>([]);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingRep, setEditingRep] = useState<SalesRep | null>(null);
@@ -25,14 +35,19 @@ export default function SalesRepsPage() {
     email: '',
     phone: '',
     commission_rate: '',
+    sales_rep_type_id: '',
   });
 
   const loadReps = async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const data = await salesRepsService.getAll(user.id);
-      setReps(data as SalesRep[]);
+      const [repsData, typesData] = await Promise.all([
+        salesRepsService.getAll(user.id),
+        salesRepTypesService.getAll(user.id),
+      ]);
+      setReps(repsData as SalesRep[]);
+      setRepTypes((typesData as SalesRepType[]).filter(t => t.is_active));
     } catch (error) {
       console.error('Error loading sales reps:', error);
     } finally {
@@ -47,7 +62,7 @@ export default function SalesRepsPage() {
   }, [user?.id]);
 
   const resetForm = () => {
-    setForm({ name: '', code: '', email: '', phone: '', commission_rate: '' });
+    setForm({ name: '', code: '', email: '', phone: '', commission_rate: '', sales_rep_type_id: '' });
     setEditingRep(null);
   };
 
@@ -64,6 +79,7 @@ export default function SalesRepsPage() {
       email: rep.email || '',
       phone: rep.phone || '',
       commission_rate: rep.commission_rate != null ? String(rep.commission_rate) : '',
+      sales_rep_type_id: (rep as any).sales_rep_type_id || '',
     });
     setShowModal(true);
   };
@@ -86,6 +102,7 @@ export default function SalesRepsPage() {
           email: form.email.trim() || null,
           phone: form.phone.trim() || null,
           commission_rate: commission,
+          sales_rep_type_id: form.sales_rep_type_id || null,
         });
       } else {
         await salesRepsService.create(user.id, {
@@ -94,6 +111,7 @@ export default function SalesRepsPage() {
           email: form.email.trim() || undefined,
           phone: form.phone.trim() || undefined,
           commission_rate: commission ?? undefined,
+          sales_rep_type_id: form.sales_rep_type_id || undefined,
         });
       }
 
@@ -147,6 +165,7 @@ export default function SalesRepsPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teléfono</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Comisión (%)</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
@@ -159,6 +178,12 @@ export default function SalesRepsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{rep.code || '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{rep.email || '-'}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{rep.phone || '-'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {(() => {
+                        const t = repTypes.find(rt => rt.id === (rep as any).sales_rep_type_id);
+                        return t ? t.name : '-';
+                      })()}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {rep.commission_rate != null ? `${rep.commission_rate}%` : '-'}
                     </td>
@@ -242,12 +267,29 @@ export default function SalesRepsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Código</label>
-                    <input
-                      type="text"
-                      value={form.code}
-                      onChange={e => setForm({ ...form, code: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={form.code}
+                        onChange={e => setForm({ ...form, code: e.target.value })}
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const prefix = form.name 
+                            ? form.name.substring(0, 3).toUpperCase().replace(/\s/g, '') 
+                            : 'VEN';
+                          const randomNum = Math.floor(Math.random() * 9000) + 1000;
+                          const code = `${prefix}-${randomNum}`;
+                          setForm({ ...form, code });
+                        }}
+                        className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm whitespace-nowrap"
+                        title="Generar código automático"
+                      >
+                        <i className="ri-refresh-line" />
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Comisión (%)</label>
@@ -261,6 +303,29 @@ export default function SalesRepsPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de vendedor</label>
+                  <select
+                    value={form.sales_rep_type_id}
+                    onChange={e => {
+                      const typeId = e.target.value;
+                      const selectedType = repTypes.find(t => t.id === typeId);
+                      setForm({ 
+                        ...form, 
+                        sales_rep_type_id: typeId,
+                        commission_rate: selectedType?.default_commission_rate != null 
+                          ? String(selectedType.default_commission_rate) 
+                          : form.commission_rate
+                      });
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm pr-8"
+                  >
+                    <option value="">Sin tipo asignado</option>
+                    {repTypes.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>

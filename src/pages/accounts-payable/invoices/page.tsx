@@ -9,6 +9,11 @@ import {
   chartAccountsService,
   bankCurrenciesService,
   bankExchangeRatesService,
+  inventoryService,
+  supplierTypesService,
+  purchaseOrdersService,
+  purchaseOrderItemsService,
+  storesService,
 } from '../../../services/database';
 
 interface APInvoice {
@@ -28,6 +33,10 @@ interface APInvoice {
   totalIsrWithheld: number;
   totalToPay: number;
   status: string;
+  storeName?: string;
+  notes?: string;
+  expenseType606?: string;
+  purchaseOrderId?: string | null;
 }
 
 interface LineFormRow {
@@ -35,6 +44,8 @@ interface LineFormRow {
   expenseAccountId: string;
   quantity: string;
   unitPrice: string;
+  inventoryItemId?: string;
+  discountPercentage?: string;
 }
 
 export default function APInvoicesPage() {
@@ -42,12 +53,15 @@ export default function APInvoicesPage() {
 
   const [invoices, setInvoices] = useState<APInvoice[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [supplierTypes, setSupplierTypes] = useState<any[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
   const [paymentTerms, setPaymentTerms] = useState<any[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<any[]>([]);
   const [currencies, setCurrencies] = useState<
     Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>
   >([]);
   const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
+  const [stores, setStores] = useState<Array<{ id: string; name: string; is_active?: boolean }>>([]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -65,24 +79,69 @@ export default function APInvoicesPage() {
     dueDate: '',
     paymentTermsId: '',
     currency: 'DOP',
+    storeName: 'Tienda principal',
+    notes: '',
+    expenseType606: '',
+    itbisToCost: false,
+    discountType: '',
+    discountValue: '',
+    purchaseOrderId: '',
   });
 
+  const [otherTaxes, setOtherTaxes] = useState<Array<{ name: string; rate: string }>>([]);
+
+  const expenseTypes606 = [
+    '01 - Gastos de personal',
+    '02 - Gastos por trabajo, suministros y servicios',
+    '03 - Arrendamientos',
+    '04 - Gastos de activos fijos',
+    '05 - Gastos de representación',
+    '06 - Otras deducciones admitidas',
+    '07 - Gastos financieros',
+    '08 - Gastos extraordinarios',
+    '09 - Compras y gastos que forman parte del costo',
+    '10 - Adquisiciones de activos',
+    '11 - Gastos no admitidos',
+  ];
+
   const [lines, setLines] = useState<LineFormRow[]>([
-    { description: '', expenseAccountId: '', quantity: '1', unitPrice: '0' },
+    { description: '', expenseAccountId: '', quantity: '1', unitPrice: '0', inventoryItemId: '', discountPercentage: '0' },
   ]);
+
+  const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+
+  const handleAddTax = () => {
+    setOtherTaxes(prev => [...prev, { name: '', rate: '0' }]);
+  };
+
+  const handleRemoveTax = (index: number) => {
+    setOtherTaxes(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleTaxChange = (index: number, field: 'name' | 'rate', value: string) => {
+    setOtherTaxes(prev => prev.map((tax, i) => (i === index ? { ...tax, [field]: value } : tax)));
+  };
 
   const loadLookups = async () => {
     if (!user?.id) return;
     try {
-      const [supRows, termRows, accounts] = await Promise.all([
+      const [supRows, termRows, accounts, inventory, typeRows, poRows, storesData] = await Promise.all([
         suppliersService.getAll(user.id),
         paymentTermsService.getAll(user.id),
         chartAccountsService.getAll(user.id),
+        inventoryService.getItems(user.id),
+        supplierTypesService.getAll(user.id),
+        purchaseOrdersService.getAll(user.id),
+        storesService.getAll(user.id),
       ]);
 
       setSuppliers(supRows || []);
 
       setPaymentTerms(termRows || []);
+      setInventoryItems(inventory || []);
+      setSupplierTypes(typeRows || []);
+      setPurchaseOrders(poRows || []);
+      setStores((storesData || []).filter((s: any) => s.is_active !== false));
 
       const expense = (accounts || []).filter((acc: any) => {
         if (!acc.allow_posting && !acc.allowPosting) return false;
@@ -167,6 +226,10 @@ export default function APInvoicesPage() {
           totalIsrWithheld,
           totalToPay,
           status: inv.status || 'pending',
+          storeName: (inv as any).store_name || '',
+          notes: (inv as any).notes || '',
+          expenseType606: (inv as any).expense_type_606 || '',
+          purchaseOrderId: (inv as any).purchase_order_id || null,
           // campo adicional usado solo en UI; TypeScript lo admite porque APInvoice es estructura abierta
           baseTotalToPay,
         } as APInvoice;
@@ -187,7 +250,7 @@ export default function APInvoicesPage() {
   }, [user?.id]);
 
   const handleAddLine = () => {
-    setLines(prev => [...prev, { description: '', expenseAccountId: '', quantity: '1', unitPrice: '0' }]);
+    setLines(prev => [...prev, { description: '', expenseAccountId: '', quantity: '1', unitPrice: '0', inventoryItemId: '', discountPercentage: '0' }]);
   };
 
   const handleLineChange = (index: number, field: keyof LineFormRow, value: string) => {
@@ -198,16 +261,105 @@ export default function APInvoicesPage() {
     setLines(prev => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)));
   };
 
+  const getCurrentSupplierTaxProfile = () => {
+    const selected = suppliers.find((s: any) => String(s.id) === String(headerForm.supplierId));
+
+    let supplierType: any | null = null;
+    if (selected?.supplier_type_id && supplierTypes.length > 0) {
+      supplierType = supplierTypes.find((t: any) => String(t.id) === String(selected.supplier_type_id)) || null;
+    }
+
+    const affectsItbis = supplierType ? (supplierType.affects_itbis !== false && !supplierType.is_non_taxpayer) : true;
+    const affectsIsr = supplierType ? (supplierType.affects_isr !== false) : true;
+
+    const isNonTaxpayer = !!supplierType?.is_non_taxpayer;
+    const isRst = !!supplierType?.is_rst;
+    const isOng = !!supplierType?.is_ong;
+
+    const itbisWithholdingRate =
+      selected && typeof selected.itbis_withholding_rate === 'number'
+        ? Number(selected.itbis_withholding_rate)
+        : 0;
+    const isrWithholdingRate =
+      selected && typeof selected.isr_withholding_rate === 'number'
+        ? Number(selected.isr_withholding_rate)
+        : 0;
+
+    return { affectsItbis, affectsIsr, isNonTaxpayer, isRst, isOng, itbisWithholdingRate, isrWithholdingRate };
+  };
+
   const calculateTotals = () => {
-    const gross = lines.reduce((sum, line) => {
+    const { affectsItbis, affectsIsr, itbisWithholdingRate, isrWithholdingRate } = getCurrentSupplierTaxProfile();
+    // Calcular subtotales por línea (con descuentos de línea)
+    let grossBeforeDiscount = 0;
+    let totalLineDiscounts = 0;
+    
+    lines.forEach(line => {
       const qty = Number(line.quantity) || 0;
       const price = Number(line.unitPrice) || 0;
-      return sum + qty * price;
-    }, 0);
-    const itbis = gross * 0.18; // placeholder ITBIS 18%
-    const isr = 0; // placeholder, sin retenciones por ahora
-    const toPay = gross + itbis - isr;
-    return { gross, itbis, isr, toPay };
+      const lineTotal = qty * price;
+      const discountPct = Number(line.discountPercentage) || 0;
+      const lineDiscount = lineTotal * (discountPct / 100);
+      
+      grossBeforeDiscount += lineTotal;
+      totalLineDiscounts += lineDiscount;
+    });
+
+    const grossAfterLineDiscounts = grossBeforeDiscount - totalLineDiscounts;
+
+    // Aplicar descuento global
+    let globalDiscount = 0;
+    if (headerForm.discountType === 'percentage') {
+      const discountPct = Number(headerForm.discountValue) || 0;
+      globalDiscount = grossAfterLineDiscounts * (discountPct / 100);
+    } else if (headerForm.discountType === 'fixed') {
+      globalDiscount = Number(headerForm.discountValue) || 0;
+    }
+
+    const grossAfterAllDiscounts = Math.max(0, grossAfterLineDiscounts - globalDiscount);
+    const totalDiscount = totalLineDiscounts + globalDiscount;
+
+    // Calcular ITBIS 18% según tipo de suplidor
+    const baseItbis = grossAfterAllDiscounts * 0.18;
+    const itbis = affectsItbis ? baseItbis : 0;
+
+    // Calcular otros impuestos
+    let totalOtherTaxes = 0;
+    const otherTaxesDetail = otherTaxes
+      .filter(tax => tax.name.trim() && Number(tax.rate) > 0)
+      .map(tax => {
+        const rate = Number(tax.rate) / 100;
+        const amount = grossAfterAllDiscounts * rate;
+        totalOtherTaxes += amount;
+        return { name: tax.name, rate: Number(tax.rate), amount };
+      });
+
+    // Calcular ITBIS retenido (porcentaje del ITBIS facturado)
+    let itbisWithheld = 0;
+    if (affectsItbis && itbisWithholdingRate > 0 && itbis > 0) {
+      itbisWithheld = itbis * (itbisWithholdingRate / 100);
+    }
+
+    // Calcular retenciones ISR sobre el monto neto (sin ITBIS)
+    let isr = 0;
+    if (affectsIsr && isrWithholdingRate > 0) {
+      const isrBase = grossAfterAllDiscounts;
+      isr = isrBase * (isrWithholdingRate / 100);
+    }
+
+    const toPay = grossAfterAllDiscounts + itbis + totalOtherTaxes - itbisWithheld - isr;
+
+    return { 
+      gross: grossBeforeDiscount, 
+      totalDiscount,
+      grossAfterDiscount: grossAfterAllDiscounts,
+      itbis, 
+      totalOtherTaxes,
+      otherTaxesDetail,
+      itbisWithheld,
+      isr, 
+      toPay 
+    };
   };
 
   const resetForm = () => {
@@ -221,8 +373,16 @@ export default function APInvoicesPage() {
       dueDate: '',
       paymentTermsId: '',
       currency: baseCurrencyCode || 'DOP',
+      storeName: 'Tienda principal',
+      notes: '',
+      expenseType606: '',
+      itbisToCost: false,
+      discountType: '',
+      discountValue: '',
+      purchaseOrderId: '',
     });
-    setLines([{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0' }]);
+    setLines([{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0', inventoryItemId: '', discountPercentage: '0' }]);
+    setOtherTaxes([]);
     setEditingInvoice(null);
   };
 
@@ -243,6 +403,13 @@ export default function APInvoicesPage() {
       dueDate: invoice.dueDate || '',
       paymentTermsId: invoice.paymentTermsId || '',
       currency: invoice.currency || 'DOP',
+      storeName: invoice.storeName || 'Tienda principal',
+      notes: invoice.notes || '',
+      expenseType606: invoice.expenseType606 || '',
+      itbisToCost: false,
+      discountType: '',
+      discountValue: '',
+      purchaseOrderId: '',
     });
 
     try {
@@ -261,6 +428,54 @@ export default function APInvoicesPage() {
     }
 
     setShowModal(true);
+  };
+
+  const handleSupplierChange = (supplierId: string) => {
+    setHeaderForm((prev) => {
+      const selected = suppliers.find((s: any) => String(s.id) === supplierId);
+      return {
+        ...prev,
+        supplierId,
+        taxId: selected?.tax_id || prev.taxId,
+        legalName: selected?.legal_name || selected?.name || prev.legalName,
+        paymentTermsId: selected?.payment_terms_id ? String(selected.payment_terms_id) : prev.paymentTermsId,
+        expenseType606: selected?.expense_type_606 || '',
+        purchaseOrderId: '',
+      };
+    });
+  };
+
+  const handlePurchaseOrderChange = async (poId: string) => {
+    setHeaderForm((prev) => ({ ...prev, purchaseOrderId: poId }));
+
+    if (!poId || !user?.id) return;
+
+    try {
+      const orderItems = await purchaseOrderItemsService.getByOrder(poId);
+
+      if (!orderItems || orderItems.length === 0) return;
+
+      const mappedLines: LineFormRow[] = orderItems.map((it: any) => ({
+        description: it.description || (it.inventory_items as any)?.name || '',
+        expenseAccountId: '',
+        quantity: String(it.quantity ?? '1'),
+        unitPrice: String(it.unit_cost ?? '0'),
+        inventoryItemId: it.inventory_item_id ? String(it.inventory_item_id) : '',
+        discountPercentage: '0',
+      }));
+
+      setLines(mappedLines.length > 0 ? mappedLines : [{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0', inventoryItemId: '', discountPercentage: '0' }]);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error cargando líneas desde orden de compra', error);
+    }
+  };
+
+  const generateInvoiceNumber = () => {
+    const year = new Date().getFullYear();
+    const timestamp = Date.now().toString().slice(-6);
+    const generatedNumber = `AP-${year}-${timestamp}`;
+    setHeaderForm(prev => ({ ...prev, invoiceNumber: generatedNumber }));
   };
 
   const handleDeleteInvoice = async (id: string) => {
@@ -290,13 +505,30 @@ export default function APInvoicesPage() {
       return;
     }
 
+    if (!headerForm.documentType || headerForm.documentType.trim() === '') {
+      alert('Debes ingresar el NCF / Tipo de Comprobante de la factura');
+      return;
+    }
+
+    if (!headerForm.storeName || headerForm.storeName.trim() === '') {
+      alert('Debes indicar la tienda o sucursal que registra la compra');
+      return;
+    }
+
+    // Validar tipo de gasto 606: obligatorio si el suplidor no lo tiene predefinido
+    if (!headerForm.expenseType606 || headerForm.expenseType606.trim() === '') {
+      alert('Debes seleccionar el Tipo de gasto 606. Este campo es obligatorio para cumplimiento tributario.');
+      return;
+    }
+
     const activeLines = lines.filter(l => l.description.trim() !== '' && Number(l.quantity) > 0 && Number(l.unitPrice) >= 0);
     if (activeLines.length === 0) {
       alert('Agrega al menos una línea con descripción y cantidad > 0');
       return;
     }
 
-    const { gross, itbis, isr, toPay } = calculateTotals();
+    const { gross, totalDiscount, grossAfterDiscount, itbis, totalOtherTaxes, otherTaxesDetail, itbisWithheld, isr, toPay } = calculateTotals();
+    const { affectsItbis } = getCurrentSupplierTaxProfile();
 
     const invoiceNumber = headerForm.invoiceNumber.trim() || `AP-${Date.now()}`;
     const invoiceDate = headerForm.invoiceDate || new Date().toISOString().slice(0, 10);
@@ -314,8 +546,19 @@ export default function APInvoicesPage() {
       currency: headerForm.currency || 'DOP',
       total_gross: gross,
       total_itbis: itbis,
+      total_itbis_withheld: itbisWithheld,
       total_isr_withheld: isr,
       total_to_pay: toPay,
+      store_name: headerForm.storeName || null,
+      notes: headerForm.notes || null,
+      expense_type_606: headerForm.expenseType606 || null,
+      discount_type: headerForm.discountType || null,
+      discount_value: headerForm.discountValue ? Number(headerForm.discountValue) : 0,
+      total_discount: totalDiscount,
+      itbis_to_cost: headerForm.itbisToCost,
+      other_taxes: otherTaxesDetail.length > 0 ? JSON.stringify(otherTaxesDetail) : null,
+      total_other_taxes: totalOtherTaxes,
+      purchase_order_id: headerForm.purchaseOrderId || null,
       status: editingInvoice?.status || 'pending',
     };
 
@@ -323,13 +566,19 @@ export default function APInvoicesPage() {
       const qty = Number(l.quantity) || 0;
       const price = Number(l.unitPrice) || 0;
       const lineTotal = qty * price;
-      const lineItbis = lineTotal * 0.18;
+      const discountPct = Number(l.discountPercentage) || 0;
+      const lineDiscountAmt = lineTotal * (discountPct / 100);
+      const lineTotalAfterDiscount = lineTotal - lineDiscountAmt;
+      const lineItbis = affectsItbis ? lineTotalAfterDiscount * 0.18 : 0;
       return {
         description: l.description,
         expense_account_id: l.expenseAccountId || null,
+        inventory_item_id: l.inventoryItemId || null,
         quantity: qty,
         unit_price: price,
         line_total: lineTotal,
+        discount_percentage: discountPct,
+        discount_amount: lineDiscountAmt,
         itbis_amount: lineItbis,
         isr_amount: 0,
       };
@@ -529,7 +778,7 @@ export default function APInvoicesPage() {
                     <select
                       required
                       value={headerForm.supplierId}
-                      onChange={(e) => setHeaderForm(prev => ({ ...prev, supplierId: e.target.value }))}
+                      onChange={(e) => handleSupplierChange(e.target.value)}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Seleccione un suplidor...</option>
@@ -540,9 +789,30 @@ export default function APInvoicesPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">NCF / Tipo Comprobante</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Orden de Compra</label>
+                    <select
+                      value={headerForm.purchaseOrderId}
+                      onChange={(e) => handlePurchaseOrderChange(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin orden de compra</option>
+                      {purchaseOrders
+                        .filter((po: any) => headerForm.supplierId && String(po.supplier_id) === String(headerForm.supplierId))
+                        .filter((po: any) => po.status !== 'cancelled')
+                        .map((po: any) => (
+                          <option key={po.id} value={po.id}>
+                            {(po.po_number || po.id)} - {po.order_date} - Total {Number(po.total_amount || 0).toLocaleString()}
+                          </option>
+                        ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">Si seleccionas una orden, se cargarán sus líneas en esta factura. Luego puedes ajustar cantidades o eliminar líneas.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">NCF / Tipo Comprobante *</label>
                     <input
                       type="text"
+                      required
                       value={headerForm.documentType}
                       onChange={(e) => setHeaderForm(prev => ({ ...prev, documentType: e.target.value }))}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -552,13 +822,23 @@ export default function APInvoicesPage() {
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Número de Factura</label>
-                    <input
-                      type="text"
-                      value={headerForm.invoiceNumber}
-                      onChange={(e) => setHeaderForm(prev => ({ ...prev, invoiceNumber: e.target.value }))}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="Ej: FAC-0001"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={headerForm.invoiceNumber}
+                        onChange={(e) => setHeaderForm(prev => ({ ...prev, invoiceNumber: e.target.value }))}
+                        className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="Ej: FAC-0001"
+                      />
+                      <button
+                        type="button"
+                        onClick={generateInvoiceNumber}
+                        className="px-3 py-2 bg-gray-100 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-200 text-sm whitespace-nowrap"
+                        title="Generar código automático"
+                      >
+                        <i className="ri-refresh-line" />
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -639,6 +919,156 @@ export default function APInvoicesPage() {
                       )}
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de gasto 606 *</label>
+                    <select
+                      value={headerForm.expenseType606}
+                      onChange={(e) => setHeaderForm(prev => ({ ...prev, expenseType606: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Seleccione tipo de gasto...</option>
+                      {expenseTypes606.map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Obligatorio para formulario 606 de la DGII
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tienda / Sucursal *</label>
+                    {stores.length > 0 ? (
+                      <select
+                        value={headerForm.storeName}
+                        onChange={(e) => setHeaderForm(prev => ({ ...prev, storeName: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                      >
+                        <option value="">Seleccionar tienda...</option>
+                        {stores.map((s) => (
+                          <option key={s.id} value={s.name}>{s.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={headerForm.storeName}
+                        onChange={(e) => setHeaderForm(prev => ({ ...prev, storeName: e.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="Ej: Tienda principal"
+                      />
+                    )}
+                  </div>
+                  <div className="md:col-span-2 lg:col-span-3">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Notas</label>
+                    <textarea
+                      value={headerForm.notes}
+                      onChange={(e) => setHeaderForm(prev => ({ ...prev, notes: e.target.value }))}
+                      rows={2}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Notas u observaciones de la factura"
+                    />
+                  </div>
+                </div>
+
+                {/* Descuentos y opciones especiales */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-200">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Descuento</label>
+                    <select
+                      value={headerForm.discountType}
+                      onChange={(e) => setHeaderForm(prev => ({ ...prev, discountType: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Sin descuento global</option>
+                      <option value="percentage">Porcentaje (%)</option>
+                      <option value="fixed">Monto fijo</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Valor del Descuento</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={headerForm.discountValue}
+                      onChange={(e) => setHeaderForm(prev => ({ ...prev, discountValue: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder={headerForm.discountType === 'percentage' ? 'Ej: 10' : 'Ej: 100.00'}
+                      disabled={!headerForm.discountType}
+                    />
+                    {headerForm.discountType && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        {headerForm.discountType === 'percentage' ? 'Porcentaje aplicado a la factura completa' : 'Monto fijo a descontar del total'}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center">
+                    <label className="inline-flex items-center text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={headerForm.itbisToCost}
+                        onChange={(e) => setHeaderForm(prev => ({ ...prev, itbisToCost: e.target.checked }))}
+                        className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      />
+                      <span>
+                        ITBIS llevado al costo
+                        <span className="block text-xs text-gray-500">El ITBIS se suma al gasto en vez de crédito fiscal</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Otros Impuestos */}
+                <div className="pt-4 border-t border-gray-200">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-semibold text-gray-800">Otros Impuestos (Además de ITBIS)</h3>
+                    <button
+                      type="button"
+                      onClick={handleAddTax}
+                      className="text-xs text-blue-600 hover:text-blue-800 flex items-center"
+                    >
+                      <i className="ri-add-line mr-1" />
+                      Agregar impuesto
+                    </button>
+                  </div>
+                  {otherTaxes.length > 0 && (
+                    <div className="space-y-2">
+                      {otherTaxes.map((tax, index) => (
+                        <div key={index} className="flex gap-2 items-center">
+                          <input
+                            type="text"
+                            value={tax.name}
+                            onChange={(e) => handleTaxChange(index, 'name', e.target.value)}
+                            placeholder="Ej: Impuesto Selectivo"
+                            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                          <div className="relative w-32">
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.01"
+                              value={tax.rate}
+                              onChange={(e) => handleTaxChange(index, 'rate', e.target.value)}
+                              placeholder="0"
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                            <span className="absolute right-3 top-2 text-gray-500 text-sm">%</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTax(index)}
+                            className="text-red-600 hover:text-red-900 px-2"
+                          >
+                            <i className="ri-delete-bin-line" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {otherTaxes.length === 0 && (
+                    <p className="text-xs text-gray-500">No hay otros impuestos agregados</p>
+                  )}
                 </div>
 
                 <div className="mt-4">
@@ -647,35 +1077,57 @@ export default function APInvoicesPage() {
                     <table className="min-w-full text-xs md:text-sm">
                       <thead className="bg-gray-50">
                         <tr>
-                          <th className="px-3 py-2 text-left font-medium text-gray-600">Descripción</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-600">Cuenta de Gasto</th>
-                          <th className="px-3 py-2 text-right font-medium text-gray-600">Cantidad</th>
-                          <th className="px-3 py-2 text-right font-medium text-gray-600">Precio</th>
-                          <th className="px-3 py-2 text-right font-medium text-gray-600">Total</th>
-                          <th className="px-3 py-2 text-center font-medium text-gray-600">Acciones</th>
+                          <th className="px-2 py-2 text-left font-medium text-gray-600 text-xs">Ítem/Descripción</th>
+                          <th className="px-2 py-2 text-left font-medium text-gray-600 text-xs">Cuenta</th>
+                          <th className="px-2 py-2 text-right font-medium text-gray-600 text-xs">Cant.</th>
+                          <th className="px-2 py-2 text-right font-medium text-gray-600 text-xs">Precio</th>
+                          <th className="px-2 py-2 text-right font-medium text-gray-600 text-xs">Desc.%</th>
+                          <th className="px-2 py-2 text-right font-medium text-gray-600 text-xs">Total</th>
+                          <th className="px-2 py-2 text-center font-medium text-gray-600 text-xs">-</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 bg-white">
                         {lines.map((line, index) => {
                           const qty = Number(line.quantity) || 0;
                           const price = Number(line.unitPrice) || 0;
-                          const total = qty * price;
+                          const lineTotal = qty * price;
+                          const discountPct = Number(line.discountPercentage) || 0;
+                          const discountAmt = lineTotal * (discountPct / 100);
+                          const totalAfterDiscount = lineTotal - discountAmt;
                           return (
                             <tr key={index}>
-                              <td className="px-3 py-2">
+                              <td className="px-2 py-2">
+                                <select
+                                  value={line.inventoryItemId || ''}
+                                  onChange={(e) => {
+                                    handleLineChange(index, 'inventoryItemId', e.target.value);
+                                    const item = inventoryItems.find(i => i.id === e.target.value);
+                                    if (item && !line.description) {
+                                      handleLineChange(index, 'description', item.name || '');
+                                    }
+                                  }}
+                                  className="w-full border border-gray-300 rounded-md px-1 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 mb-1"
+                                >
+                                  <option value="">Sin ítem</option>
+                                  {inventoryItems.map((item: any) => (
+                                    <option key={item.id} value={item.id}>
+                                      {item.name} ({item.sku || 'Sin SKU'})
+                                    </option>
+                                  ))}
+                                </select>
                                 <input
                                   type="text"
                                   value={line.description}
                                   onChange={(e) => handleLineChange(index, 'description', e.target.value)}
-                                  className="w-full border border-gray-300 rounded-md px-2 py-1 text-xs md:text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                  className="w-full border border-gray-300 rounded-md px-1 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                                   placeholder="Descripción"
                                 />
                               </td>
-                              <td className="px-3 py-2">
+                              <td className="px-2 py-2">
                                 <select
                                   value={line.expenseAccountId}
                                   onChange={(e) => handleLineChange(index, 'expenseAccountId', e.target.value)}
-                                  className="w-full border border-gray-300 rounded-md px-2 py-1 text-xs md:text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                  className="w-full border border-gray-300 rounded-md px-1 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                                 >
                                   <option value="">Seleccione cuenta...</option>
                                   {expenseAccounts.map((acc: any) => (
@@ -685,28 +1137,45 @@ export default function APInvoicesPage() {
                                   ))}
                                 </select>
                               </td>
-                              <td className="px-3 py-2 text-right">
+                              <td className="px-2 py-2">
                                 <input
                                   type="number"
                                   min="0"
                                   step="0.01"
                                   value={line.quantity}
                                   onChange={(e) => handleLineChange(index, 'quantity', e.target.value)}
-                                  className="w-full border border-gray-300 rounded-md px-2 py-1 text-right text-xs md:text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                  className="w-16 border border-gray-300 rounded-md px-1 py-1 text-right text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                                 />
                               </td>
-                              <td className="px-3 py-2 text-right">
+                              <td className="px-2 py-2">
                                 <input
                                   type="number"
                                   min="0"
                                   step="0.01"
                                   value={line.unitPrice}
                                   onChange={(e) => handleLineChange(index, 'unitPrice', e.target.value)}
-                                  className="w-full border border-gray-300 rounded-md px-2 py-1 text-right text-xs md:text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                  className="w-20 border border-gray-300 rounded-md px-1 py-1 text-right text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                                 />
                               </td>
-                              <td className="px-3 py-2 text-right text-gray-900">{total.toLocaleString()}</td>
-                              <td className="px-3 py-2 text-center">
+                              <td className="px-2 py-2">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="0.01"
+                                  value={line.discountPercentage}
+                                  onChange={(e) => handleLineChange(index, 'discountPercentage', e.target.value)}
+                                  className="w-14 border border-gray-300 rounded-md px-1 py-1 text-right text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                                  placeholder="0"
+                                />
+                              </td>
+                              <td className="px-2 py-2 text-right text-gray-900 text-xs">
+                                <div>{totalAfterDiscount.toLocaleString()}</div>
+                                {discountAmt > 0 && (
+                                  <div className="text-red-600 text-xs">-{discountAmt.toLocaleString()}</div>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 text-center">
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveLine(index)}
@@ -733,13 +1202,27 @@ export default function APInvoicesPage() {
                     </button>
                     <div className="text-right text-sm text-gray-800 space-y-1">
                       {(() => {
-                        const { gross, itbis, isr, toPay } = calculateTotals();
+                        const { gross, totalDiscount, grossAfterDiscount, itbis, totalOtherTaxes, otherTaxesDetail, itbisWithheld, isr, toPay } = calculateTotals();
                         return (
                           <>
                             <div>Bruto: {headerForm.currency} {gross.toLocaleString()}</div>
-                            <div>ITBIS (18%): {headerForm.currency} {itbis.toLocaleString()}</div>
-                            <div>Retenciones ISR: {headerForm.currency} {isr.toLocaleString()}</div>
-                            <div className="font-semibold">Total a Pagar: {headerForm.currency} {toPay.toLocaleString()}</div>
+                            {totalDiscount > 0 && (
+                              <>
+                                <div className="text-red-600">Descuentos: -{headerForm.currency} {totalDiscount.toLocaleString()}</div>
+                                <div className="text-green-700">Subtotal: {headerForm.currency} {grossAfterDiscount.toLocaleString()}</div>
+                              </>
+                            )}
+                            <div>ITBIS (18%){headerForm.itbisToCost ? ' (al costo)' : ''}: {headerForm.currency} {itbis.toLocaleString()}</div>
+                            {itbisWithheld > 0 && (
+                              <div className="text-yellow-700">ITBIS Retenido: -{headerForm.currency} {itbisWithheld.toLocaleString()}</div>
+                            )}
+                            {otherTaxesDetail.map((tax, idx) => (
+                              <div key={idx} className="text-purple-700">
+                                {tax.name} ({tax.rate}%): {headerForm.currency} {tax.amount.toLocaleString()}
+                              </div>
+                            ))}
+                            {isr > 0 && <div>Retenciones ISR: -{headerForm.currency} {isr.toLocaleString()}</div>}
+                            <div className="font-semibold text-lg border-t pt-1">Total a Pagar: {headerForm.currency} {toPay.toLocaleString()}</div>
                           </>
                         );
                       })()}

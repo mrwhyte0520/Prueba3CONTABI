@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { settingsService } from '../../../services/database';
+import { supabase } from '../../../lib/supabase';
 
 interface User {
   id: string;
@@ -19,8 +20,15 @@ interface NewUser {
   password: string;
 }
 
+interface RbacRole {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
 export default function UsersSettingsPage() {
   const [users, setUsers] = useState<User[]>([]);
+  const [rbacRoles, setRbacRoles] = useState<RbacRole[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [newUser, setNewUser] = useState<NewUser>({
@@ -34,6 +42,7 @@ export default function UsersSettingsPage() {
 
   useEffect(() => {
     loadUsers();
+    loadRbacRoles();
   }, []);
 
   const loadUsers = async () => {
@@ -42,6 +51,30 @@ export default function UsersSettingsPage() {
       setUsers(data);
     } catch (error) {
       console.error('Error loading users:', error);
+    }
+  };
+
+  const loadRbacRoles = async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) {
+        setRbacRoles([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('roles')
+        .select('*')
+        .eq('owner_user_id', user.id)
+        .order('name');
+
+      if (error) throw error;
+      setRbacRoles((data as any) || []);
+    } catch (error) {
+      console.error('Error loading roles:', error);
+      setRbacRoles([]);
     }
   };
 
@@ -201,43 +234,22 @@ export default function UsersSettingsPage() {
         {/* Roles and Permissions */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Roles y Permisos</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {roles.map((role) => (
-              <div key={role.value} className="border border-gray-200 rounded-lg p-4">
-                <h3 className="font-medium text-gray-900 mb-2">{role.label}</h3>
-                <div className="space-y-1 text-sm text-gray-600">
-                  {role.value === 'admin' && (
-                    <>
-                      <div>• Acceso completo al sistema</div>
-                      <div>• Gestión de usuarios</div>
-                      <div>• Configuración del sistema</div>
-                    </>
-                  )}
-                  {role.value === 'accountant' && (
-                    <>
-                      <div>• Módulos contables</div>
-                      <div>• Reportes financieros</div>
-                      <div>• Gestión de impuestos</div>
-                    </>
-                  )}
-                  {role.value === 'user' && (
-                    <>
-                      <div>• Módulos básicos</div>
-                      <div>• Facturación</div>
-                      <div>• Inventario</div>
-                    </>
-                  )}
-                  {role.value === 'viewer' && (
-                    <>
-                      <div>• Solo lectura</div>
-                      <div>• Reportes básicos</div>
-                      <div>• Sin modificaciones</div>
-                    </>
-                  )}
+          {rbacRoles.length === 0 ? (
+            <div className="text-sm text-gray-500">
+              No hay roles creados aún.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {rbacRoles.map((role) => (
+                <div key={role.id} className="border border-gray-200 rounded-lg p-4">
+                  <h3 className="font-medium text-gray-900 mb-2">{role.name}</h3>
+                  <div className="space-y-1 text-sm text-gray-600">
+                    <div>{role.description || 'Sin descripción'}</div>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

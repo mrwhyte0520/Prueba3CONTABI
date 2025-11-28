@@ -134,7 +134,13 @@ const loadImageAsBase64 = (url: string): Promise<string> => {
   });
 };
 
-export const exportToPdf = async (data: any[], columns: any[], fileName: string, companyName: string = 'ContaBi') => {
+export const exportToPdf = async (
+  data: any[],
+  columns: any[],
+  fileName: string,
+  companyName: string = 'ContaBi',
+  orientation: 'p' | 'l' = 'p',
+) => {
   try {
     // Verificar si hay datos
     if (!data || data.length === 0) {
@@ -148,7 +154,7 @@ export const exportToPdf = async (data: any[], columns: any[], fileName: string,
       throw new Error('No se definieron columnas para la exportación');
     }
 
-    const doc = new jsPDF();
+    const doc = new jsPDF({ orientation });
     let startY = 20; // Posición Y inicial para el contenido
     const pageWidth = doc.internal.pageSize.getWidth();
     

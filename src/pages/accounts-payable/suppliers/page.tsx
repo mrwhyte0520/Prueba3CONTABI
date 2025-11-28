@@ -37,6 +37,11 @@ export default function SuppliersPage() {
     creditLimit: '',
     paymentTerms: '30 días',
     contact: '',
+    contactName: '',
+    contactPhone: '',
+    contactEmail: '',
+    fax: '',
+    website: '',
     status: 'Activo',
     apAccountId: '',
     expenseType606: '',
@@ -91,6 +96,11 @@ export default function SuppliersPage() {
           : (typeof s.current_balance === 'number' ? s.current_balance : 0),
         paymentTerms: '30 días',
         contact: '',
+        contactName: s.contact_name || '',
+        contactPhone: s.contact_phone || '',
+        contactEmail: s.contact_email || '',
+        fax: s.fax || '',
+        website: s.website || '',
         status: s.is_active === false ? 'Inactivo' : 'Activo',
         balance: typeof s.current_balance === 'number' ? s.current_balance : 0,
         apAccountId: s.ap_account_id || '',
@@ -173,6 +183,11 @@ export default function SuppliersPage() {
       // city y country opcionales, por ahora vacíos
       city: '',
       country: '',
+      contact_name: formData.contactName || null,
+      contact_phone: formData.contactPhone || null,
+      contact_email: formData.contactEmail || null,
+      fax: formData.fax || null,
+      website: formData.website || null,
       current_balance: typeof formData.creditLimit === 'string' && formData.creditLimit !== ''
         ? parseFloat(formData.creditLimit)
         : 0,
@@ -228,6 +243,11 @@ export default function SuppliersPage() {
       creditLimit: '',
       paymentTerms: '30 días',
       contact: '',
+      contactName: '',
+      contactPhone: '',
+      contactEmail: '',
+      fax: '',
+      website: '',
       status: 'Activo',
       apAccountId: '',
       expenseType606: '',
@@ -259,6 +279,11 @@ export default function SuppliersPage() {
       creditLimit: supplier.creditLimit.toString(),
       paymentTerms: supplier.paymentTerms,
       contact: supplier.contact,
+      contactName: supplier.contactName || '',
+      contactPhone: supplier.contactPhone || '',
+      contactEmail: supplier.contactEmail || '',
+      fax: supplier.fax || '',
+      website: supplier.website || '',
       status: supplier.status || 'Activo',
       apAccountId: supplier.apAccountId || '',
       expenseType606: supplier.expense_type_606 || '',
@@ -678,6 +703,26 @@ export default function SuppliersPage() {
                     <h4 className="text-sm font-medium text-gray-500 mb-1">Contacto</h4>
                     <p className="text-gray-900">{selectedSupplier.contact}</p>
                   </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-500 mb-1">Persona de Contacto</h4>
+                    <p className="text-gray-900">{selectedSupplier.contactName || '-'}</p>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-500 mb-1">Teléfono Contacto</h4>
+                    <p className="text-gray-900">{selectedSupplier.contactPhone || '-'}</p>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-500 mb-1">Email Contacto</h4>
+                    <p className="text-gray-900">{selectedSupplier.contactEmail || '-'}</p>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-500 mb-1">Fax</h4>
+                    <p className="text-gray-900">{selectedSupplier.fax || '-'}</p>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-500 mb-1">Website</h4>
+                    <p className="text-gray-900">{selectedSupplier.website || '-'}</p>
+                  </div>
                 </div>
                 <div className="flex justify-end space-x-3 mt-6">
                   <button 
@@ -768,6 +813,51 @@ export default function SuppliersPage() {
                       type="text"
                       value={formData.phone}
                       onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Nombre Persona de Contacto</label>
+                    <input
+                      type="text"
+                      value={formData.contactName}
+                      onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Teléfono Persona de Contacto</label>
+                    <input
+                      type="text"
+                      value={formData.contactPhone}
+                      onChange={(e) => setFormData({ ...formData, contactPhone: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Email Persona de Contacto</label>
+                    <input
+                      type="email"
+                      value={formData.contactEmail}
+                      onChange={(e) => setFormData({ ...formData, contactEmail: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Fax</label>
+                    <input
+                      type="text"
+                      value={formData.fax}
+                      onChange={(e) => setFormData({ ...formData, fax: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Website</label>
+                    <input
+                      type="text"
+                      value={formData.website}
+                      onChange={(e) => setFormData({ ...formData, website: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>

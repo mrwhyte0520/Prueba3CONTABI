@@ -9,6 +9,9 @@ import {
   invoicesService,
   paymentTermsService,
   bankCurrenciesService,
+  taxService,
+  salesRepsService,
+  storesService,
 } from '../../../services/database';
 
 // Tipos de datos
@@ -25,12 +28,14 @@ interface NewQuoteFormProps {
   customers: Array<{ id: string; name: string; email: string; phone: string }>;
   paymentTerms: Array<{ id: string; name: string; days?: number }>;
   currencies: Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>;
+  salesReps: Array<{ id: string; name: string; is_active: boolean }>;
+  stores: Array<{ id: string; name: string; is_active?: boolean }>;
   onCancel: () => void;
   onSaved: () => void;
   userId?: string;
 }
 
-function NewQuoteForm({ customers, paymentTerms, currencies, onCancel, onSaved, userId }: NewQuoteFormProps) {
+function NewQuoteForm({ customers, paymentTerms, currencies, salesReps, stores, onCancel, onSaved, userId }: NewQuoteFormProps) {
   const [customerId, setCustomerId] = useState('');
   const [project, setProject] = useState('');
   const [validUntil, setValidUntil] = useState<string>(new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
@@ -43,11 +48,27 @@ function NewQuoteForm({ customers, paymentTerms, currencies, onCancel, onSaved, 
   const [currencyCode, setCurrencyCode] = useState<string>(baseCurrency?.code || 'DOP');
   const ITBIS_RATE = 0.18;
 
+  const [storeName, setStoreName] = useState('Tienda principal');
+  const [salesRepId, setSalesRepId] = useState<string | null>(null);
+  const [notes, setNotes] = useState('');
+  const [discountType, setDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [discountValue, setDiscountValue] = useState<number>(0);
+
   const recomputeTotals = (its: QuoteItem[]) => {
     return its.map(it => ({ ...it, total: (it.quantity || 0) * (it.price || 0) }));
   };
 
-  const subtotal = items.reduce((s, it) => s + (it.total || 0), 0);
+  const grossSubtotal = items.reduce((s, it) => s + (it.total || 0), 0);
+  let totalDiscount = 0;
+  if (discountType === 'percentage') {
+    totalDiscount = grossSubtotal * (discountValue / 100);
+  } else if (discountType === 'fixed') {
+    totalDiscount = discountValue;
+  }
+  if (totalDiscount > grossSubtotal) {
+    totalDiscount = grossSubtotal;
+  }
+  const subtotal = grossSubtotal - totalDiscount;
   const tax = Math.round(subtotal * ITBIS_RATE * 100) / 100;
   const total = subtotal + tax;
 
@@ -91,11 +112,17 @@ function NewQuoteForm({ customers, paymentTerms, currencies, onCancel, onSaved, 
         date: new Date().toISOString().slice(0, 10),
         valid_until: validUntil,
         probability,
-        amount: subtotal,
-        tax,
-        total,
+        amount: grossSubtotal,
+        tax: 0,
+        total: 0,
         status: 'pending' as StatusType,
         currency: currencyCode,
+        store_name: storeName || null,
+        sales_rep_id: salesRepId || null,
+        notes: notes || null,
+        discount_type: discountType,
+        discount_value: discountValue,
+        total_discount: totalDiscount,
       };
       const linePayloads = items
         .filter(it => it.description && it.quantity > 0 && it.price >= 0)
@@ -188,6 +215,69 @@ function NewQuoteForm({ customers, paymentTerms, currencies, onCancel, onSaved, 
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Tienda / Sucursal</label>
+          {stores.length > 0 ? (
+            <select
+              value={storeName}
+              onChange={e => setStoreName(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+            >
+              <option value="">Seleccionar tienda...</option>
+              {stores.map((s) => (
+                <option key={s.id} value={s.name}>{s.name}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={storeName}
+              onChange={e => setStoreName(e.target.value)}
+              placeholder="Ej: Tienda principal"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          )}
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Vendedor (opcional)</label>
+          <select
+            value={salesRepId ?? ''}
+            onChange={e => setSalesRepId(e.target.value || null)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+          >
+            <option value="">Sin vendedor asignado</option>
+            {salesReps.map((rep) => (
+              <option key={rep.id} value={rep.id}>{rep.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de descuento global</label>
+          <select
+            value={discountType}
+            onChange={e => setDiscountType(e.target.value as 'percentage' | 'fixed')}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+          >
+            <option value="percentage">Porcentaje (%)</option>
+            <option value="fixed">Monto fijo</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Valor del descuento</label>
+          <div className="flex items-center space-x-2">
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={discountValue}
+              onChange={e => setDiscountValue(Number(e.target.value) || 0)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            <span className="text-sm text-gray-500">
+              {discountType === 'percentage' ? '%' : currencyCode}
+            </span>
+          </div>
+        </div>
       </div>
 
       <div className="mt-6">
@@ -255,13 +345,23 @@ function NewQuoteForm({ customers, paymentTerms, currencies, onCancel, onSaved, 
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Términos y Condiciones</label>
-          <textarea rows={4} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Términos y condiciones de la propuesta..."></textarea>
+          <textarea
+            rows={4}
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            placeholder="Términos y condiciones de la propuesta..."
+          ></textarea>
         </div>
         <div className="bg-gray-50 p-4 rounded-lg">
           <div className="space-y-2">
             <div className="flex justify-between">
               <span className="text-sm text-gray-600">Subtotal:</span>
-              <span className="text-sm font-medium">{currencyCode} {subtotal.toLocaleString('es-DO')}</span>
+              <span className="text-sm font-medium">{currencyCode} {grossSubtotal.toLocaleString('es-DO')}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-sm text-gray-600">Descuento:</span>
+              <span className="text-sm font-medium">- {currencyCode} {totalDiscount.toLocaleString('es-DO')}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-gray-600">ITBIS (18%):</span>
@@ -340,10 +440,20 @@ export default function QuotesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
-  const [customers, setCustomers] = useState<Array<{id: string, name: string, email: string, phone: string}>>([]);
+  const [customers, setCustomers] = useState<Array<{
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    documentType?: string | null;
+    ncfType?: string | null;
+    document?: string | null;
+  }>>([]);
   const [services, setServices] = useState<Array<{id: string, name: string, description: string, price: number}>>([]);
   const [paymentTerms, setPaymentTerms] = useState<Array<{ id: string; name: string; days?: number }>>([]);
   const [currencies, setCurrencies] = useState<Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>>([]);
+  const [salesReps, setSalesReps] = useState<Array<{ id: string; name: string; is_active: boolean }>>([]);
+  const [stores, setStores] = useState<Array<{ id: string; name: string; is_active?: boolean }>>([]);
 
   // Estado para las cotizaciones
   const [quotes, setQuotes] = useState<Array<{
@@ -366,6 +476,10 @@ export default function QuotesPage() {
       total: number;
     }>;
     currency: string;
+    paymentTermId?: string | null;
+    storeName?: string | null;
+    salesRepId?: string | null;
+    notes?: string | null;
   }>>([]);
 
   // Cargar datos iniciales
@@ -382,18 +496,23 @@ export default function QuotesPage() {
           return;
         }
 
-        const [cust, qts, terms, currs] = await Promise.all([
+        const [cust, qts, terms, currs, reps, storesData] = await Promise.all([
           customersService.getAll(user.id),
           quotesService.getAll(user.id),
           paymentTermsService.getAll(user.id),
           bankCurrenciesService.getAll(user.id),
+          salesRepsService.getAll(user.id),
+          storesService.getAll(user.id),
         ]);
 
         setCustomers((cust || []).map((c: any) => ({
           id: c.id,
           name: c.name || c.customer_name || c.full_name || c.fullname || c.company || c.company_name || 'Cliente',
           email: c.email || c.contact_email || '',
-          phone: c.phone || c.contact_phone || ''
+          phone: c.phone || c.contact_phone || '',
+          documentType: (c as any).documentType || null,
+          ncfType: (c as any).ncfType || null,
+          document: c.document || null,
         })));
 
         const mapped = (qts || []).map((q: any) => {
@@ -428,6 +547,10 @@ export default function QuotesPage() {
             validUntil: q.valid_until || q.validUntil || new Date().toISOString(),
             probability: q.probability || 0,
             items,
+            paymentTermId: (q.payment_term_id as string) || null,
+            storeName: (q.store_name as string) || null,
+            salesRepId: (q.sales_rep_id as string) || null,
+            notes: (q.notes as string) || null,
           };
         });
         setQuotes(mapped);
@@ -447,6 +570,9 @@ export default function QuotesPage() {
           days: typeof t.days === 'number' ? t.days : undefined,
         }));
         setPaymentTerms(mappedTerms);
+
+        setSalesReps((reps || []).filter((r: any) => r.is_active));
+        setStores((storesData || []).filter((s: any) => s.is_active !== false));
       } catch (error) {
         console.error('Error al cargar datos:', error);
         toast.error('Error al cargar los datos');
@@ -560,18 +686,19 @@ export default function QuotesPage() {
     alert(`Editando cotización: ${quoteId}`);
   };
 
-  const handleDeleteQuote = (quoteId: string) => {
-    if (confirm(`¿Está seguro de eliminar la cotización ${quoteId}?`)) {
-      alert(`Cotización ${quoteId} eliminada`);
-    }
+  const handlePrintQuote = (quoteId: string) => {
+    alert(`Imprimiendo cotización: ${quoteId}`);
   };
 
   const handleSendQuote = (quoteId: string, customerEmail: string) => {
     alert(`Enviando cotización ${quoteId} a ${customerEmail}`);
   };
 
-  const handlePrintQuote = (quoteId: string) => {
-    alert(`Imprimiendo cotización: ${quoteId}`);
+  const handleDeleteQuote = (quoteId: string) => {
+    if (confirm(`¿Está seguro de eliminar la cotización ${quoteId}?`)) {
+      alert(`Cotización ${quoteId} eliminada`);
+      // TODO: integrar quotesService.delete cuando se quiera borrar en BD
+    }
   };
 
   const handleConvertToInvoice = (quoteId: string) => {
@@ -592,20 +719,52 @@ export default function QuotesPage() {
     (async () => {
       try {
         const todayStr = new Date().toISOString().slice(0, 10);
-        const invoiceNumber = `FAC-${Date.now()}`;
+
+        // Determinar tipo de comprobante según configuración del cliente
+        const customer = customers.find((c) => c.id === quote.customerId);
+        const documentType = customer?.documentType || customer?.ncfType || 'B02';
+
+        // Obtener NCF desde la serie configurada
+        let invoiceNumber = `FAC-${Date.now()}`;
+        try {
+          const nextNcf = await taxService.getNextNcf(user.id as string, documentType);
+          if (nextNcf?.ncf) {
+            invoiceNumber = nextNcf.ncf;
+          }
+        } catch (ncfError) {
+          // eslint-disable-next-line no-console
+          console.error('No se pudo obtener NCF para factura desde cotización, usando número interno:', ncfError);
+        }
+
+        // Calcular fecha de vencimiento en base a la condición de pago, si existe
+        let dueDate = quote.validUntil || todayStr;
+        if (quote.paymentTermId) {
+          const term = paymentTerms.find((t) => t.id === quote.paymentTermId);
+          if (term && typeof term.days === 'number') {
+            const base = new Date(todayStr);
+            const d = new Date(base);
+            d.setDate(base.getDate() + term.days);
+            dueDate = d.toISOString().slice(0, 10);
+          }
+        }
 
         const invoicePayload = {
           customer_id: quote.customerId,
           invoice_number: invoiceNumber,
           invoice_date: todayStr,
-          due_date: quote.validUntil || todayStr,
+          due_date: dueDate,
           currency: quote.currency,
           subtotal: quote.amount,
           tax_amount: quote.tax,
           total_amount: quote.total,
           paid_amount: 0,
           status: 'pending',
-          notes: `Generada desde cotización ${quote.id}`,
+          payment_term_id: quote.paymentTermId || null,
+          sales_rep_id: quote.salesRepId || null,
+          store_name: quote.storeName || null,
+          notes: quote.notes && quote.notes.trim().length > 0
+            ? quote.notes
+            : `Generada desde cotización ${quote.id}`,
         };
 
         const linesPayload = quote.items.map((item, index) => ({
@@ -955,6 +1114,8 @@ export default function QuotesPage() {
                   customers={customers}
                   paymentTerms={paymentTerms}
                   currencies={currencies}
+                  salesReps={salesReps}
+                  stores={stores}
                   onCancel={() => setShowNewQuoteModal(false)}
                   onSaved={async () => {
                     setShowNewQuoteModal(false);

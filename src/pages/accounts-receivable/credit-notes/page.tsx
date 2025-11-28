@@ -4,7 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, creditDebitNotesService, accountingSettingsService, journalEntriesService } from '../../../services/database';
+import { customersService, invoicesService, creditDebitNotesService, accountingSettingsService, journalEntriesService, chartAccountsService } from '../../../services/database';
 
 interface CreditNote {
   id: string;
@@ -33,10 +33,12 @@ export default function CreditNotesPage() {
   const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
-  const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string }>>([]);
+  const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number; status: string; customerId: string }>>([]);
   const [invoiceDetails, setInvoiceDetails] = useState<any[]>([]);
   const [loadingSupport, setLoadingSupport] = useState(false);
   const [customerArAccounts, setCustomerArAccounts] = useState<Record<string, string>>({});
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [noteCustomerId, setNoteCustomerId] = useState<string>('');
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -48,22 +50,32 @@ export default function CreditNotesPage() {
     }
   };
 
+  const arAccounts = accounts.filter((acc) => acc.allowPosting && acc.type === 'asset');
+
+  const debitAccounts = accounts.filter((acc) => acc.allowPosting && acc.type === 'income');
+
   const loadSupportData = async () => {
     if (!user?.id) return;
     setLoadingSupport(true);
     try {
-      const [custList, invList] = await Promise.all([
+      const [custList, invList, accList] = await Promise.all([
         customersService.getAll(user.id),
         invoicesService.getAll(user.id),
+        chartAccountsService.getAll(user.id),
       ]);
-      setCustomers(custList.map((c: any) => ({ id: c.id, name: c.name })));
+      setCustomers((custList || []).map((c: any) => ({ id: String(c.id), name: String(c.name) })));
       setInvoices(
-        invList.map((inv) => ({
+        (invList as any[]).map((inv) => ({
           id: String(inv.id),
           invoiceNumber: inv.invoice_number as string,
+          totalAmount: Number(inv.total_amount) || 0,
+          paidAmount: Number(inv.paid_amount) || 0,
+          status: (inv.status as string) || 'pending',
+          customerId: String(inv.customer_id),
         }))
       );
       setInvoiceDetails(invList);
+      setAccounts(accList || []);
 
       // Mapa de cuentas de CxC por cliente (si tienen arAccountId configurado)
       const arMap: Record<string, string> = {};
@@ -255,6 +267,7 @@ export default function CreditNotesPage() {
 
   const handleNewNote = () => {
     setSelectedNote(null);
+    setNoteCustomerId('');
     setShowNoteModal(true);
   };
 
@@ -298,9 +311,11 @@ export default function CreditNotesPage() {
     const invoiceId = String(formData.get('invoice_id') || '');
     const reason = String(formData.get('reason') || '');
     const concept = String(formData.get('concept') || '');
+    const arAccountIdFromForm = String(formData.get('ar_account_id') || '');
+    const debitAccountId = String(formData.get('debit_account_id') || '');
 
-    if (!customerId || !amount) {
-      alert('Cliente y monto son obligatorios');
+    if (!customerId || !amount || !debitAccountId) {
+      alert('Cliente, monto y Cuenta contable de débito son obligatorios');
       return;
     }
 
@@ -328,18 +343,17 @@ export default function CreditNotesPage() {
         const settings = await accountingSettingsService.get(user.id);
 
         const customerSpecificArId = customerArAccounts[customerId];
-        const arAccountId = customerSpecificArId || settings?.ar_account_id;
-        const salesAccountId = settings?.sales_account_id;
+        const arAccountId = arAccountIdFromForm || customerSpecificArId || settings?.ar_account_id;
 
-        if (!arAccountId || !salesAccountId) {
-          alert('Nota creada, pero no se pudo crear el asiento: falta configurar la Cuenta de Cuentas por Cobrar o la Cuenta de Ventas en Ajustes Contables / Cliente.');
+        if (!arAccountId) {
+          alert('Nota creada, pero no se pudo crear el asiento: falta configurar o seleccionar la Cuenta de Cuentas por Cobrar.');
         } else {
           const noteAmount = Number(created.total_amount) || amount;
 
           const lines: any[] = [
             {
-              account_id: salesAccountId,
-              description: 'Nota de crédito - Reverso de ingresos',
+              account_id: debitAccountId,
+              description: 'Nota de crédito - Débito a cuenta seleccionada',
               debit_amount: noteAmount,
               credit_amount: 0,
               line_number: 1,
@@ -720,6 +734,8 @@ export default function CreditNotesPage() {
                     <select 
                       required
                       name="customer_id"
+                      value={noteCustomerId}
+                      onChange={(e) => setNoteCustomerId(e.target.value)}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar cliente</option>
@@ -767,9 +783,11 @@ export default function CreditNotesPage() {
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar factura</option>
-                      {invoices.map((inv) => (
-                        <option key={inv.id} value={inv.id}>{inv.invoiceNumber}</option>
-                      ))}
+                      {invoices
+                        .filter((inv) => noteCustomerId && inv.customerId === noteCustomerId)
+                        .map((inv) => (
+                          <option key={inv.id} value={inv.id}>{inv.invoiceNumber}</option>
+                        ))}
                     </select>
                   </div>
                 </div>
@@ -792,7 +810,44 @@ export default function CreditNotesPage() {
                     <option value="Otro">Otro</option>
                   </select>
                 </div>
-                
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta por Cobrar (opcional)
+                  </label>
+                  <select
+                    name="ar_account_id"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    defaultValue=""
+                  >
+                    <option value="">Usar cuenta CxC del cliente / ajustes</option>
+                    {arAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta contable de débito
+                  </label>
+                  <select
+                    required
+                    name="debit_account_id"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    defaultValue=""
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {debitAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Concepto
@@ -860,9 +915,12 @@ export default function CreditNotesPage() {
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar factura</option>
-                    {invoices.map((inv) => (
-                      <option key={inv.id} value={inv.id}>{inv.invoiceNumber}</option>
-                    ))}
+                    {invoices
+                      .filter((inv) => inv.customerId === selectedNote.customerId)
+                      .filter((inv) => (inv.totalAmount - inv.paidAmount) > 0)
+                      .map((inv) => (
+                        <option key={inv.id} value={inv.id}>{inv.invoiceNumber}</option>
+                      ))}
                   </select>
                 </div>
                 

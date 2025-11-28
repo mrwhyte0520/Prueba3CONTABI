@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { apSupplierAdvancesService, suppliersService } from '../../../services/database';
+import { apSupplierAdvancesService, suppliersService, bankAccountsService, chartAccountsService } from '../../../services/database';
 
 interface SupplierAdvance {
   id: string;
@@ -26,12 +26,20 @@ export default function AdvancesPage() {
 
   const [advances, setAdvances] = useState<SupplierAdvance[]>([]);
   const [suppliers, setSuppliers] = useState<Array<{ id: string; name: string }>>([]);
+  const [banks, setBanks] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
     supplierId: '',
     amount: '',
     reason: '',
     dueDate: '',
+    transactionDate: new Date().toISOString().split('T')[0],
+    paymentMethod: 'transfer',
+    bankId: '',
+    documentNumber: '',
+    documentDate: new Date().toISOString().split('T')[0],
+    accountId: '',
   });
 
   const loadSuppliers = async () => {
@@ -46,6 +54,34 @@ export default function AdvancesPage() {
       // eslint-disable-next-line no-console
       console.error('Error cargando proveedores para anticipos CxP', error);
       setSuppliers([]);
+    }
+  };
+
+  const loadBanksAndAccounts = async () => {
+    if (!user?.id) {
+      setBanks([]);
+      setAccounts([]);
+      return;
+    }
+    try {
+      const [bankRows, accountRows] = await Promise.all([
+        bankAccountsService.getAll(user.id),
+        chartAccountsService.getAll(user.id),
+      ]);
+
+      setBanks(bankRows || []);
+
+      const assetAccounts = (accountRows || []).filter((acc: any) => {
+        if (acc.allow_posting === false) return false;
+        const type = (acc.type || acc.account_type || '').toString().toLowerCase();
+        return type.includes('asset') || type.includes('activo');
+      });
+      setAccounts(assetAccounts);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error cargando bancos/cuentas para anticipos CxP', error);
+      setBanks([]);
+      setAccounts([]);
     }
   };
 
@@ -111,6 +147,7 @@ export default function AdvancesPage() {
   useEffect(() => {
     loadSuppliers();
     loadAdvances();
+    loadBanksAndAccounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -129,6 +166,31 @@ export default function AdvancesPage() {
     const amountNumber = Number(formData.amount);
     if (!formData.supplierId || !formData.reason.trim() || isNaN(amountNumber) || amountNumber <= 0) {
       alert('Proveedor, motivo y monto válido son obligatorios');
+      return;
+    }
+
+    if (!formData.transactionDate) {
+      alert('La fecha de la transacción es obligatoria');
+      return;
+    }
+
+    if (!formData.paymentMethod) {
+      alert('Debes seleccionar el tipo de pago del anticipo');
+      return;
+    }
+
+    if (!formData.bankId) {
+      alert('Debes seleccionar el banco/cuenta desde donde se egresa el anticipo');
+      return;
+    }
+
+    if (!formData.accountId) {
+      alert('Debes seleccionar la cuenta contable de anticipo a proveedores');
+      return;
+    }
+
+    if ((formData.paymentMethod === 'check' || formData.paymentMethod === 'transfer') && !formData.documentNumber.trim()) {
+      alert('Para cheques o transferencias, el número de documento es obligatorio');
       return;
     }
 
@@ -154,11 +216,17 @@ export default function AdvancesPage() {
           advance_number: advanceNumber,
           advance_date: today,
           amount: amountNumber,
-          reference: null,
+          reference: formData.documentNumber || null,
           description: formData.reason,
           status: 'pending',
           applied_amount: 0,
           balance_amount: amountNumber,
+          payment_method: formData.paymentMethod,
+          transaction_date: formData.transactionDate,
+          bank_id: formData.bankId,
+          document_number: formData.documentNumber || null,
+          document_date: formData.documentDate || null,
+          account_id: formData.accountId,
         });
       }
 
@@ -178,6 +246,12 @@ export default function AdvancesPage() {
       amount: '',
       reason: '',
       dueDate: '',
+      transactionDate: new Date().toISOString().split('T')[0],
+      paymentMethod: 'transfer',
+      bankId: '',
+      documentNumber: '',
+      documentDate: new Date().toISOString().split('T')[0],
+      accountId: '',
     });
     setEditingAdvance(null);
     setShowModal(false);
@@ -190,6 +264,12 @@ export default function AdvancesPage() {
       amount: advance.amount.toString(),
       reason: advance.reason,
       dueDate: advance.dueDate || '',
+      transactionDate: advance.date || new Date().toISOString().split('T')[0],
+      paymentMethod: 'transfer',
+      bankId: '',
+      documentNumber: '',
+      documentDate: new Date().toISOString().split('T')[0],
+      accountId: '',
     });
     setShowModal(true);
   };
@@ -491,6 +571,78 @@ export default function AdvancesPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Fecha de Transacción *</label>
+                    <input 
+                      type="date"
+                      required
+                      value={formData.transactionDate}
+                      onChange={(e) => setFormData({...formData, transactionDate: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Pago *</label>
+                    <select
+                      value={formData.paymentMethod}
+                      onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="cash">Efectivo</option>
+                      <option value="check">Cheque</option>
+                      <option value="transfer">Transferencia</option>
+                      <option value="petty_cash">Caja Chica</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Banco / Cuenta *</label>
+                    <select
+                      value={formData.bankId}
+                      onChange={(e) => setFormData({ ...formData, bankId: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Seleccionar banco...</option>
+                      {banks.map((b: any) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name} - {b.account_number} ({b.currency || 'DOP'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">N° Documento Soporte</label>
+                    <input
+                      type="text"
+                      value={formData.documentNumber}
+                      onChange={(e) => setFormData({ ...formData, documentNumber: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="N° cheque o transferencia"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Fecha Documento</label>
+                    <input
+                      type="date"
+                      value={formData.documentDate}
+                      onChange={(e) => setFormData({ ...formData, documentDate: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Cuenta de Anticipo *</label>
+                    <select
+                      value={formData.accountId}
+                      onChange={(e) => setFormData({ ...formData, accountId: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Seleccione cuenta...</option>
+                      {accounts.map((acc: any) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-gray-700 mb-2">Motivo *</label>

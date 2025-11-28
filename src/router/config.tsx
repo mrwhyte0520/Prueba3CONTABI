@@ -41,6 +41,7 @@ const ChartAccountsPage = lazy(() => import('../pages/accounting/chart-accounts/
 const BanksPage = lazy(() => import('../pages/accounting/banks/page'));
 const BankReconciliationPage = lazy(() => import('../pages/accounting/bank-reconciliation/page'));
 const PettyCashPage = lazy(() => import('../pages/accounting/petty-cash/page'));
+const PettyCashReportPage = lazy(() => import('../pages/accounting/petty-cash/report'));
 const FinancialStatementsPage = lazy(() => import('../pages/accounting/financial-statements/page'));
 const GeneralJournalPage = lazy(() => import('../pages/accounting/general-journal/page'));
 const GeneralLedgerPage = lazy(() => import('../pages/accounting/general-ledger/page'));
@@ -76,9 +77,11 @@ const InventorySettingsPage = lazy(() => import('../pages/settings/inventory/pag
 const PayrollSettingsPage = lazy(() => import('../pages/settings/payroll/page'));
 const BackupSettingsPage = lazy(() => import('../pages/settings/backup/page'));
 const IntegrationsSettingsPage = lazy(() => import('../pages/settings/integrations/page'));
+const StoresPage = lazy(() => import('../pages/settings/stores/page'));
 
 // Billing Pages
 const SalesReportsPage = lazy(() => import('../pages/billing/sales-reports/page'));
+const CommissionReportPage = lazy(() => import('../pages/billing/commission-report/page'));
 const InvoicingPage = lazy(() => import('../pages/billing/invoicing/page'));
 const PreInvoicingPage = lazy(() => import('../pages/billing/pre-invoicing/page'));
 const RecurringBillingPage = lazy(() => import('../pages/billing/recurring/page'));
@@ -86,6 +89,7 @@ const CashClosingPage = lazy(() => import('../pages/billing/cash-closing/page'))
 const QuotesPage = lazy(() => import('../pages/billing/quotes/page'));
 const AuthorizationsPage = lazy(() => import('../pages/billing/authorizations/page'));
 const SalesRepsPage = lazy(() => import('../pages/billing/sales-reps/page'));
+const SalesRepTypesPage = lazy(() => import('../pages/billing/sales-rep-types/page'));
 
 // Accounts Payable Pages
 const APReportsPage = lazy(() => import('../pages/accounts-payable/reports/page'));
@@ -97,6 +101,7 @@ const AdvancesPage = lazy(() => import('../pages/accounts-payable/advances/page'
 const SupplierTypesPage = lazy(() => import('../pages/accounts-payable/supplier-types/page'));
 const PaymentTermsPage = lazy(() => import('../pages/accounts-payable/payment-terms/page'));
 const APInvoicesPage = lazy(() => import('../pages/accounts-payable/invoices/page'));
+const APDebitCreditNotesPage = lazy(() => import('../pages/accounts-payable/debit-credit-notes/page'));
 
 // Accounts Receivable Pages
 const ARInvoicesPage = lazy(() => import('../pages/accounts-receivable/invoices/page'));
@@ -107,6 +112,9 @@ const ARReceiptsPage = lazy(() => import('../pages/accounts-receivable/receipts/
 const ARAdvancesPage = lazy(() => import('../pages/accounts-receivable/advances/page'));
 const ARCreditNotesPage = lazy(() => import('../pages/accounts-receivable/credit-notes/page'));
 const ARDebitNotesPage = lazy(() => import('../pages/accounts-receivable/debit-notes/page'));
+const ARReturnsPage = lazy(() => import('../pages/accounts-receivable/returns/page'));
+const ARDiscountsPage = lazy(() => import('../pages/accounts-receivable/discounts/page'));
+const ARCustomerTypesPage = lazy(() => import('../pages/accounts-receivable/customer-types/page'));
 
 // Fixed Assets Pages
 const AssetRegisterPage = lazy(() => import('../pages/fixed-assets/register/page'));
@@ -170,6 +178,10 @@ const routes: RouteObject[] = [
   {
     path: '/accounting/petty-cash',
     element: <ProtectedRoute><PettyCashPage /></ProtectedRoute>
+  },
+  {
+    path: '/accounting/petty-cash/report',
+    element: <ProtectedRoute><PettyCashReportPage /></ProtectedRoute>
   },
   {
     path: '/accounting/financial-statements',
@@ -383,12 +395,28 @@ const routes: RouteObject[] = [
     element: <ProtectedRoute><ARAdvancesPage /></ProtectedRoute>
   },
   {
+    path: '/accounts-receivable/returns',
+    element: <ProtectedRoute><ARReturnsPage /></ProtectedRoute>
+  },
+  {
+    path: '/accounts-receivable/discounts',
+    element: <ProtectedRoute><ARDiscountsPage /></ProtectedRoute>
+  },
+  {
     path: '/accounts-receivable/credit-notes',
     element: <ProtectedRoute><ARCreditNotesPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable/debit-notes',
     element: <ProtectedRoute><ARDebitNotesPage /></ProtectedRoute>
+  },
+  {
+    path: '/accounts-receivable/customer-types',
+    element: <ProtectedRoute><ARCustomerTypesPage /></ProtectedRoute>
+  },
+  {
+    path: '/accounts-receivable/payment-terms',
+    element: <ProtectedRoute><PaymentTermsPage /></ProtectedRoute>
   },
   {
     path: '/accounts-payable',
@@ -432,6 +460,10 @@ const routes: RouteObject[] = [
     element: <ProtectedRoute><APInvoicesPage /></ProtectedRoute>
   },
   {
+    path: '/accounts-payable/debit-credit-notes',
+    element: <ProtectedRoute><APDebitCreditNotesPage /></ProtectedRoute>
+  },
+  {
     path: '/billing',
     element: <ProtectedRoute><BillingPage /></ProtectedRoute>
   },
@@ -441,8 +473,20 @@ const routes: RouteObject[] = [
     element: <SalesReportsPage />
   },
   {
+    path: '/billing/commission-report',
+    element: <ProtectedRoute><CommissionReportPage /></ProtectedRoute>
+  },
+  {
     path: '/billing/sales-reps',
     element: <ProtectedRoute><SalesRepsPage /></ProtectedRoute>
+  },
+  {
+    path: '/billing/sales-rep-types',
+    element: <ProtectedRoute><SalesRepTypesPage /></ProtectedRoute>
+  },
+  {
+    path: '/billing/stores',
+    element: <ProtectedRoute><StoresPage /></ProtectedRoute>
   },
   {
     path: '/billing/invoicing',
@@ -556,6 +600,10 @@ const routes: RouteObject[] = [
   {
     path: '/settings/integrations',
     element: <ProtectedRoute><IntegrationsSettingsPage /></ProtectedRoute>
+  },
+  {
+    path: '/settings/stores',
+    element: <ProtectedRoute><StoresPage /></ProtectedRoute>
   },
   // Auth Routes
   {

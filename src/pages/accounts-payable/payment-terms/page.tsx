@@ -20,7 +20,36 @@ export default function PaymentTermsPage() {
       return;
     }
     try {
-      const rows = await paymentTermsService.getAll(user.id);
+      // Obtener términos existentes
+      let rows = await paymentTermsService.getAll(user.id);
+
+      // Términos predeterminados que queremos garantizar
+      const defaultTerms = [
+        { name: 'Contado', days: 0, description: 'Pago de contado / inmediato' },
+        { name: '15 días', days: 15, description: 'Pago a 15 días' },
+        { name: '30 días', days: 30, description: 'Pago a 30 días' },
+        { name: '45 días', days: 45, description: 'Pago a 45 días' },
+        { name: '60 días', days: 60, description: 'Pago a 60 días' },
+      ];
+
+      const existingNames = (rows || []).map((t: any) => String(t.name || '').toLowerCase());
+      const toCreate = defaultTerms.filter(
+        (d) => !existingNames.includes(d.name.toLowerCase()),
+      );
+
+      // Crear sólo los predeterminados que falten
+      if (toCreate.length > 0) {
+        for (const term of toCreate) {
+          await paymentTermsService.create(user.id, {
+            name: term.name,
+            days: term.days,
+            description: term.description,
+          });
+        }
+        // Volver a cargar incluyendo los nuevos
+        rows = await paymentTermsService.getAll(user.id);
+      }
+
       setTerms(rows || []);
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -55,7 +84,7 @@ export default function PaymentTermsPage() {
       const payload = {
         name: formData.name,
         days: Number(formData.days) || 0,
-        description: formData.description || null,
+        description: formData.description || undefined,
       };
 
       if (editingTerm?.id) {
@@ -107,7 +136,7 @@ export default function PaymentTermsPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Términos de Pago</h1>
-            <p className="text-gray-600">Catálogo de condiciones de pago para proveedores</p>
+            <p className="text-gray-600">Catálogo de condiciones de pago para clientes y proveedores</p>
           </div>
           <button
             onClick={() => setShowModal(true)}

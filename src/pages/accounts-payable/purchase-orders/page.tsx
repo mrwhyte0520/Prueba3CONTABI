@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { purchaseOrdersService, purchaseOrderItemsService, suppliersService, inventoryService, accountingSettingsService, journalEntriesService, chartAccountsService } from '../../../services/database';
+import { purchaseOrdersService, purchaseOrderItemsService, suppliersService, inventoryService, chartAccountsService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -318,68 +318,6 @@ export default function PurchaseOrdersPage() {
         });
       }
 
-      // Best-effort: registrar asiento contable de recepción de OC (Inventario vs CxP)
-      try {
-        const settings = await accountingSettingsService.get(user.id);
-        const apAccountId = settings?.ap_account_id as string | undefined;
-
-        if (apAccountId) {
-          const inventoryTotals: Record<string, number> = {};
-
-          orderItems.forEach((it: any) => {
-            const qty = Number(it.quantity) || 0;
-            const unitCost = Number(it.unit_cost) || 0;
-            if (qty <= 0 || !it.inventory_item_id) return;
-
-            const invItem = it.inventory_items as any | null;
-            const inventoryAccountId = invItem?.inventory_account_id as string | null;
-            if (!inventoryAccountId) return;
-
-            const lineCost = qty * unitCost;
-            if (lineCost <= 0) return;
-
-            inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
-          });
-
-          const lines: any[] = [];
-          let totalDebit = 0;
-
-          Object.entries(inventoryTotals).forEach(([accountId, amount]) => {
-            const val = Number(amount) || 0;
-            if (val <= 0) return;
-            totalDebit += val;
-            lines.push({
-              account_id: accountId,
-              description: 'Entrada de inventario por OC',
-              debit_amount: val,
-              credit_amount: 0,
-            });
-          });
-
-          if (totalDebit > 0) {
-            lines.push({
-              account_id: apAccountId,
-              description: 'Cuentas por Pagar por OC',
-              debit_amount: 0,
-              credit_amount: totalDebit,
-            });
-
-            const entryPayload = {
-              entry_number: `PO-${orderId}`,
-              entry_date: today,
-              description: `Recepción orden de compra ${orderId}`,
-              reference: orderId,
-              status: 'posted' as const,
-            };
-
-            await journalEntriesService.createWithLines(user.id, entryPayload, lines);
-          }
-        }
-      } catch (jeError) {
-        // eslint-disable-next-line no-console
-        console.error('Error posting purchase order receipt to ledger:', jeError);
-      }
-
       await purchaseOrdersService.updateStatus(orderId, mapUiStatusToDb('Recibida'));
       await loadOrders();
       alert('Orden marcada como recibida y entrada de inventario registrada');
@@ -510,8 +448,9 @@ export default function PurchaseOrdersPage() {
     csvContent += 'Orden,Producto,Cantidad,Precio Unitario,Total\n';
     
     filteredOrders.forEach(order => {
-      order.products.forEach(product => {
-        csvContent += `${order.number},"${product.name}",${product.quantity},${product.price},${product.total}\n`;
+      order.products.forEach((product: any) => {
+        const lineTotal = Number(product.quantity || 0) * Number(product.price || 0);
+        csvContent += `${order.number},"${product.name}",${product.quantity},${product.price},${lineTotal}\n`;
       });
     });
 

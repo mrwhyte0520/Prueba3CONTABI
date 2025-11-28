@@ -31,6 +31,7 @@ export default function ReportsPage() {
   const [agingData, setAgingData] = useState<any[]>([]);
   const [paymentsData, setPaymentsData] = useState<any[]>([]);
   const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const loadSuppliers = async () => {
     if (!user?.id) {
@@ -112,11 +113,13 @@ export default function ReportsPage() {
       return;
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const selectedSupplierId = supplier === 'all' ? null : supplier;
+    setIsGenerating(true);
+    try {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const selectedSupplierId = supplier === 'all' ? null : supplier;
 
-    if (reportType === 'aging') {
+      if (reportType === 'aging') {
       const bySupplier: Record<string, any> = {};
       const baseCode = baseCurrencyCode || 'DOP';
       const uid = user.id;
@@ -134,18 +137,18 @@ export default function ReportsPage() {
       }, {});
 
       for (const inv of apInvoices as any[]) {
-        if (inv.status === 'cancelled') return;
+        if (inv.status === 'cancelled') continue;
 
         const invoiceDate = inv.invoice_date ? new Date(inv.invoice_date) : null;
-        if (invoiceDate && (invoiceDate < start || invoiceDate > end)) return;
+        if (invoiceDate && (invoiceDate < start || invoiceDate > end)) continue;
 
-        if (selectedSupplierId && inv.supplier_id !== selectedSupplierId) return;
+        if (selectedSupplierId && inv.supplier_id !== selectedSupplierId) continue;
 
         const invoiceNumber = (inv.invoice_number || '').toString();
         const invoiceTotal = Number(inv.total_to_pay ?? inv.total_gross ?? inv.total_net ?? 0) || 0;
         const paidForInvoice = invoiceNumber ? (paymentsByInvoice[invoiceNumber] || 0) : 0;
         const outstanding = Math.max(invoiceTotal - paidForInvoice, 0);
-        if (outstanding <= 0) return; // factura totalmente pagada
+        if (outstanding <= 0) continue; // factura totalmente pagada
 
         const supplierId = inv.supplier_id as string;
         const supplierName = (inv.suppliers as any)?.name || 'Proveedor';
@@ -225,6 +228,9 @@ export default function ReportsPage() {
 
     setShowReport(true);
     alert('Reporte generado exitosamente');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const exportToPDF = () => {
@@ -429,9 +435,12 @@ export default function ReportsPage() {
             <div className="flex items-end">
               <button 
                 onClick={generateReport}
-                className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                disabled={isGenerating}
+                className={`w-full bg-blue-600 text-white py-2 px-4 rounded-lg transition-colors whitespace-nowrap ${
+                  isGenerating ? 'opacity-60 cursor-not-allowed' : 'hover:bg-blue-700'
+                }`}
               >
-                Generar Reporte
+                {isGenerating ? 'Generando...' : 'Generar Reporte'}
               </button>
             </div>
           </div>

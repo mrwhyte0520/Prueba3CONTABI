@@ -3,7 +3,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customerPaymentsService, invoicesService, bankAccountsService, accountingSettingsService, journalEntriesService, customersService } from '../../../services/database';
+import { customerPaymentsService, invoicesService, bankAccountsService, accountingSettingsService, journalEntriesService, customersService, receiptsService, receiptApplicationsService, chartAccountsService } from '../../../services/database';
 
 interface Payment {
   id: string;
@@ -23,6 +23,8 @@ interface InvoiceOption {
   customerName: string;
   balance: number;
   customerId: string;
+  totalAmount: number;
+  paidAmount: number;
 }
 
 interface BankAccountOption {
@@ -40,16 +42,25 @@ export default function PaymentsPage() {
   const [invoices, setInvoices] = useState<InvoiceOption[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
   const [customerArAccounts, setCustomerArAccounts] = useState<Record<string, string>>({});
+  const [accounts, setAccounts] = useState<any[]>([]);
+
+  const receivableAccounts = accounts.filter((acc) => {
+    if (!acc.allowPosting) return false;
+    if (acc.type !== 'asset') return false;
+    const name = String(acc.name || '').toLowerCase();
+    return name.includes('cuentas por cobrar');
+  });
 
   useEffect(() => {
     const loadData = async () => {
       if (!user) return;
       try {
-        const [paymentsData, invoicesData, bankAccountsData, customersData] = await Promise.all([
+        const [paymentsData, invoicesData, bankAccountsData, customersData, accountsData] = await Promise.all([
           customerPaymentsService.getAll(user.id),
           invoicesService.getAll(user.id),
           bankAccountsService.getAll(user.id),
           customersService.getAll(user.id),
+          chartAccountsService.getAll(user.id),
         ]);
 
         const mappedPayments: Payment[] = (paymentsData || []).map((p: any) => ({
@@ -76,6 +87,8 @@ export default function PaymentsPage() {
               customerName: inv.customers?.name || '',
               customerId: inv.customer_id,
               balance: Math.max(total - paid, 0),
+              totalAmount: total,
+              paidAmount: paid,
             };
           });
         setInvoices(mappedInvoices);
@@ -85,6 +98,8 @@ export default function PaymentsPage() {
           name: `${ba.bank_name} - ${ba.account_number}`,
         }));
         setBankAccounts(mappedBankAccounts);
+
+        setAccounts(accountsData || []);
 
         // Mapa de cuentas por cobrar por cliente (si tienen ar_account_id asignada)
         const arMap: Record<string, string> = {};
@@ -252,6 +267,8 @@ export default function PaymentsPage() {
     const paymentMethod = String(formData.get('paymentMethod') || 'cash') as Payment['paymentMethod'];
     const reference = String(formData.get('reference') || '').trim();
     const paymentDate = String(formData.get('paymentDate') || '') || new Date().toISOString().split('T')[0];
+    const generateReceipt = formData.get('generateReceipt') !== null;
+    const arAccountIdFromForm = String(formData.get('arAccountId') || '');
 
     const invoice = invoices.find(inv => inv.id === invoiceId);
     if (!invoice) {
@@ -291,6 +308,9 @@ export default function PaymentsPage() {
 
     try {
       const created = await customerPaymentsService.create(user.id, payload);
+      const newPaid = (invoice.paidAmount || 0) + amount;
+      const newStatus = newPaid >= invoice.totalAmount ? 'paid' : 'partial';
+      await invoicesService.updatePayment(invoiceId, newPaid, newStatus);
       const mapped: Payment = {
         id: created.id,
         customerId: created.customer_id,
@@ -314,13 +334,13 @@ export default function PaymentsPage() {
 
         // Preferir cuenta de CxC específica del cliente, si existe
         const customerSpecificArId = customerArAccounts[mapped.customerId] || customerArAccounts[created.customer_id];
-        const arAccountId = customerSpecificArId || settings?.ar_account_id;
+        const arAccountId = arAccountIdFromForm || customerSpecificArId || settings?.ar_account_id;
 
         // Necesitamos la cuenta contable del banco (chart_account_id)
         const { chart_account_id: bankAccountAccountId } = created.bank_accounts || {};
 
         if (!arAccountId) {
-          alert('Pago registrado, pero no se pudo crear el asiento: falta configurar la Cuenta de Cuentas por Cobrar en Ajustes Contables.');
+          alert('Pago registrado, pero no se pudo crear el asiento: selecciona una Cuenta de Cuentas por Cobrar o configúrala en Ajustes Contables.');
           return;
         }
 
@@ -379,6 +399,38 @@ export default function PaymentsPage() {
         // eslint-disable-next-line no-console
         console.error('Error posting customer payment to ledger:', err);
         alert('Pago registrado, pero ocurrió un error al crear el asiento contable. Revise el libro diario y la configuración.');
+      }
+
+      if (generateReceipt) {
+        try {
+          const existingApplications = await receiptApplicationsService.getByInvoice(user.id, invoiceId);
+          if ((existingApplications || []).length > 0) {
+            alert('Pago registrado. Ya existe un recibo de cobro asociado a esta factura, no se generó uno nuevo.');
+          } else {
+            const receiptNumber = `RC-${Date.now()}`;
+            const receiptPayload = {
+              customer_id: invoice.customerId,
+              receipt_number: receiptNumber,
+              receipt_date: paymentDate,
+              amount,
+              payment_method: paymentMethod,
+              reference: reference || null,
+              concept: `Pago factura ${invoice.invoiceNumber}`,
+              status: 'active',
+            };
+
+            const createdReceipt = await receiptsService.create(user.id, receiptPayload);
+
+            await receiptApplicationsService.create(user.id, {
+              receipt_id: createdReceipt.id,
+              invoice_id: invoiceId,
+              amount_applied: amount,
+              notes: null,
+            });
+          }
+        } catch (receiptError) {
+          alert('Pago registrado, pero ocurrió un error al generar el recibo de cobro.');
+        }
       }
     } catch (error) {
       console.error('Error saving customer payment:', error);
@@ -518,7 +570,7 @@ export default function PaymentsPage() {
         {/* Payment Modal */}
         {showPaymentModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-96">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-semibold">Registrar Pago</h3>
                 <button
@@ -568,6 +620,24 @@ export default function PaymentsPage() {
                     ))}
                   </select>
                 </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de Cuentas por Cobrar (opcional)
+                  </label>
+                  <select
+                    name="arAccountId"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    defaultValue=""
+                  >
+                    <option value="">Usar cuenta por defecto</option>
+                    {receivableAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -589,6 +659,7 @@ export default function PaymentsPage() {
                   </label>
                   <select 
                     required
+                    name="paymentMethod"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="cash">Efectivo</option>
@@ -609,6 +680,18 @@ export default function PaymentsPage() {
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Número de referencia"
                   />
+                </div>
+
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    name="generateReceipt"
+                    defaultChecked
+                    className="h-4 w-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                  />
+                  <label className="ml-2 block text-sm font-medium text-gray-700">
+                    Generar recibo de cobro
+                  </label>
                 </div>
                 
                 <div className="flex space-x-3 mt-6">

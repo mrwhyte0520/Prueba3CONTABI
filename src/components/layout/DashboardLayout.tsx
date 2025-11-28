@@ -197,7 +197,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Cotizaciones', href: '/accounts-payable/quotes' },
         { name: 'Tipos de Suplidor', href: '/accounts-payable/supplier-types' },
         { name: 'Términos de Pago', href: '/accounts-payable/payment-terms' },
-        { name: 'Facturas de Suplidor', href: '/accounts-payable/invoices' }
+        { name: 'Anticipos a Proveedores', href: '/accounts-payable/advances' },
+        { name: 'Facturas de Suplidor', href: '/accounts-payable/invoices' },
+        { name: 'Notas Débito/Crédito', href: '/accounts-payable/debit-credit-notes' },
       ]
     },
     // 5. Facturación
@@ -208,13 +210,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       current: location.pathname.startsWith('/billing'),
       submenu: [
         { name: 'Reporte de Ventas', href: '/billing/sales-reports' },
+        { name: 'Reporte de Comisión', href: '/billing/commission-report' },
         { name: 'Vendedores', href: '/billing/sales-reps' },
+        { name: 'Tipos de Vendedor', href: '/billing/sales-rep-types' },
+        { name: 'Tiendas / Sucursales', href: '/billing/stores' },
         { name: 'Facturación', href: '/billing/invoicing' },
         { name: 'Pre-facturación', href: '/billing/pre-invoicing' },
         { name: 'Facturación Recurrente', href: '/billing/recurring' },
         { name: 'Cierre de Caja', href: '/billing/cash-closing' },
         { name: 'Cotizaciones', href: '/billing/quotes' },
-        { name: 'Autorizaciones', href: '/billing/authorizations' }
+        { name: 'Autorizaciones', href: '/billing/authorizations' },
       ]
     },
     // 6. Punto de ventas
@@ -309,7 +314,17 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       name: 'Configuración',
       href: '/settings',
       icon: 'ri-settings-line',
-      current: location.pathname.startsWith('/settings')
+      current: location.pathname.startsWith('/settings'),
+      submenu: [
+        { name: 'Empresa', href: '/settings/company' },
+        { name: 'Usuarios', href: '/settings/users' },
+        { name: 'Contabilidad', href: '/settings/accounting' },
+        { name: 'Impuestos', href: '/settings/taxes' },
+        { name: 'Inventario', href: '/settings/inventory' },
+        { name: 'Nómina', href: '/settings/payroll' },
+        { name: 'Respaldos', href: '/settings/backup' },
+        { name: 'Integraciones', href: '/settings/integrations' }
+      ]
     }
   ];
 

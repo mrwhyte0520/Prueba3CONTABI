@@ -11,6 +11,11 @@ import {
   salesRepsService,
   bankCurrenciesService,
   bankExchangeRatesService,
+  customersService,
+  customerTypesService,
+  taxService,
+  inventoryService,
+  storesService,
 } from '../../../services/database';
 
 interface UiInvoiceItem {
@@ -54,13 +59,23 @@ export default function InvoicingPage() {
     Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>
   >([]);
   const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
+  const [customers, setCustomers] = useState<Array<{ id: string; name: string; email: string; document: string; customerTypeId?: string | null; paymentTermId?: string | null; ncfType?: string | null; documentType?: string | null }>>([]);
+  const [customerTypes, setCustomerTypes] = useState<any[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+  const [stores, setStores] = useState<Array<{ id: string; name: string; is_active?: boolean }>>([]);
 
   const [newInvoiceCustomerId, setNewInvoiceCustomerId] = useState('');
+  const [newInvoiceCustomerSearch, setNewInvoiceCustomerSearch] = useState('');
   const [newInvoiceDate, setNewInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [newInvoicePaymentTermId, setNewInvoicePaymentTermId] = useState<string | null>(null);
   const [newInvoiceDueDate, setNewInvoiceDueDate] = useState(newInvoiceDate);
   const [newInvoiceSalesRepId, setNewInvoiceSalesRepId] = useState<string | null>(null);
   const [newInvoiceCurrency, setNewInvoiceCurrency] = useState<string>('DOP');
+  const [newInvoiceDiscountType, setNewInvoiceDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [newInvoiceDiscountPercent, setNewInvoiceDiscountPercent] = useState(0);
+  const [newInvoiceNoTax, setNewInvoiceNoTax] = useState(false);
+  const [newInvoiceNotes, setNewInvoiceNotes] = useState('');
+  const [newInvoiceStoreName, setNewInvoiceStoreName] = useState('Tienda principal');
 
   type NewItem = { description: string; quantity: number; price: number; total: number };
   const [newInvoiceItems, setNewInvoiceItems] = useState<NewItem[]>([
@@ -70,14 +85,6 @@ export default function InvoicingPage() {
   const [newInvoiceTax, setNewInvoiceTax] = useState(0);
   const [newInvoiceTotal, setNewInvoiceTotal] = useState(0);
 
-  const customers = [
-    { id: '1', name: 'Empresa ABC SRL', email: 'contacto@empresaabc.com', phone: '809-555-0101' },
-    { id: '2', name: 'Comercial XYZ EIRL', email: 'ventas@comercialxyz.com', phone: '809-555-0102' },
-    { id: '3', name: 'Distribuidora DEF SA', email: 'compras@distribuidoradef.com', phone: '809-555-0103' },
-    { id: '4', name: 'Servicios GHI SRL', email: 'admin@serviciosghi.com', phone: '809-555-0104' },
-    { id: '5', name: 'Tecnología JKL SA', email: 'info@tecnologiajkl.com', phone: '809-555-0105' }
-  ];
-
   const products = [
     { id: '1', name: 'Laptop Dell Inspiron 15', price: 35000, stock: 25 },
     { id: '2', name: 'Monitor Samsung 24"', price: 12500, stock: 45 },
@@ -86,9 +93,24 @@ export default function InvoicingPage() {
     { id: '5', name: 'Mouse Inalámbrico', price: 5000, stock: 120 }
   ];
 
-  const recalcNewInvoiceTotals = (items: NewItem[]) => {
-    const subtotal = items.reduce((sum, it) => sum + (it.total || 0), 0);
-    const tax = subtotal * 0.18;
+  const recalcNewInvoiceTotals = (
+    items: NewItem[],
+    discountType = newInvoiceDiscountType,
+    discountValue = newInvoiceDiscountPercent,
+    noTaxFlag = newInvoiceNoTax,
+  ) => {
+    const rawSubtotal = items.reduce((sum, it) => sum + (it.total || 0), 0);
+    let discountAmount = 0;
+    if (discountType === 'percentage') {
+      discountAmount = rawSubtotal * (discountValue / 100);
+    } else if (discountType === 'fixed') {
+      discountAmount = discountValue;
+    }
+    if (discountAmount > rawSubtotal) {
+      discountAmount = rawSubtotal;
+    }
+    const subtotal = rawSubtotal - discountAmount;
+    const tax = noTaxFlag ? 0 : subtotal * 0.18;
     const total = subtotal + tax;
     setNewInvoiceSubtotal(subtotal);
     setNewInvoiceTax(tax);
@@ -209,9 +231,10 @@ export default function InvoicingPage() {
     const loadPaymentTerms = async () => {
       if (!user?.id) return;
       try {
-        const [terms, reps] = await Promise.all([
+        const [terms, reps, storesData] = await Promise.all([
           paymentTermsService.getAll(user.id),
           salesRepsService.getAll(user.id),
+          storesService.getAll(user.id),
         ]);
         const mappedTerms = (terms || []).map((t: any) => ({
           id: t.id as string,
@@ -220,12 +243,48 @@ export default function InvoicingPage() {
         }));
         setPaymentTerms(mappedTerms);
         setSalesReps((reps || []).filter((r: any) => r.is_active));
+        setStores((storesData || []).filter((s: any) => s.is_active !== false));
       } catch (error) {
         // eslint-disable-next-line no-console
         console.error('Error cargando términos de pago para facturación:', error);
       }
     };
     loadPaymentTerms();
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadCustomersAndTypes = async () => {
+      if (!user?.id) {
+        setCustomers([]);
+        setCustomerTypes([]);
+        setInventoryItems([]);
+        return;
+      }
+      try {
+        const [rows, types, items] = await Promise.all([
+          customersService.getAll(user.id),
+          customerTypesService.getAll(user.id),
+          inventoryService.getItems(user.id),
+        ]);
+        const mappedCustomers = (rows || []).map((c: any) => ({
+          id: c.id as string,
+          name: c.name || c.customer_name || 'Cliente',
+          email: c.email || c.contactEmail || '',
+          document: c.document || '',
+          customerTypeId: c.customerType || null,
+          paymentTermId: c.paymentTermId || null,
+          ncfType: c.ncfType || null,
+          documentType: c.documentType || null,
+        }));
+        setCustomers(mappedCustomers);
+        setCustomerTypes(types || []);
+        setInventoryItems(items || []);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error cargando clientes para facturación:', error);
+      }
+    };
+    loadCustomersAndTypes();
   }, [user?.id]);
 
   const getStatusColor = (status: string) => {
@@ -268,7 +327,56 @@ export default function InvoicingPage() {
     setNewInvoiceSubtotal(0);
     setNewInvoiceTax(0);
     setNewInvoiceTotal(0);
+    setNewInvoiceDiscountType('percentage');
+    setNewInvoiceDiscountPercent(0);
+    setNewInvoiceNoTax(false);
+    setNewInvoiceNotes('');
+    setNewInvoiceCustomerSearch('');
+
+    const defaultStore = stores.find((s) => s.is_active !== false) || stores[0];
+    setNewInvoiceStoreName(defaultStore?.name || 'Tienda principal');
+
     setShowNewInvoiceModal(true);
+  };
+
+  const handleNewInvoiceCustomerChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const customerId = e.target.value;
+    setNewInvoiceCustomerId(customerId);
+    const customer = customers.find((c) => c.id === customerId);
+    if (!customer) {
+      setNewInvoiceDiscountPercent(0);
+      setNewInvoiceNoTax(false);
+      return;
+    }
+    const type = customer.customerTypeId ? customerTypes.find((t: any) => t.id === customer.customerTypeId) : null;
+    let discountPercent = 0;
+    let noTaxFlag = false;
+    if (type) {
+      discountPercent = Number(type.fixedDiscount) || 0;
+      noTaxFlag = Boolean(type.noTax);
+    }
+    setNewInvoiceDiscountType('percentage');
+    setNewInvoiceDiscountPercent(discountPercent);
+    setNewInvoiceNoTax(noTaxFlag);
+
+    let dueDate = newInvoiceDate;
+    if (customer.paymentTermId) {
+      const term = paymentTerms.find((t) => t.id === customer.paymentTermId);
+      if (term && typeof term.days === 'number') {
+        const base = new Date(newInvoiceDate);
+        const d = new Date(base);
+        d.setDate(base.getDate() + term.days);
+        dueDate = d.toISOString().slice(0, 10);
+        setNewInvoicePaymentTermId(customer.paymentTermId);
+      }
+    } else if (type && typeof type.allowedDelayDays === 'number' && type.allowedDelayDays > 0) {
+      const base = new Date(newInvoiceDate);
+      const d = new Date(base);
+      d.setDate(base.getDate() + type.allowedDelayDays);
+      dueDate = d.toISOString().slice(0, 10);
+    }
+    setNewInvoiceDueDate(dueDate);
+    recalcNewInvoiceTotals([...newInvoiceItems], 'percentage', discountPercent, noTaxFlag);
   };
 
   const handleViewInvoice = (invoiceId: string) => {
@@ -282,8 +390,8 @@ export default function InvoicingPage() {
   const handleEditInvoice = (invoiceId: string) => {
     const invoice = invoices.find((inv) => inv.id === invoiceId);
     if (!invoice) return;
-    if (invoice.status !== 'draft') {
-      alert('Solo se pueden editar facturas en estado Borrador.');
+    if (invoice.status !== 'pending') {
+      alert('Solo se pueden editar facturas en estado Pendiente.');
       return;
     }
     setSelectedInvoice(invoiceId);
@@ -291,13 +399,25 @@ export default function InvoicingPage() {
     setShowInvoiceDetailModal(true);
   };
 
-  const handleDeleteInvoice = (invoiceId: string) => {
-    if (!confirm(`¿Está seguro de eliminar la factura ${invoiceId}?`)) return;
-    setInvoices((prev) => prev.filter((invoice) => invoice.id !== invoiceId));
-    if (selectedInvoice === invoiceId) {
-      setSelectedInvoice(null);
+  const handleDeleteInvoice = async (invoiceId: string) => {
+    if (!user?.id) {
+      alert('Debes iniciar sesión para eliminar facturas');
+      return;
     }
-    alert(`Factura ${invoiceId} eliminada (solo frontend)`);
+    if (!confirm(`¿Está seguro de eliminar la factura ${invoiceId}?`)) return;
+    try {
+      await invoicesService.deleteByExternalId(user.id as string, invoiceId);
+      await loadInvoices();
+      if (selectedInvoice === invoiceId) {
+        setSelectedInvoice(null);
+        setShowInvoiceDetailModal(false);
+      }
+      alert(`Factura ${invoiceId} eliminada correctamente`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error eliminando factura:', error);
+      alert('Error al eliminar la factura');
+    }
   };
 
   const handlePrintInvoice = (invoiceId: string) => {
@@ -380,16 +500,6 @@ export default function InvoicingPage() {
     printWindow.document.close();
   };
 
-  const handleMarkAsPaid = (invoiceId: string) => {
-    if (!confirm(`¿Marcar factura ${invoiceId} como pagada?`)) return;
-    setInvoices((prev) =>
-      prev.map((invoice) =>
-        invoice.id === invoiceId ? { ...invoice, status: 'paid' } : invoice
-      )
-    );
-    alert(`Factura ${invoiceId} marcada como pagada (solo frontend)`);
-  };
-
   const handleDuplicateInvoice = (invoiceId: string) => {
     const original = invoices.find((inv) => inv.id === invoiceId);
     if (!original) return;
@@ -408,6 +518,52 @@ export default function InvoicingPage() {
 
     setInvoices((prev) => [duplicated, ...prev]);
     alert(`Factura duplicada (solo frontend). Nueva factura: ${newId}`);
+  };
+
+  const handleSaveInvoiceChanges = async () => {
+    if (!user?.id) {
+      alert('Debes iniciar sesión para editar facturas');
+      return;
+    }
+    if (!selectedInvoice) return;
+
+    const invoice = invoices.find((inv) => inv.id === selectedInvoice);
+    if (!invoice) return;
+
+    try {
+      const linesPayload = invoice.items.map((item, index) => ({
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.price,
+        line_total: item.total,
+        line_number: index + 1,
+      }));
+
+      const invoicePatch = {
+        subtotal: invoice.amount,
+        tax_amount: invoice.tax,
+        total_amount: invoice.total,
+        invoice_date: invoice.date,
+        due_date: invoice.dueDate,
+      };
+
+      await invoicesService.updateWithLines(
+        user.id as string,
+        invoice.id,
+        invoicePatch,
+        linesPayload,
+      );
+
+      await loadInvoices();
+      setShowInvoiceDetailModal(false);
+      setSelectedInvoice(null);
+      setIsEditingInvoice(false);
+      alert('Factura actualizada correctamente');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error actualizando factura:', error);
+      alert('Error al actualizar la factura');
+    }
   };
 
   const handleExportInvoices = async (format: 'excel' | 'pdf') => {
@@ -582,8 +738,34 @@ export default function InvoicingPage() {
     const tax = newInvoiceTax;
     const total = newInvoiceTotal;
 
-    const invoiceNumber = `FAC-${Date.now()}`;
-    const status = mode === 'draft' ? 'draft' : 'pending';
+    // Calcular descuento global aplicado (para guardar en BD)
+    const rawSubtotal = validItems.reduce((sum, item) => sum + (item.total || 0), 0);
+    let totalDiscount = 0;
+    if (newInvoiceDiscountType === 'percentage') {
+      totalDiscount = rawSubtotal * (newInvoiceDiscountPercent / 100);
+    } else if (newInvoiceDiscountType === 'fixed') {
+      totalDiscount = newInvoiceDiscountPercent;
+    }
+    if (totalDiscount > rawSubtotal) {
+      totalDiscount = rawSubtotal;
+    }
+
+    // Determinar tipo de comprobante según configuración del cliente (por ahora, predeterminar B02 si no hay nada)
+    const customer = customers.find((c) => c.id === newInvoiceCustomerId);
+    const documentType = customer?.documentType || customer?.ncfType || 'B02';
+
+    // Obtener NCF desde la serie configurada
+    let invoiceNumber = `FAC-${Date.now()}`;
+    try {
+      const nextNcf = await taxService.getNextNcf(user.id as string, documentType);
+      if (nextNcf?.ncf) {
+        invoiceNumber = nextNcf.ncf;
+      }
+    } catch (ncfError) {
+      // eslint-disable-next-line no-console
+      console.error('No se pudo obtener NCF, usando número interno:', ncfError);
+    }
+    const status = 'pending';
 
     const invoicePayload = {
       customer_id: newInvoiceCustomerId,
@@ -598,7 +780,11 @@ export default function InvoicingPage() {
       status,
       payment_term_id: newInvoicePaymentTermId || null,
       sales_rep_id: newInvoiceSalesRepId || null,
-      notes: null,
+      notes: newInvoiceNotes || null,
+      store_name: newInvoiceStoreName || null,
+      discount_type: newInvoiceDiscountType,
+      discount_value: newInvoiceDiscountPercent,
+      total_discount: totalDiscount,
     };
 
     const linesPayload = validItems.map((item, index) => ({
@@ -839,15 +1025,6 @@ export default function InvoicingPage() {
                           >
                             <i className="ri-printer-line"></i>
                           </button>
-                          {invoice.status === 'pending' && (
-                            <button
-                              onClick={() => handleMarkAsPaid(invoice.id)}
-                              className="text-green-600 hover:text-green-900 p-1"
-                              title="Marcar como pagada"
-                            >
-                              <i className="ri-check-line"></i>
-                            </button>
-                          )}
                           <button
                             onClick={() => handleDuplicateInvoice(invoice.id)}
                             className="text-orange-600 hover:text-orange-900 p-1"
@@ -1136,12 +1313,7 @@ export default function InvoicingPage() {
                 </button>
                 {isEditingInvoice && (
                   <button
-                    onClick={() => {
-                      setShowInvoiceDetailModal(false);
-                      setSelectedInvoice(null);
-                      setIsEditingInvoice(false);
-                      alert('Cambios guardados en memoria (solo frontend).');
-                    }}
+                    onClick={handleSaveInvoiceChanges}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                   >
                     Guardar cambios
@@ -1168,19 +1340,39 @@ export default function InvoicingPage() {
                 </div>
               </div>
               <div className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
-                    <select
-                      value={newInvoiceCustomerId}
-                      onChange={(e) => setNewInvoiceCustomerId(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
-                    >
-                      <option value="">Seleccionar cliente...</option>
-                      {customers.map((customer) => (
-                        <option key={customer.id} value={customer.id}>{customer.name}</option>
-                      ))}
-                    </select>
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={newInvoiceCustomerSearch}
+                        onChange={(e) => setNewInvoiceCustomerSearch(e.target.value)}
+                        placeholder="Buscar por nombre o RNC..."
+                        className="mb-2 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      />
+                      <select
+                        value={newInvoiceCustomerId}
+                        onChange={handleNewInvoiceCustomerChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8 text-sm"
+                      >
+                        <option value="">Seleccionar cliente...</option>
+                        {customers
+                          .filter((c: { name: string; document: string | null }) => {
+                            if (!newInvoiceCustomerSearch) return true;
+                            const term = newInvoiceCustomerSearch.toLowerCase();
+                            return (
+                              c.name.toLowerCase().includes(term) ||
+                              (c.document || '').toLowerCase().includes(term)
+                            );
+                          })
+                          .map((customer) => (
+                            <option key={customer.id} value={customer.id}>
+                              {customer.name} {customer.document ? `- ${customer.document}` : ''}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Vendedor (opcional)</label>
@@ -1202,7 +1394,7 @@ export default function InvoicingPage() {
                       onChange={(e) => {
                         const termId = e.target.value || null;
                         setNewInvoicePaymentTermId(termId);
-                        const term = paymentTerms.find(t => t.id === termId);
+                        const term = paymentTerms.find((t) => t.id === termId);
                         if (term?.days != null) {
                           const base = new Date(newInvoiceDate);
                           const due = new Date(base);
@@ -1213,7 +1405,7 @@ export default function InvoicingPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Sin condición específica</option>
-                      {paymentTerms.map(term => (
+                      {paymentTerms.map((term) => (
                         <option key={term.id} value={term.id}>
                           {term.name}{typeof term.days === 'number' ? ` (${term.days} días)` : ''}
                         </option>
@@ -1229,8 +1421,31 @@ export default function InvoicingPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tienda / Sucursal</label>
+                    {stores.length > 0 ? (
+                      <select
+                        value={newInvoiceStoreName}
+                        onChange={(e) => setNewInvoiceStoreName(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm pr-8"
+                      >
+                        <option value="">Seleccionar tienda...</option>
+                        {stores.map((s) => (
+                          <option key={s.id} value={s.name}>{s.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={newInvoiceStoreName}
+                        onChange={(e) => setNewInvoiceStoreName(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                        placeholder="Ej: Tienda principal"
+                      />
+                    )}
+                  </div>
                 </div>
-                
+
                 <div className="mt-6">
                   <h4 className="text-md font-medium text-gray-900 mb-4">Productos/Servicios</h4>
                   <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -1248,22 +1463,54 @@ export default function InvoicingPage() {
                         {newInvoiceItems.map((item, index) => (
                           <tr key={index}>
                             <td className="px-4 py-3">
-                              <input
-                                type="text"
-                                value={item.description}
-                                onChange={(e) => {
-                                  const desc = e.target.value;
-                                  setNewInvoiceItems(prev => {
-                                    const next = [...prev];
-                                    next[index] = { ...next[index], description: desc };
-                                    next[index].total = (next[index].quantity || 0) * (next[index].price || 0);
-                                    recalcNewInvoiceTotals(next);
-                                    return next;
-                                  });
-                                }}
-                                placeholder="Descripción del producto/servicio"
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                              />
+                              <div className="space-y-2">
+                                <select
+                                  value={item.description}
+                                  onChange={(e) => {
+                                    const selectedId = e.target.value;
+                                    const invItem = inventoryItems.find((it: any) => String(it.id) === selectedId);
+                                    setNewInvoiceItems((prev) => {
+                                      const next = [...prev];
+                                      if (invItem) {
+                                        const price = Number(invItem.sale_price || invItem.price || 0) || 0;
+                                        const qty = next[index].quantity || 1;
+                                        next[index] = {
+                                          ...next[index],
+                                          description: invItem.name || '',
+                                          price,
+                                          total: qty * price,
+                                        };
+                                      }
+                                      recalcNewInvoiceTotals(next);
+                                      return next;
+                                    });
+                                  }}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                >
+                                  <option value="">-- Seleccionar ítem de inventario (opcional) --</option>
+                                  {inventoryItems.map((it: any) => (
+                                    <option key={it.id} value={String(it.id)}>
+                                      {it.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="text"
+                                  value={item.description}
+                                  onChange={(e) => {
+                                    const desc = e.target.value;
+                                    setNewInvoiceItems((prev) => {
+                                      const next = [...prev];
+                                      next[index] = { ...next[index], description: desc };
+                                      next[index].total = (next[index].quantity || 0) * (next[index].price || 0);
+                                      recalcNewInvoiceTotals(next);
+                                      return next;
+                                    });
+                                  }}
+                                  placeholder="Descripción del producto/servicio"
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                />
+                              </div>
                             </td>
                             <td className="px-4 py-3">
                               <input
@@ -1272,7 +1519,7 @@ export default function InvoicingPage() {
                                 value={item.quantity}
                                 onChange={(e) => {
                                   const qty = Number(e.target.value) || 0;
-                                  setNewInvoiceItems(prev => {
+                                  setNewInvoiceItems((prev) => {
                                     const next = [...prev];
                                     next[index] = { ...next[index], quantity: qty, total: qty * (next[index].price || 0) };
                                     recalcNewInvoiceTotals(next);
@@ -1289,7 +1536,7 @@ export default function InvoicingPage() {
                                 value={item.price}
                                 onChange={(e) => {
                                   const price = Number(e.target.value) || 0;
-                                  setNewInvoiceItems(prev => {
+                                  setNewInvoiceItems((prev) => {
                                     const next = [...prev];
                                     next[index] = { ...next[index], price, total: price * (next[index].quantity || 0) };
                                     recalcNewInvoiceTotals(next);
@@ -1305,7 +1552,7 @@ export default function InvoicingPage() {
                             <td className="px-4 py-3">
                               <button
                                 onClick={() => {
-                                  setNewInvoiceItems(prev => {
+                                  setNewInvoiceItems((prev) => {
                                     const next = prev.filter((_, i) => i !== index);
                                     if (next.length === 0) {
                                       next.push({ description: '', quantity: 1, price: 0, total: 0 });
@@ -1326,7 +1573,7 @@ export default function InvoicingPage() {
                   </div>
                   <button
                     className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
-                    onClick={() => setNewInvoiceItems(prev => [...prev, { description: '', quantity: 1, price: 0, total: 0 }])}
+                    onClick={() => setNewInvoiceItems((prev) => [...prev, { description: '', quantity: 1, price: 0, total: 0 }])}
                   >
                     <i className="ri-add-line mr-2"></i>
                     Agregar Producto
@@ -1338,6 +1585,8 @@ export default function InvoicingPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Notas</label>
                     <textarea
                       rows={4}
+                      value={newInvoiceNotes}
+                      onChange={(e) => setNewInvoiceNotes(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="Notas adicionales..."
                     ></textarea>
@@ -1347,6 +1596,35 @@ export default function InvoicingPage() {
                       <div className="flex justify-between">
                         <span className="text-sm text-gray-600">Subtotal:</span>
                         <span className="text-sm font-medium">RD$ {newInvoiceSubtotal.toLocaleString('es-DO')}</span>
+                      </div>
+                      <div className="flex justify-between items-center space-x-2">
+                        <span className="text-sm text-gray-600">Descuento global:</span>
+                        <div className="flex items-center space-x-2">
+                          <select
+                            value={newInvoiceDiscountType}
+                            onChange={(e) => {
+                              const t = e.target.value === 'fixed' ? 'fixed' : 'percentage';
+                              setNewInvoiceDiscountType(t);
+                              // Recalcular usando el mismo valor numérico pero con nuevo tipo
+                              recalcNewInvoiceTotals([...newInvoiceItems], t, newInvoiceDiscountPercent, newInvoiceNoTax);
+                            }}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          >
+                            <option value="percentage">% Porcentaje</option>
+                            <option value="fixed">Monto</option>
+                          </select>
+                          <input
+                            type="number"
+                            min={0}
+                            value={newInvoiceDiscountPercent}
+                            onChange={(e) => {
+                              const val = Number(e.target.value) || 0;
+                              setNewInvoiceDiscountPercent(val);
+                              recalcNewInvoiceTotals([...newInvoiceItems], newInvoiceDiscountType, val, newInvoiceNoTax);
+                            }}
+                            className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                          />
+                        </div>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-gray-600">ITBIS (18%):</span>
