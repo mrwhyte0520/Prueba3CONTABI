@@ -619,7 +619,7 @@ export default function QuotesPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Monto Estimado</label>
                     <input 
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       value={formData.estimatedAmount}
                       onChange={(e) => setFormData({...formData, estimatedAmount: e.target.value})}

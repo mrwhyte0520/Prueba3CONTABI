@@ -527,7 +527,7 @@ export default function EmployeeTypesPage() {
                       Horas de Trabajo/Día
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.workingHours}
                       onChange={(e) => setFormData({...formData, workingHours: parseInt(e.target.value)})}
                       min="0"
@@ -540,7 +540,7 @@ export default function EmployeeTypesPage() {
                       Días de Vacaciones/Año
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.vacationDays}
                       onChange={(e) => setFormData({...formData, vacationDays: parseInt(e.target.value)})}
                       min="0"

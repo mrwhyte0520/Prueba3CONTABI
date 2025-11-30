@@ -296,7 +296,7 @@ export default function BankCreditsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto del Crédito</label>
               <input
-                type="number"
+                type="number" min="0"
                 step="0.01"
                 value={form.monto}
                 onChange={(e) => handleChange('monto', e.target.value)}
@@ -318,7 +318,7 @@ export default function BankCreditsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tasa de Interés (% anual, opcional)</label>
               <input
-                type="number"
+                type="number" min="0"
                 step="0.01"
                 value={form.tasaInteres}
                 onChange={(e) => handleChange('tasaInteres', e.target.value)}

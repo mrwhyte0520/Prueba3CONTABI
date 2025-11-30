@@ -801,7 +801,7 @@ export default function AssetDisposalPage() {
                       Valor en Libros *
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       required
                       step="0.01"
                       name="bookValue"
@@ -816,7 +816,7 @@ export default function AssetDisposalPage() {
                       Precio de Venta
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       defaultValue={editingDisposal?.salePrice || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"

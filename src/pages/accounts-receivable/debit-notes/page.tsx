@@ -760,7 +760,7 @@ export default function DebitNotesPage() {
                       Monto
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       required
                       name="amount"
@@ -926,7 +926,7 @@ export default function DebitNotesPage() {
                     Monto a Aplicar
                   </label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     name="amount_to_apply"
                     required

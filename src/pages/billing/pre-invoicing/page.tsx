@@ -971,7 +971,7 @@ export default function PreInvoicingPage() {
                             </td>
                             <td className="px-4 py-3">
                               <input
-                                type="number"
+                                type="number" min="0"
                                 value={item.price}
                                 onChange={(e) => handleItemChange(index, 'price', e.target.value)}
                                 className="w-full px-2 py-1 border border-gray-300 rounded text-sm"

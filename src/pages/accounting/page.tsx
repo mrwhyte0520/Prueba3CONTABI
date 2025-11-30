@@ -1077,7 +1077,7 @@ export default function AccountingPage() {
                           </div>
                           <div className="col-span-2">
                             <input
-                              type="number"
+                              type="number" min="0"
                               step="0.01"
                               value={line.debit}
                               onChange={(e) => handleJournalLineChange(index, 'debit', e.target.value)}
@@ -1087,7 +1087,7 @@ export default function AccountingPage() {
                           </div>
                           <div className="col-span-2">
                             <input
-                              type="number"
+                              type="number" min="0"
                               step="0.01"
                               value={line.credit}
                               onChange={(e) => handleJournalLineChange(index, 'credit', e.target.value)}

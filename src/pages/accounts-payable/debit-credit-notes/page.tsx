@@ -229,7 +229,7 @@ export default function APDebitCreditNotesPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto *</label>
               <input
-                type="number"
+                type="number" min="0"
                 step="0.01"
                 value={form.amount}
                 onChange={(e) => setForm(prev => ({ ...prev, amount: e.target.value }))}

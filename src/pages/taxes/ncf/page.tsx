@@ -295,7 +295,7 @@ export default function NcfManagementPage() {
                       Número Inicial
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.start_number}
                       onChange={(e) => setFormData(prev => ({ ...prev, start_number: parseInt(e.target.value) || 1 }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -307,7 +307,7 @@ export default function NcfManagementPage() {
                       Número Final
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.end_number}
                       onChange={(e) => setFormData(prev => ({ ...prev, end_number: parseInt(e.target.value) || 1000 }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"

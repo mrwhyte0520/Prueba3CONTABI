@@ -578,7 +578,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Saldo Inicial</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={currentShift.openingBalance}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
@@ -587,7 +587,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Ventas en Efectivo</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={currentShift.cashSales}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
@@ -596,7 +596,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Gastos</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={currentShift.expenses}
                       onChange={(e) => setCurrentShift(prev => ({ ...prev, expenses: Number(e.target.value) || 0 }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
@@ -605,7 +605,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Efectivo Esperado</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={expectedCashBalance}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm font-semibold"
@@ -614,7 +614,7 @@ export default function CashClosingPage() {
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-gray-700 mb-2">Efectivo Real Contado</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       placeholder="Ingrese el efectivo contado físicamente"
                       onChange={(e) => {
                         const actual = Number(e.target.value) || 0;
@@ -743,7 +743,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Saldo Inicial</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.opening_balance || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
@@ -752,7 +752,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Ventas Totales</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.total_sales || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
@@ -761,7 +761,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Ventas en Efectivo</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.cash_sales || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
@@ -770,7 +770,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Ventas con Tarjeta</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.card_sales || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
@@ -779,7 +779,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Ventas por Transferencia</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.transfer_sales || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
@@ -788,7 +788,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Otros Métodos</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.other_sales || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
@@ -797,7 +797,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Gastos</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.total_expenses || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm"
@@ -806,7 +806,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Efectivo Esperado</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.expected_cash_balance || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm font-semibold"
@@ -815,7 +815,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Efectivo Real</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.actual_cash_balance || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm font-semibold"
@@ -824,7 +824,7 @@ export default function CashClosingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Diferencia</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={Number(viewClosing.difference || 0)}
                       readOnly
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-sm font-semibold"

@@ -664,7 +664,7 @@ const AccountingPeriodsPage: React.FC = () => {
                     Año Fiscal
                   </label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     value={formData.fiscal_year}
                     onChange={(e) => setFormData(prev => ({ ...prev, fiscal_year: e.target.value }))}
                     min="2020"

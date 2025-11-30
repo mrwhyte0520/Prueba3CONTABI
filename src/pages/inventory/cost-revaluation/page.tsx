@@ -530,7 +530,7 @@ export default function InventoryCostRevaluationPage() {
                         </td>
                         <td className="px-4 py-2 whitespace-nowrap text-sm text-right">
                           <input
-                            type="number"
+                            type="number" min="0"
                             step="0.0001"
                             value={newCostByKey[key] ?? ''}
                             onChange={(e) => handleNewCostChange(row, e.target.value)}

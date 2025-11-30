@@ -219,7 +219,7 @@ export default function PaymentTermsPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Días *</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     required
                     value={formData.days}
                     onChange={(e) => setFormData({ ...formData, days: Number(e.target.value) })}

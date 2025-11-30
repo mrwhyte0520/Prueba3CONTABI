@@ -215,7 +215,7 @@ export default function TaxConfigurationPage() {
                 Tasa ITBIS (%)
               </label>
               <input
-                type="number"
+                type="number" min="0"
                 step="0.01"
                 value={config.itbis_rate}
                 onChange={(e) => setConfig(prev => ({ ...prev, itbis_rate: parseFloat(e.target.value) || 0 }))}
@@ -233,7 +233,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Salarios</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.isr_rates.salary || 0}
                     onChange={(e) => updateIsrRate('salary', parseFloat(e.target.value) || 0)}
@@ -243,7 +243,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Servicios Profesionales</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.isr_rates.professional_services || 0}
                     onChange={(e) => updateIsrRate('professional_services', parseFloat(e.target.value) || 0)}
@@ -253,7 +253,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Alquileres</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.isr_rates.rent || 0}
                     onChange={(e) => updateIsrRate('rent', parseFloat(e.target.value) || 0)}
@@ -275,7 +275,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">SFS Empleado (%)</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.tss_rates.sfs_employee}
                     onChange={(e) => updateTssRate('sfs_employee', parseFloat(e.target.value) || 0)}
@@ -285,7 +285,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">SFS Empleador (%)</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.tss_rates.sfs_employer}
                     onChange={(e) => updateTssRate('sfs_employer', parseFloat(e.target.value) || 0)}
@@ -295,7 +295,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">AFP Empleado (%)</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.tss_rates.afp_employee}
                     onChange={(e) => updateTssRate('afp_employee', parseFloat(e.target.value) || 0)}
@@ -305,7 +305,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">AFP Empleador (%)</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.tss_rates.afp_employer}
                     onChange={(e) => updateTssRate('afp_employer', parseFloat(e.target.value) || 0)}
@@ -315,7 +315,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">SRL Empleador (%)</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.tss_rates.srl_employer}
                     onChange={(e) => updateTssRate('srl_employer', parseFloat(e.target.value) || 0)}
@@ -325,7 +325,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">INFOTEP Empleador (%)</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.tss_rates.infotep_employer}
                     onChange={(e) => updateTssRate('infotep_employer', parseFloat(e.target.value) || 0)}
@@ -335,7 +335,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Tope Salarial TSS (monto)</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.tss_rates.max_salary_tss}
                     onChange={(e) => updateTssRate('max_salary_tss', parseFloat(e.target.value) || 0)}
@@ -354,7 +354,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">ITBIS</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.withholding_rates.itbis || 0}
                     onChange={(e) => updateWithholdingRate('itbis', parseFloat(e.target.value) || 0)}
@@ -364,7 +364,7 @@ export default function TaxConfigurationPage() {
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">ISR</label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     value={config.withholding_rates.isr || 0}
                     onChange={(e) => updateWithholdingRate('isr', parseFloat(e.target.value) || 0)}

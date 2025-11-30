@@ -644,7 +644,7 @@ export default function PaymentsPage() {
                     Monto a Pagar
                   </label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     required
                     name="amount"

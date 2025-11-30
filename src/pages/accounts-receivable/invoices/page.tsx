@@ -591,7 +591,7 @@ export default function InvoicesPage() {
                     Monto
                   </label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     required
                     name="amount"
@@ -671,7 +671,7 @@ export default function InvoicesPage() {
                     Monto a Pagar
                   </label>
                   <input
-                    type="number"
+                    type="number" min="0"
                     step="0.01"
                     required
                     name="amount_to_pay"

@@ -431,7 +431,7 @@ export default function PeriodicDeductionsPage() {
                         Monto (RD$) *
                       </label>
                       <input
-                        type="number"
+                        type="number" min="0"
                         step="0.01"
                         value={formData.amount}
                         onChange={(e) => setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })}
@@ -445,7 +445,7 @@ export default function PeriodicDeductionsPage() {
                         Porcentaje (%) *
                       </label>
                       <input
-                        type="number"
+                        type="number" min="0"
                         step="0.01"
                         value={formData.percentage}
                         onChange={(e) => setFormData({ ...formData, percentage: parseFloat(e.target.value) || 0 })}

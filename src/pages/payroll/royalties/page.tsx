@@ -689,7 +689,7 @@ export default function PayrollRoyaltiesPage() {
                           Monto Base
                         </label>
                         <input
-                          type="number"
+                          type="number" min="0"
                           step="0.01"
                           value={formData.baseAmount}
                           onChange={(e) => setFormData(prev => ({ ...prev, baseAmount: parseFloat(e.target.value) || 0 }))}
@@ -704,7 +704,7 @@ export default function PayrollRoyaltiesPage() {
                           Porcentaje (%)
                         </label>
                         <input
-                          type="number"
+                          type="number" min="0"
                           step="0.01"
                           value={formData.percentage}
                           onChange={(e) => setFormData(prev => ({ ...prev, percentage: parseFloat(e.target.value) || 0 }))}
@@ -719,7 +719,7 @@ export default function PayrollRoyaltiesPage() {
                           Monto Fijo
                         </label>
                         <input
-                          type="number"
+                          type="number" min="0"
                           step="0.01"
                           value={formData.fixedAmount}
                           onChange={(e) => setFormData(prev => ({ ...prev, fixedAmount: parseFloat(e.target.value) || 0 }))}

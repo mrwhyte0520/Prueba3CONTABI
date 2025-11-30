@@ -617,7 +617,7 @@ export default function CustomersPage() {
                       Límite de Crédito
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       name="creditLimit"
                       defaultValue={selectedCustomer?.creditLimit || ''}

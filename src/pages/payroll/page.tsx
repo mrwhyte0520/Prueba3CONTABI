@@ -1556,7 +1556,7 @@ export default function PayrollPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Salario *</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       value={formData.salary || ''}
                       onChange={(e) => setFormData({...formData, salary: parseFloat(e.target.value)})}
@@ -1637,7 +1637,7 @@ export default function PayrollPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Presupuesto</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       value={formData.budget || ''}
                       onChange={(e) => setFormData({...formData, budget: parseFloat(e.target.value)})}
@@ -1686,7 +1686,7 @@ export default function PayrollPage() {
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Salario Mínimo</label>
                       <input
-                        type="number"
+                        type="number" min="0"
                         step="0.01"
                         value={formData.min_salary || ''}
                         onChange={(e) => setFormData({...formData, min_salary: parseFloat(e.target.value)})}
@@ -1696,7 +1696,7 @@ export default function PayrollPage() {
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Salario Máximo</label>
                       <input
-                        type="number"
+                        type="number" min="0"
                         step="0.01"
                         value={formData.max_salary || ''}
                         onChange={(e) => setFormData({...formData, max_salary: parseFloat(e.target.value)})}

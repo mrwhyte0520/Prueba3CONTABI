@@ -358,7 +358,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Salario Mínimo</label>
             <input
-              type="number"
+              type="number" min="0"
               step="0.01"
               value={config?.min_wage || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, min_wage: parseFloat(e.target.value)} : null)}
@@ -374,7 +374,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Seguridad Social (%)</label>
             <input
-              type="number"
+              type="number" min="0"
               step="0.01"
               value={config?.social_security_rate || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, social_security_rate: parseFloat(e.target.value)} : null)}
@@ -384,7 +384,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">ISR Base (%)</label>
             <input
-              type="number"
+              type="number" min="0"
               step="0.01"
               value={config?.income_tax_rate || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, income_tax_rate: parseFloat(e.target.value)} : null)}
@@ -394,7 +394,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Regalía Pascual (%)</label>
             <input
-              type="number"
+              type="number" min="0"
               step="0.01"
               value={config?.christmas_bonus_rate || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, christmas_bonus_rate: parseFloat(e.target.value)} : null)}
@@ -404,7 +404,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Horas Extras (Factor)</label>
             <input
-              type="number"
+              type="number" min="0"
               step="0.01"
               value={config?.overtime_rate || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, overtime_rate: parseFloat(e.target.value)} : null)}
@@ -414,7 +414,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Turno Nocturno (Factor)</label>
             <input
-              type="number"
+              type="number" min="0"
               step="0.01"
               value={config?.night_shift_rate || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, night_shift_rate: parseFloat(e.target.value)} : null)}
@@ -424,7 +424,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Domingo (Factor)</label>
             <input
-              type="number"
+              type="number" min="0"
               step="0.01"
               value={config?.sunday_rate || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, sunday_rate: parseFloat(e.target.value)} : null)}
@@ -434,7 +434,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Días Feriados (Factor)</label>
             <input
-              type="number"
+              type="number" min="0"
               step="0.01"
               value={config?.holiday_rate || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, holiday_rate: parseFloat(e.target.value)} : null)}
@@ -444,7 +444,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Días de Vacaciones</label>
             <input
-              type="number"
+              type="number" min="0"
               value={config?.vacation_days || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, vacation_days: parseInt(e.target.value)} : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -453,7 +453,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Días por Enfermedad</label>
             <input
-              type="number"
+              type="number" min="0"
               value={config?.sick_days || ''}
               onChange={(e) => setConfig(prev => prev ? {...prev, sick_days: parseInt(e.target.value)} : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -628,7 +628,7 @@ export default function PayrollConfigurationPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto Desde</label>
               <input
-                type="number"
+                type="number" min="0"
                 step="0.01"
                 value={formData.min_amount || ''}
                 onChange={(e) => setFormData({...formData, min_amount: parseFloat(e.target.value)})}
@@ -639,7 +639,7 @@ export default function PayrollConfigurationPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto Hasta</label>
               <input
-                type="number"
+                type="number" min="0"
                 step="0.01"
                 value={formData.max_amount === Infinity ? '' : formData.max_amount || ''}
                 onChange={(e) => setFormData({...formData, max_amount: e.target.value ? parseFloat(e.target.value) : Infinity})}
@@ -650,7 +650,7 @@ export default function PayrollConfigurationPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tasa (%)</label>
               <input
-                type="number"
+                type="number" min="0"
                 step="0.01"
                 value={formData.rate || ''}
                 onChange={(e) => setFormData({...formData, rate: parseFloat(e.target.value)})}
@@ -661,7 +661,7 @@ export default function PayrollConfigurationPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto Fijo</label>
               <input
-                type="number"
+                type="number" min="0"
                 step="0.01"
                 value={formData.fixed_amount || ''}
                 onChange={(e) => setFormData({...formData, fixed_amount: parseFloat(e.target.value)})}

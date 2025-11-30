@@ -532,7 +532,7 @@ export default function PaymentsPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Monto *</label>
                     <input 
-                      type="number"
+                      type="number" min="0"
                       required
                       step="0.01"
                       value={formData.amount}

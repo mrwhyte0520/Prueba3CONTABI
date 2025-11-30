@@ -120,6 +120,8 @@ export default function OpeningBalancesPage() {
               </label>
               <input
                 type="number"
+                min="2000"
+                max="2100"
                 value={fiscalYear}
                 onChange={(e) => setFiscalYear(parseInt(e.target.value))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
@@ -262,6 +264,7 @@ export default function OpeningBalancesPage() {
                     <td className="px-6 py-4 text-sm text-right">
                       <input
                         type="number"
+                        min="0"
                         step="0.01"
                         value={balance.debit || 0}
                         onChange={(e) => handleUpdateBalance(balance, 'debit', parseFloat(e.target.value) || 0)}
@@ -272,6 +275,7 @@ export default function OpeningBalancesPage() {
                     <td className="px-6 py-4 text-sm text-right">
                       <input
                         type="number"
+                        min="0"
                         step="0.01"
                         value={balance.credit || 0}
                         onChange={(e) => handleUpdateBalance(balance, 'credit', parseFloat(e.target.value) || 0)}

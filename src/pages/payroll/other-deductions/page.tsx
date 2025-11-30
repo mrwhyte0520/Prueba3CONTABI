@@ -486,7 +486,7 @@ export default function OtherDeductionsPage() {
                       Monto (RD$) *
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       value={formData.amount}
                       onChange={(e) => setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })}

@@ -714,7 +714,7 @@ export default function AssetRegisterPage() {
                       Costo de Adquisición *
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       required
                       step="0.01"
                       name="acquisitionCost"
@@ -728,7 +728,7 @@ export default function AssetRegisterPage() {
                       Vida Útil (años) *
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       required
                       name="usefulLife"
                       value={usefulLifeValue}

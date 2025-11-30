@@ -1919,7 +1919,7 @@ export default function InventoryPage() {
                       Stock actual
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.current_stock ?? ''}
                       onChange={(e) => setFormData({ ...formData, current_stock: e.target.value })}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1951,7 +1951,7 @@ export default function InventoryPage() {
                       Stock mínimo
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.minimum_stock ?? ''}
                       onChange={(e) => setFormData({ ...formData, minimum_stock: e.target.value })}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1962,7 +1962,7 @@ export default function InventoryPage() {
                       Stock máximo
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.maximum_stock ?? ''}
                       onChange={(e) => setFormData({ ...formData, maximum_stock: e.target.value })}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1973,7 +1973,7 @@ export default function InventoryPage() {
                       Precio de compra (sin impuestos)
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       value={formData.cost_price ?? ''}
                       onChange={(e) => setFormData({ ...formData, cost_price: e.target.value })}
@@ -1985,7 +1985,7 @@ export default function InventoryPage() {
                       Precio venta
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       value={formData.selling_price ?? ''}
                       onChange={(e) => setFormData({ ...formData, selling_price: e.target.value })}
@@ -2283,7 +2283,7 @@ export default function InventoryPage() {
                       Cantidad *
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       value={formData.quantity ?? ''}
                       onChange={(e) =>
@@ -2298,7 +2298,7 @@ export default function InventoryPage() {
                       Costo unitario
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       value={formData.unit_cost ?? ''}
                       onChange={(e) =>

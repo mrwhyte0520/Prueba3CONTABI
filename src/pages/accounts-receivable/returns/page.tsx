@@ -386,7 +386,7 @@ export default function ReturnsPage() {
                       Monto
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       name="amount"
                       required

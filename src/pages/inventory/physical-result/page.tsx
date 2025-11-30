@@ -544,7 +544,7 @@ export default function InventoryPhysicalResultPage() {
                         <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-gray-900">{row.theoreticalQty}</td>
                         <td className="px-4 py-2 whitespace-nowrap text-sm text-right">
                           <input
-                            type="number"
+                            type="number" min="0"
                             step="0.01"
                             value={countsByKey[key] ?? ''}
                             onChange={(e) => handleCountChange(row, e.target.value)}

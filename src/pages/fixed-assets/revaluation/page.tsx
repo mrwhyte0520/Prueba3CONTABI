@@ -861,7 +861,7 @@ export default function RevaluationPage() {
                       Valor Anterior *
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       required
                       step="0.01"
                       name="previousValue"
@@ -876,7 +876,7 @@ export default function RevaluationPage() {
                       Nuevo Valor *
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       required
                       step="0.01"
                       name="newValue"

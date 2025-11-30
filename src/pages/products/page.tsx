@@ -1487,7 +1487,7 @@ export default function ProductsPage() {
                         Precio de Venta *
                       </label>
                       <input
-                        type="number"
+                        type="number" min="0"
                         step="0.01"
                         required
                         value={formData.price}
@@ -1501,7 +1501,7 @@ export default function ProductsPage() {
                         Costo *
                       </label>
                       <input
-                        type="number"
+                        type="number" min="0"
                         step="0.01"
                         required
                         value={formData.cost}
@@ -1518,7 +1518,7 @@ export default function ProductsPage() {
                         Stock Actual *
                       </label>
                       <input
-                        type="number"
+                        type="number" min="0"
                         required
                         value={formData.stock}
                         onChange={(e) => setFormData(prev => ({ ...prev, stock: e.target.value }))}
@@ -1531,7 +1531,7 @@ export default function ProductsPage() {
                         Stock Mínimo *
                       </label>
                       <input
-                        type="number"
+                        type="number" min="0"
                         required
                         value={formData.minStock}
                         onChange={(e) => setFormData(prev => ({ ...prev, minStock: e.target.value }))}
@@ -1544,7 +1544,7 @@ export default function ProductsPage() {
                         Stock Máximo *
                       </label>
                       <input
-                        type="number"
+                        type="number" min="0"
                         required
                         value={formData.maxStock}
                         onChange={(e) => setFormData(prev => ({ ...prev, maxStock: e.target.value }))}

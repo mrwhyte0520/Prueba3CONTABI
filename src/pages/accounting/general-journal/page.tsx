@@ -975,7 +975,7 @@ const GeneralJournalPage: React.FC = () => {
                           </td>
                           <td className="px-4 py-3">
                             <input
-                              type="number"
+                              type="number" min="0"
                               value={line.debit_amount || ''}
                               onChange={(e) => updateLine(index, 'debit_amount', parseFloat(e.target.value) || 0)}
                               placeholder="0.00"
@@ -984,7 +984,7 @@ const GeneralJournalPage: React.FC = () => {
                           </td>
                           <td className="px-4 py-3">
                             <input
-                              type="number"
+                              type="number" min="0"
                               value={line.credit_amount || ''}
                               onChange={(e) => updateLine(index, 'credit_amount', parseFloat(e.target.value) || 0)}
                               placeholder="0.00"

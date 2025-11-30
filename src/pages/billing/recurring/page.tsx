@@ -600,7 +600,7 @@ export default function RecurringBillingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Monto</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={amount === '' ? '' : amount}
                       onChange={(e) => setAmount(e.target.value ? Number(e.target.value) : '')}
                       placeholder="0.00"

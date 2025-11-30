@@ -201,7 +201,7 @@ export default function CustomerTypesPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Descuento fijo (%)</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       name="fixedDiscount"
                       step="0.01"
                       defaultValue={selectedType?.fixedDiscount ?? 0}
@@ -224,7 +224,7 @@ export default function CustomerTypesPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Límite de crédito sugerido</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       name="creditLimit"
                       step="0.01"
                       defaultValue={selectedType?.creditLimit ?? 0}
@@ -234,7 +234,7 @@ export default function CustomerTypesPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Días de atraso permitidos</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       name="allowedDelayDays"
                       defaultValue={selectedType?.allowedDelayDays ?? 0}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"

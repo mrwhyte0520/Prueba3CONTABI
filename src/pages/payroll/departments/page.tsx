@@ -493,7 +493,7 @@ export default function DepartmentsPage() {
                       Presupuesto Anual
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.budget}
                       onChange={(e) => setFormData({...formData, budget: parseFloat(e.target.value) || 0})}
                       min="0"

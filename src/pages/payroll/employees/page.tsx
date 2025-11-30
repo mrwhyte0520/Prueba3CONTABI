@@ -643,7 +643,7 @@ export default function EmployeesPage() {
                       Salario Base * {formData.salary_type_id === '2' ? '(por hora)' : '(mensual)'}
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       value={formData.base_salary || ''}
                       onChange={(e) => setFormData({...formData, base_salary: parseFloat(e.target.value)})}

@@ -254,7 +254,7 @@ export default function BankPaymentRequestsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Monto</label>
               <input
-                type="number"
+                type="number" min="0"
                 step="0.01"
                 value={form.monto}
                 onChange={(e) => handleChange('monto', e.target.value)}

@@ -796,7 +796,7 @@ export default function PurchaseOrdersPage() {
                         </div>
                         <div>
                           <input 
-                            type="number"
+                            type="number" min="0"
                             placeholder="Cantidad"
                             value={item.quantity}
                             onChange={(e) => updateProduct(index, 'quantity', Math.max(1, Math.floor(parseFloat(e.target.value || '1'))))}
@@ -805,7 +805,7 @@ export default function PurchaseOrdersPage() {
                         </div>
                         <div>
                           <input 
-                            type="number"
+                            type="number" min="0"
                             step="0.01"
                             placeholder="Precio"
                             value={item.price}

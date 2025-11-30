@@ -692,7 +692,7 @@ const Formulario607Page: React.FC = () => {
                       Monto Facturado *
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       required
                       placeholder="0.00"
@@ -707,7 +707,7 @@ const Formulario607Page: React.FC = () => {
                       ITBIS Facturado *
                     </label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       step="0.01"
                       required
                       placeholder="0.00"

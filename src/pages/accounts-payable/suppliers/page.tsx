@@ -873,7 +873,7 @@ export default function SuppliersPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Límite de Crédito</label>
                     <input 
-                      type="number"
+                      type="number" min="0"
                       value={formData.creditLimit}
                       onChange={(e) => setFormData({...formData, creditLimit: e.target.value})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -935,7 +935,7 @@ export default function SuppliersPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Retención ISR (%)</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.isrRate}
                       onChange={(e) => setFormData({ ...formData, isrRate: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -945,7 +945,7 @@ export default function SuppliersPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Retención ITBIS (%)</label>
                     <input
-                      type="number"
+                      type="number" min="0"
                       value={formData.itbisRate}
                       onChange={(e) => setFormData({ ...formData, itbisRate: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
