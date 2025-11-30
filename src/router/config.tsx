@@ -32,6 +32,11 @@ import PayrollOvertimePage from '../pages/payroll/overtime/page';
 import PayrollHolidaysPage from '../pages/payroll/holidays/page';
 import PayrollBonusesPage from '../pages/payroll/bonuses/page';
 import PayrollRoyaltiesPage from '../pages/payroll/royalties/page';
+import PayrollDeductionsPage from '../pages/payroll/deductions/page';
+import PayrollOtherDeductionsPage from '../pages/payroll/other-deductions/page';
+import PayrollAbsencesPage from '../pages/payroll/absences/page';
+import PayrollProcessPage from '../pages/payroll/payroll-process/page';
+import PayrollJournalEntryPage from '../pages/payroll/journal-entry/page';
 
 const HomePage = lazy(() => import('../pages/home/page'));
 const DashboardPage = lazy(() => import('../pages/dashboard/page'));
@@ -75,6 +80,7 @@ const NotFoundPage = lazy(() => import('../pages/NotFound'));
 // Settings Pages
 const SettingsPage = lazy(() => import('../pages/settings/page'));
 const CompanySettingsPage = lazy(() => import('../pages/settings/company/page'));
+const OpeningBalancesPage = lazy(() => import('../pages/settings/opening-balances/page'));
 const UsersSettingsPage = lazy(() => import('../pages/settings/users/page'));
 const AccountingSettingsPage = lazy(() => import('../pages/settings/accounting/page'));
 const TaxSettingsPage = lazy(() => import('../pages/settings/taxes/page'));
@@ -327,6 +333,26 @@ const routes: RouteObject[] = [
   {
     path: '/payroll/royalties',
     element: <PayrollRoyaltiesPage />
+  },
+  {
+    path: '/payroll/deductions',
+    element: <PayrollDeductionsPage />
+  },
+  {
+    path: '/payroll/other-deductions',
+    element: <PayrollOtherDeductionsPage />
+  },
+  {
+    path: '/payroll/absences',
+    element: <PayrollAbsencesPage />
+  },
+  {
+    path: '/payroll/payroll-process',
+    element: <PayrollProcessPage />
+  },
+  {
+    path: '/payroll/journal-entry',
+    element: <PayrollJournalEntryPage />
   },
   {
     path: '/pos',
@@ -612,6 +638,10 @@ const routes: RouteObject[] = [
   {
     path: '/settings/company',
     element: <ProtectedRoute><CompanySettingsPage /></ProtectedRoute>
+  },
+  {
+    path: '/settings/opening-balances',
+    element: <ProtectedRoute><OpeningBalancesPage /></ProtectedRoute>
   },
   {
     path: '/settings/users',

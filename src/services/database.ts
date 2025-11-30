@@ -4761,6 +4761,235 @@ export const payrollService = {
       throw error;
     }
   },
+
+  // Nuevos métodos integrados para deducciones y ausencias
+  async getEmployeeDeductions(userId: string, employeeId: string, periodStart: string, periodEnd: string) {
+    try {
+      // Obtener deducciones periódicas activas
+      const { data: periodicData, error: periodicError } = await supabase
+        .from('periodic_deductions')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('employee_id', employeeId)
+        .eq('is_active', true)
+        .lte('start_date', periodEnd)
+        .or(`end_date.is.null,end_date.gte.${periodStart}`);
+
+      if (periodicError) throw periodicError;
+
+      // Obtener otras deducciones pendientes en el período
+      const { data: otherData, error: otherError } = await supabase
+        .from('other_deductions')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('employee_id', employeeId)
+        .eq('status', 'pendiente')
+        .gte('deduction_date', periodStart)
+        .lte('deduction_date', periodEnd);
+
+      if (otherError) throw otherError;
+
+      return {
+        periodic: periodicData || [],
+        other: otherData || []
+      };
+    } catch (error) {
+      console.error('Error getting employee deductions:', error);
+      return { periodic: [], other: [] };
+    }
+  },
+
+  async getEmployeeAbsences(userId: string, employeeId: string, periodStart: string, periodEnd: string) {
+    try {
+      const { data, error } = await supabase
+        .from('employee_absences')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('employee_id', employeeId)
+        .eq('status', 'aprobada')
+        .gte('end_date', periodStart)
+        .lte('start_date', periodEnd);
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error getting employee absences:', error);
+      return [];
+    }
+  },
+
+  async calculatePayroll(userId: string, periodId: string, employees: any[], periodStart: string, periodEnd: string, tssConfig: any) {
+    try {
+      const payrollEntries = [];
+
+      for (const employee of employees) {
+        const grossSalary = Number(employee.salary) || 0;
+
+        // Obtener deducciones del empleado
+        const deductions = await this.getEmployeeDeductions(userId, employee.id, periodStart, periodEnd);
+        
+        // Calcular total de deducciones periódicas
+        let periodicDeductionsTotal = 0;
+        for (const ded of deductions.periodic) {
+          if (ded.type === 'fijo') {
+            periodicDeductionsTotal += Number(ded.amount) || 0;
+          } else if (ded.type === 'porcentaje') {
+            periodicDeductionsTotal += (grossSalary * (Number(ded.percentage) || 0)) / 100;
+          }
+        }
+
+        // Calcular total de otras deducciones
+        const otherDeductionsTotal = deductions.other.reduce((sum: number, ded: any) => 
+          sum + (Number(ded.amount) || 0), 0);
+
+        // Obtener ausencias no pagadas
+        const absences = await this.getEmployeeAbsences(userId, employee.id, periodStart, periodEnd);
+        const unpaidAbsences = absences.filter((a: any) => !a.is_paid);
+        const unpaidDays = unpaidAbsences.reduce((sum: number, a: any) => sum + (Number(a.days_count) || 0), 0);
+
+        // Calcular descuento por ausencias (asumiendo mes de 30 días)
+        const dailyRate = grossSalary / 30;
+        const absenceDeduction = dailyRate * unpaidDays;
+
+        // Calcular deducciones TSS
+        let baseSalary = grossSalary;
+        let employeeRate = 0;
+
+        if (tssConfig) {
+          const sfsEmp = Number(tssConfig.sfs_employee) || 0;
+          const afpEmp = Number(tssConfig.afp_employee) || 0;
+          employeeRate = sfsEmp + afpEmp || 16.67;
+
+          const maxSalary = Number(tssConfig.max_salary_tss) || 0;
+          if (maxSalary > 0) {
+            baseSalary = Math.min(grossSalary, maxSalary);
+          }
+        } else {
+          employeeRate = 16.67;
+        }
+
+        const tssDeductions = baseSalary * (employeeRate / 100);
+
+        // Total de deducciones
+        const totalDeductions = periodicDeductionsTotal + otherDeductionsTotal + absenceDeduction + tssDeductions;
+
+        // Salario neto
+        const netSalary = grossSalary - totalDeductions;
+
+        payrollEntries.push({
+          user_id: userId,
+          payroll_period_id: periodId,
+          employee_id: employee.id,
+          gross_salary: grossSalary,
+          overtime_hours: 0,
+          overtime_amount: 0,
+          bonuses: 0,
+          tss_deductions: tssDeductions,
+          periodic_deductions: periodicDeductionsTotal,
+          other_deductions: otherDeductionsTotal,
+          absence_deductions: absenceDeduction,
+          deductions: totalDeductions,
+          net_salary: netSalary,
+          status: 'approved',
+          unpaid_absence_days: unpaidDays
+        });
+      }
+
+      return payrollEntries;
+    } catch (error) {
+      console.error('Error calculating payroll:', error);
+      throw error;
+    }
+  },
+
+  async markOtherDeductionsAsApplied(userId: string, employeeIds: string[], periodStart: string, periodEnd: string) {
+    try {
+      const { error } = await supabase
+        .from('other_deductions')
+        .update({ status: 'aplicada' })
+        .eq('user_id', userId)
+        .in('employee_id', employeeIds)
+        .eq('status', 'pendiente')
+        .gte('deduction_date', periodStart)
+        .lte('deduction_date', periodEnd);
+
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Error marking deductions as applied:', error);
+      return false;
+    }
+  }
+};
+
+/* ==========================================================
+   Deductions and Absences Services
+========================================================== */
+export const deductionsService = {
+  async getPeriodicDeductions(userId: string, employeeId?: string) {
+    try {
+      let query = supabase
+        .from('periodic_deductions')
+        .select('*, employees(first_name, last_name, employee_code)')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (employeeId) {
+        query = query.eq('employee_id', employeeId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error getting periodic deductions:', error);
+      return [];
+    }
+  },
+
+  async getOtherDeductions(userId: string, employeeId?: string) {
+    try {
+      let query = supabase
+        .from('other_deductions')
+        .select('*, employees(first_name, last_name, employee_code)')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (employeeId) {
+        query = query.eq('employee_id', employeeId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error getting other deductions:', error);
+      return [];
+    }
+  }
+};
+
+export const absencesService = {
+  async getAbsences(userId: string, employeeId?: string) {
+    try {
+      let query = supabase
+        .from('employee_absences')
+        .select('*, employees(first_name, last_name, employee_code)')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (employeeId) {
+        query = query.eq('employee_id', employeeId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error getting absences:', error);
+      return [];
+    }
+  }
 };
 
 /* ==========================================================
@@ -10312,7 +10541,236 @@ export const assetDisposalService = {
       console.error('assetDisposalService.delete error', error);
       throw error;
     }
+  }
+};
+
+/* ==========================================================
+   Opening Balances Service (Balances Iniciales)
+========================================================== */
+export const openingBalancesService = {
+  async getAll(userId: string, fiscalYear?: number) {
+    try {
+      let query = supabase
+        .from('opening_balances')
+        .select('*')
+        .eq('user_id', userId)
+        .order('account_number', { ascending: true });
+
+      if (fiscalYear) {
+        query = query.eq('fiscal_year', fiscalYear);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error getting opening balances:', error);
+      return [];
+    }
   },
+
+  async create(userId: string, balance: any) {
+    try {
+      const { data, error } = await supabase
+        .from('opening_balances')
+        .insert({ ...balance, user_id: userId })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error creating opening balance:', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, balance: any) {
+    try {
+      const { data, error } = await supabase
+        .from('opening_balances')
+        .update(balance)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Error updating opening balance:', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('opening_balances')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      return true;
+    } catch (error) {
+      console.error('Error deleting opening balance:', error);
+      throw error;
+    }
+  },
+
+  async importFromAccounts(userId: string, fiscalYear: number, openingDate: string) {
+    try {
+      // Obtener todas las cuentas del catálogo
+      const { data: accounts, error: accountsError } = await supabase
+        .from('chart_accounts')
+        .select('id, code, name, normal_balance')
+        .eq('user_id', userId)
+        .order('code', { ascending: true });
+
+      if (accountsError) throw accountsError;
+
+      // Crear balances iniciales para cada cuenta (con saldo 0)
+      const balances = accounts.map(account => ({
+        user_id: userId,
+        account_id: account.id,
+        account_number: account.code,
+        account_name: account.name,
+        debit: 0,
+        credit: 0,
+        balance: 0,
+        balance_type: account.normal_balance || 'debit',
+        fiscal_year: fiscalYear,
+        opening_date: openingDate,
+        is_posted: false
+      }));
+
+      const { data, error } = await supabase
+        .from('opening_balances')
+        .insert(balances)
+        .select();
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.error('Error importing balances from chart of accounts:', error);
+      throw error;
+    }
+  },
+
+  async postToJournal(userId: string, fiscalYear: number) {
+    try {
+      // Obtener balances no contabilizados
+      const { data: balances, error: balancesError } = await supabase
+        .from('opening_balances')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('fiscal_year', fiscalYear)
+        .eq('is_posted', false);
+
+      if (balancesError) throw balancesError;
+      if (!balances || balances.length === 0) {
+        throw new Error('No hay balances para contabilizar');
+      }
+
+      // Validar que cuadre
+      const totalDebit = balances.reduce((sum, b) => sum + (Number(b.debit) || 0), 0);
+      const totalCredit = balances.reduce((sum, b) => sum + (Number(b.credit) || 0), 0);
+
+      if (Math.abs(totalDebit - totalCredit) > 0.01) {
+        throw new Error(`Los balances no cuadran. Débito: RD$ ${totalDebit.toFixed(2)}, Crédito: RD$ ${totalCredit.toFixed(2)}`);
+      }
+
+      // Preparar asiento de diario usando el servicio estándar
+      const openingDate = balances[0].opening_date;
+      const entryNumber = `OPEN-${fiscalYear}`;
+
+      // Construir líneas a partir de balances (solo para conteo y posible creación)
+      const nonZeroBalances = balances.filter(b => (Number(b.debit) || 0) > 0 || (Number(b.credit) || 0) > 0);
+      const lines = nonZeroBalances.map((balance: any) => ({
+        account_id: balance.account_id,
+        description: `Saldo inicial ${fiscalYear}`,
+        debit_amount: Number(balance.debit) || 0,
+        credit_amount: Number(balance.credit) || 0,
+      }));
+
+      // Si ya existe un asiento con ese número para ese usuario, reutilizarlo
+      const { data: existingEntry, error: existingError } = await supabase
+        .from('journal_entries')
+        .select('id, total_debit, total_credit')
+        .eq('user_id', userId)
+        .eq('entry_number', entryNumber)
+        .maybeSingle();
+
+      if (existingError) throw existingError;
+
+      let journalEntry = existingEntry as any;
+
+      if (!journalEntry) {
+        // Crear nuevo asiento solo si no existe uno previo
+        journalEntry = await journalEntriesService.createWithLines(userId, {
+          entry_number: entryNumber,
+          entry_date: openingDate,
+          description: `Asiento de apertura - Ejercicio fiscal ${fiscalYear}`,
+          reference: `Balances Iniciales ${fiscalYear}`,
+          status: 'posted',
+        }, lines);
+      }
+
+      // Marcar balances como contabilizados
+      const balanceIds = balances.map(b => b.id);
+      const { error: updateError } = await supabase
+        .from('opening_balances')
+        .update({
+          is_posted: true,
+          posted_at: new Date().toISOString(),
+          posted_by: userId,
+          journal_entry_id: journalEntry.id
+        })
+        .in('id', balanceIds);
+
+      if (updateError) throw updateError;
+
+      return {
+        journalEntry,
+        linesCount: lines.length,
+        totalDebit,
+        totalCredit,
+      };
+    } catch (error) {
+      console.error('Error posting opening balances to journal:', error);
+      throw error;
+    }
+  },
+
+  async getValidationSummary(userId: string, fiscalYear: number) {
+    try {
+      const { data: balances, error } = await supabase
+        .from('opening_balances')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('fiscal_year', fiscalYear);
+
+      if (error) throw error;
+
+      const totalDebit = balances.reduce((sum, b) => sum + (Number(b.debit) || 0), 0);
+      const totalCredit = balances.reduce((sum, b) => sum + (Number(b.credit) || 0), 0);
+      const difference = totalDebit - totalCredit;
+      const isBalanced = Math.abs(difference) < 0.01;
+      const accountsWithBalance = balances.filter(b => (Number(b.debit) || 0) > 0 || (Number(b.credit) || 0) > 0).length;
+
+      return {
+        totalAccounts: balances.length,
+        accountsWithBalance,
+        totalDebit,
+        totalCredit,
+        difference,
+        isBalanced,
+        isPosted: balances.some(b => b.is_posted)
+      };
+    } catch (error) {
+      console.error('Error getting validation summary:', error);
+      throw error;
+    }
+  }
 };
 
 /* ==========================================================

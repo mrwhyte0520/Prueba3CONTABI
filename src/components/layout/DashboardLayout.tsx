@@ -269,8 +269,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Vacaciones', href: '/payroll/vacations' },
         { name: 'Horas Extras', href: '/payroll/overtime' },
         { name: 'Días Feriados', href: '/payroll/holidays' },
-        { name: 'Regalías', href: '/payroll/royalties' },
-        { name: 'Bonificaciones', href: '/payroll/bonuses' }
+        { name: 'Regalía Pascual', href: '/payroll/royalties' },
+        { name: 'Bonificaciones', href: '/payroll/bonuses' },
+        { name: 'Deducciones Periódicas', href: '/payroll/deductions' },
+        { name: 'Otras Deducciones', href: '/payroll/other-deductions' },
+        { name: 'Registro de Ausencias', href: '/payroll/absences' },
+        { name: 'Proceso de Pago Nómina', href: '/payroll/payroll-process' },
+        { name: 'Entrada al Diario Nómina', href: '/payroll/journal-entry' }
       ]
     },
     // 10. Impuestos
@@ -320,6 +325,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       current: location.pathname.startsWith('/settings'),
       submenu: [
         { name: 'Empresa', href: '/settings/company' },
+        { name: 'Balances Iniciales', href: '/settings/opening-balances' },
         { name: 'Usuarios', href: '/settings/users' },
         { name: 'Contabilidad', href: '/settings/accounting' },
         { name: 'Impuestos', href: '/settings/taxes' },
