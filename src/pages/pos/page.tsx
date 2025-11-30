@@ -97,6 +97,10 @@ export default function POSPage() {
   );
   const [cashClosingNotes, setCashClosingNotes] = useState('');
   const [savingCashClosing, setSavingCashClosing] = useState(false);
+  
+  // Paginación
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 6; // 3 columnas x 2 filas
 
   // Helpers: input masks
   const formatDocument = (raw: string) => {
@@ -394,18 +398,39 @@ export default function POSPage() {
     return matchesSearch && matchesCategory;
   });
 
+  // Paginación de productos
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
+
+  // Resetear página cuando cambian filtros
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedCategory]);
+
   const addToCart = (product: Product) => {
+    // Validar que haya stock disponible
+    if (product.stock <= 0) {
+      toast.error(`No hay stock disponible de "${product.name}"`);
+      return;
+    }
+
     const existingItem = cart.find(item => item.id === product.id);
     
     if (existingItem) {
+      // Verificar que no se exceda el stock
       if (existingItem.quantity < product.stock) {
         setCart(cart.map(item =>
           item.id === product.id
             ? { ...item, quantity: item.quantity + 1, total: (item.quantity + 1) * item.price }
             : item
         ));
+      } else {
+        toast.warning(`Stock máximo alcanzado para "${product.name}" (${product.stock} disponibles)`);
       }
     } else {
+      // Agregar nuevo producto al carrito
       setCart([...cart, { ...product, quantity: 1, total: product.price }]);
     }
   };
@@ -417,13 +442,19 @@ export default function POSPage() {
     }
 
     const product = products.find(p => p.id === id);
-    if (product && quantity <= product.stock) {
-      setCart(cart.map(item =>
-        item.id === id
-          ? { ...item, quantity, total: quantity * item.price }
-          : item
-      ));
+    if (!product) return;
+
+    // Validar que no se exceda el stock disponible
+    if (quantity > product.stock) {
+      toast.error(`Stock insuficiente. Solo hay ${product.stock} unidades disponibles de "${product.name}"`);
+      return;
     }
+
+    setCart(cart.map(item =>
+      item.id === id
+        ? { ...item, quantity, total: quantity * item.price }
+        : item
+    ));
   };
 
   const removeFromCart = (id: string) => {
@@ -996,13 +1027,23 @@ export default function POSPage() {
         </div>
 
         {/* Products Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredProducts.map((product) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mb-6">
+          {paginatedProducts.map((product) => (
             <div
               key={product.id}
-              className="relative bg-white rounded-xl shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow cursor-pointer flex flex-col h-full overflow-hidden"
+              className={`relative bg-white rounded-xl shadow-sm border p-4 transition-all flex flex-col h-full overflow-hidden ${
+                product.stock <= 0
+                  ? 'border-gray-300 opacity-60 cursor-not-allowed'
+                  : 'border-gray-200 hover:shadow-md cursor-pointer'
+              }`}
               onClick={() => addToCart(product)}
             >
+              {/* Badge "Sin Stock" */}
+              {product.stock <= 0 && (
+                <div className="absolute top-2 left-2 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-md z-10">
+                  SIN STOCK
+                </div>
+              )}
 
               {/* Imagen */}
               <div className="w-full h-32 mb-2 bg-gray-50 rounded-lg overflow-hidden flex items-center justify-center">
@@ -1048,7 +1089,12 @@ export default function POSPage() {
                   RD${product.price.toLocaleString()}
                 </span>
                 <button
-                  className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center hover:bg-blue-700 transition-colors shadow-sm flex-shrink-0"
+                  disabled={product.stock <= 0}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors shadow-sm flex-shrink-0 ${
+                    product.stock <= 0
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
                 >
                   <i className="ri-add-line text-sm"></i>
                 </button>
@@ -1056,6 +1102,116 @@ export default function POSPage() {
             </div>
           ))}
         </div>
+
+        {/* Controles de Paginación */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between bg-white rounded-lg shadow-sm border border-gray-200 px-6 py-4">
+            <div className="flex items-center space-x-2">
+              <span className="text-sm text-gray-600">
+                Mostrando {startIndex + 1}-{Math.min(endIndex, filteredProducts.length)} de {filteredProducts.length} productos
+              </span>
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className={`px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors ${
+                  currentPage === 1
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                <i className="ri-arrow-left-s-line"></i>
+                <span>Anterior</span>
+              </button>
+
+              <div className="flex items-center space-x-1">
+                {/* Mostrar paginación inteligente */}
+                {totalPages <= 7 ? (
+                  // Si hay 7 o menos páginas, mostrar todas
+                  Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                        currentPage === page
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  ))
+                ) : (
+                  // Si hay más de 7 páginas, mostrar algunas con puntos suspensivos
+                  <>
+                    <button
+                      onClick={() => setCurrentPage(1)}
+                      className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                        currentPage === 1
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      1
+                    </button>
+                    
+                    {currentPage > 3 && (
+                      <span className="px-2 text-gray-400">...</span>
+                    )}
+                    
+                    {Array.from({ length: 3 }, (_, i) => {
+                      const page = currentPage - 1 + i;
+                      if (page <= 1 || page >= totalPages) return null;
+                      return (
+                        <button
+                          key={page}
+                          onClick={() => setCurrentPage(page)}
+                          className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                            currentPage === page
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      );
+                    })}
+                    
+                    {currentPage < totalPages - 2 && (
+                      <span className="px-2 text-gray-400">...</span>
+                    )}
+                    
+                    <button
+                      onClick={() => setCurrentPage(totalPages)}
+                      className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                        currentPage === totalPages
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {totalPages}
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className={`px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors ${
+                  currentPage === totalPages
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                <span>Siguiente</span>
+                <i className="ri-arrow-right-s-line"></i>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Cart Section */}
@@ -1107,6 +1263,15 @@ export default function POSPage() {
                     <h4 className="font-medium text-gray-900 text-sm truncate">{item.name}</h4>
                     <p className="text-xs text-gray-500">RD${item.price.toLocaleString()} c/u</p>
                     <p className="text-sm font-semibold text-gray-900">RD${item.total.toLocaleString()}</p>
+                    <p className={`text-xs mt-0.5 ${
+                      item.quantity >= item.stock
+                        ? 'text-red-600 font-medium'
+                        : item.stock - item.quantity <= 3
+                        ? 'text-amber-600'
+                        : 'text-gray-400'
+                    }`}>
+                      Stock disponible: {item.stock - item.quantity}
+                    </p>
                   </div>
 
                   <div className="flex items-center space-x-2 ml-3">
@@ -1119,7 +1284,12 @@ export default function POSPage() {
                     <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
                     <button
                       onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                      className="w-6 h-6 bg-gray-200 text-gray-600 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
+                      disabled={item.quantity >= item.stock}
+                      className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors ${
+                        item.quantity >= item.stock
+                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                          : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                      }`}
                     >
                       <i className="ri-add-line text-xs"></i>
                     </button>
