@@ -1,0 +1,411 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { taxService } from '../../../services/database';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
+
+interface ItbisProportionalityData {
+  period: string;
+  totalSales: number;
+  taxableSales: number;
+  exemptSales: number;
+  exemptDestinationSales: number;
+  exportSales: number;
+  creditNotesLess30Days: number;
+  coefficient: number;
+  nonAdmittedProportionality: number;
+  itbisSubject: number;
+  itbisDeductible: number;
+}
+
+export default function ItbisProportionalityPage() {
+  const navigate = useNavigate();
+  const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
+  const [selectedMonth, setSelectedMonth] = useState<string>(String(new Date().getMonth() + 1).padStart(2, '0'));
+  const [data, setData] = useState<ItbisProportionalityData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+
+  const months = [
+    { value: '01', label: 'Enero' },
+    { value: '02', label: 'Febrero' },
+    { value: '03', label: 'Marzo' },
+    { value: '04', label: 'Abril' },
+    { value: '05', label: 'Mayo' },
+    { value: '06', label: 'Junio' },
+    { value: '07', label: 'Julio' },
+    { value: '08', label: 'Agosto' },
+    { value: '09', label: 'Septiembre' },
+    { value: '10', label: 'Octubre' },
+    { value: '11', label: 'Noviembre' },
+    { value: '12', label: 'Diciembre' },
+  ];
+
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 5 }, (_, idx) => String(currentYear - idx));
+
+  const formatCurrency = (value: number) => {
+    return `RD$ ${Number(value || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const formatPercent = (value: number) => {
+    return `${(Number(value || 0) * 100).toFixed(2)}%`;
+  };
+
+  const getMonthLabel = (period: string) => {
+    if (!period) return '';
+    const [yearStr, monthStr] = period.split('-');
+    const monthIndex = Number(monthStr) - 1;
+    const monthName = months[monthIndex]?.label || '';
+    return monthName ? `${monthName} ${yearStr}` : period;
+  };
+
+  const handleGenerate = async () => {
+    if (!selectedYear || !selectedMonth) {
+      alert('Por favor selecciona mes y año');
+      return;
+    }
+
+    const period = `${selectedYear}-${selectedMonth}`;
+    setLoading(true);
+
+    try {
+      const result = await taxService.getItbisProportionality(period);
+      if (result) {
+        setData(result);
+        setShowResults(true);
+      } else {
+        alert('No se pudo generar el reporte');
+      }
+    } catch (error) {
+      console.error('Error generating proportionality report:', error);
+      alert('Error al generar el reporte');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportToExcel = () => {
+    if (!data) return;
+
+    const excelData = [
+      { 'Concepto': 'Período', 'Valor': getMonthLabel(data.period) },
+      { 'Concepto': '', 'Valor': '' },
+      { 'Concepto': 'VENTAS DEL PERÍODO', 'Valor': '' },
+      { 'Concepto': 'Total de las Ventas', 'Valor': data.totalSales },
+      { 'Concepto': 'Ventas Gravadas', 'Valor': data.taxableSales },
+      { 'Concepto': 'Ventas Exentas', 'Valor': data.exemptSales },
+      { 'Concepto': 'Ventas Exentas por Destino', 'Valor': data.exemptDestinationSales },
+      { 'Concepto': 'Ventas al Exterior', 'Valor': data.exportSales },
+      { 'Concepto': 'Notas de Crédito < 30 Días', 'Valor': data.creditNotesLess30Days },
+      { 'Concepto': '', 'Valor': '' },
+      { 'Concepto': 'CÁLCULO DE PROPORCIONALIDAD', 'Valor': '' },
+      { 'Concepto': 'Coeficiente de Proporcionalidad', 'Valor': (data.coefficient * 100).toFixed(2) + '%' },
+      { 'Concepto': 'ITBIS Sujeto a Proporcionalidad', 'Valor': data.itbisSubject },
+      { 'Concepto': '', 'Valor': '' },
+      { 'Concepto': 'RESULTADOS', 'Valor': '' },
+      { 'Concepto': 'ITBIS Deducible', 'Valor': data.itbisDeductible },
+      { 'Concepto': 'Proporcionalidad No Admitida', 'Valor': data.nonAdmittedProportionality },
+    ];
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(excelData);
+
+    ws['!cols'] = [
+      { wch: 40 },
+      { wch: 20 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Proporcionalidad ITBIS');
+    XLSX.writeFile(wb, `proporcionalidad_itbis_${data.period}.xlsx`);
+  };
+
+  const exportToPDF = () => {
+    if (!data) return;
+
+    const doc = new jsPDF();
+
+    // Título
+    doc.setFontSize(18);
+    doc.text('Proporcionalidad del ITBIS', 14, 20);
+    
+    doc.setFontSize(12);
+    doc.text(`Período: ${getMonthLabel(data.period)}`, 14, 30);
+    
+    // Ventas del Período
+    doc.setFontSize(14);
+    doc.text('Ventas del Período', 14, 45);
+    
+    (doc as any).autoTable({
+      startY: 50,
+      head: [['Concepto', 'Valor']],
+      body: [
+        ['Total de las Ventas', formatCurrency(data.totalSales)],
+        ['Ventas Gravadas', formatCurrency(data.taxableSales)],
+        ['Ventas Exentas', formatCurrency(data.exemptSales)],
+        ['Ventas Exentas por Destino', formatCurrency(data.exemptDestinationSales)],
+        ['Ventas al Exterior', formatCurrency(data.exportSales)],
+        ['Notas de Crédito < 30 Días', formatCurrency(data.creditNotesLess30Days)],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [59, 130, 246] },
+    });
+
+    // Cálculo de Proporcionalidad
+    const finalY1 = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(14);
+    doc.text('Cálculo de Proporcionalidad', 14, finalY1);
+    
+    (doc as any).autoTable({
+      startY: finalY1 + 5,
+      head: [['Concepto', 'Valor']],
+      body: [
+        ['Coeficiente de Proporcionalidad', formatPercent(data.coefficient)],
+        ['ITBIS Sujeto a Proporcionalidad', formatCurrency(data.itbisSubject)],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [59, 130, 246] },
+    });
+
+    // Resultados
+    const finalY2 = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(14);
+    doc.text('Resultados', 14, finalY2);
+    
+    (doc as any).autoTable({
+      startY: finalY2 + 5,
+      head: [['Concepto', 'Valor']],
+      body: [
+        ['ITBIS Deducible', formatCurrency(data.itbisDeductible)],
+        ['Proporcionalidad No Admitida', formatCurrency(data.nonAdmittedProportionality)],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [34, 197, 94] },
+      bodyStyles: { fontSize: 12, fontStyle: 'bold' },
+    });
+
+    // Nota al pie
+    const finalY3 = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(9);
+    doc.setTextColor(100);
+    const noteText = 'Nota: Este cálculo es indicativo y debe validarse según las operaciones específicas de su empresa y las normativas de la DGII.';
+    const splitNote = doc.splitTextToSize(noteText, 180);
+    doc.text(splitNote, 14, finalY3);
+
+    doc.save(`proporcionalidad_itbis_${data.period}.pdf`);
+  };
+
+  return (
+    <DashboardLayout>
+      <div className="p-6">
+        {/* Header */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Proporcionalidad del ITBIS</h1>
+              <p className="text-gray-600">Cálculo mensual de la proporcionalidad del ITBIS deducible</p>
+            </div>
+            <button
+              onClick={() => navigate('/taxes')}
+              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              <i className="ri-arrow-left-line mr-2"></i>
+              Volver
+            </button>
+          </div>
+        </div>
+
+        {/* Filtros */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Seleccionar Período</h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Año
+              </label>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {years.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Mes
+              </label>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {months.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <button
+            onClick={handleGenerate}
+            disabled={loading || !selectedYear || !selectedMonth}
+            className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Calculando...' : 'Calcular Proporcionalidad'}
+          </button>
+        </div>
+
+        {/* Resultados */}
+        {showResults && data && (
+          <>
+            {/* Título del Período y Botones de Exportación */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-gray-900">
+                  Período: {getMonthLabel(data.period)}
+                </h2>
+                <div className="flex gap-3">
+                  <button
+                    onClick={exportToExcel}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+                  >
+                    <i className="ri-file-excel-2-line"></i>
+                    Exportar Excel
+                  </button>
+                  <button
+                    onClick={exportToPDF}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+                  >
+                    <i className="ri-file-pdf-line"></i>
+                    Exportar PDF
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Ventas */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Ventas del Período</h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600 mb-1">Total de las Ventas</div>
+                  <div className="text-xl font-bold text-blue-600">
+                    {formatCurrency(data.totalSales)}
+                  </div>
+                </div>
+
+                <div className="bg-green-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600 mb-1">Ventas Gravadas</div>
+                  <div className="text-xl font-bold text-green-600">
+                    {formatCurrency(data.taxableSales)}
+                  </div>
+                </div>
+
+                <div className="bg-yellow-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600 mb-1">Ventas Exentas</div>
+                  <div className="text-xl font-bold text-yellow-600">
+                    {formatCurrency(data.exemptSales)}
+                  </div>
+                </div>
+
+                <div className="bg-purple-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600 mb-1">Ventas Exentas por Destino</div>
+                  <div className="text-xl font-bold text-purple-600">
+                    {formatCurrency(data.exemptDestinationSales)}
+                  </div>
+                </div>
+
+                <div className="bg-indigo-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600 mb-1">Ventas al Exterior</div>
+                  <div className="text-xl font-bold text-indigo-600">
+                    {formatCurrency(data.exportSales)}
+                  </div>
+                </div>
+
+                <div className="bg-pink-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600 mb-1">Notas de Crédito {'<'} 30 Días</div>
+                  <div className="text-xl font-bold text-pink-600">
+                    {formatCurrency(data.creditNotesLess30Days)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Cálculo de Proporcionalidad */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Cálculo de Proporcionalidad</h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-teal-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600 mb-1">Coeficiente de Proporcionalidad</div>
+                  <div className="text-2xl font-bold text-teal-600">
+                    {formatPercent(data.coefficient)}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    (Ventas Gravadas / Total Ventas ajustadas)
+                  </div>
+                </div>
+
+                <div className="bg-orange-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600 mb-1">ITBIS Sujeto a Proporcionalidad</div>
+                  <div className="text-2xl font-bold text-orange-600">
+                    {formatCurrency(data.itbisSubject)}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    (ITBIS de Compras del período)
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Resultados Finales */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Resultados</h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-green-50 p-6 rounded-lg border-2 border-green-200">
+                  <div className="text-sm text-gray-600 mb-2">ITBIS Deducible</div>
+                  <div className="text-3xl font-bold text-green-600">
+                    {formatCurrency(data.itbisDeductible)}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    = ITBIS Sujeto × Coeficiente
+                  </div>
+                </div>
+
+                <div className="bg-red-50 p-6 rounded-lg border-2 border-red-200">
+                  <div className="text-sm text-gray-600 mb-2">Proporcionalidad No Admitida</div>
+                  <div className="text-3xl font-bold text-red-600">
+                    {formatCurrency(data.nonAdmittedProportionality)}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    = ITBIS Sujeto − ITBIS Deducible
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-700">
+                  <strong>Nota:</strong> Este cálculo es indicativo y debe validarse según las operaciones específicas de su empresa 
+                  y las normativas de la DGII. Consulte con su contador para ajustes según exenciones especiales o régimen tributario aplicable.
+                </p>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </DashboardLayout>
+  );
+}

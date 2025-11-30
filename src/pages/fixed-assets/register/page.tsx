@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { fixedAssetsService, assetTypesService } from '../../../services/database';
+import { fixedAssetsService, assetTypesService, suppliersService } from '../../../services/database';
 
 interface Asset {
   id: string;
@@ -32,14 +32,21 @@ export default function AssetRegisterPage() {
 
   const [assets, setAssets] = useState<Asset[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [assetTypes, setAssetTypes] = useState<any[]>([]);
+  const [codeValue, setCodeValue] = useState('');
+  const [formCategory, setFormCategory] = useState('');
+  const [usefulLifeValue, setUsefulLifeValue] = useState('');
+  const [depreciationMethodValue, setDepreciationMethodValue] = useState('');
 
   useEffect(() => {
     const loadData = async () => {
       if (!user) return;
       try {
-        const [assetsData, typesData] = await Promise.all([
+        const [assetsData, typesData, suppliersData] = await Promise.all([
           fixedAssetsService.getAll(user.id),
           assetTypesService.getAll(user.id),
+          suppliersService.getAll(user.id),
         ]);
 
         const mappedAssets: Asset[] = (assetsData || []).map((a: any) => ({
@@ -62,7 +69,10 @@ export default function AssetRegisterPage() {
 
         const activeTypes = (typesData || []).filter((t: any) => t.is_active !== false);
         const mappedCategories = activeTypes.map((t: any) => String(t.name || '')).filter(Boolean);
+        setAssetTypes(activeTypes || []);
         setCategories(mappedCategories);
+
+        setSuppliers(Array.isArray(suppliersData) ? suppliersData : []);
       } catch (error) {
         console.error('Error loading fixed assets data:', error);
       }
@@ -89,11 +99,19 @@ export default function AssetRegisterPage() {
 
   const handleAddAsset = () => {
     setEditingAsset(null);
+    setCodeValue('');
+    setFormCategory('');
+    setUsefulLifeValue('');
+    setDepreciationMethodValue('');
     setShowModal(true);
   };
 
   const handleEditAsset = (asset: Asset) => {
     setEditingAsset(asset);
+    setCodeValue(asset.code);
+    setFormCategory(asset.category || '');
+    setUsefulLifeValue(asset.usefulLife != null ? String(asset.usefulLife) : '');
+    setDepreciationMethodValue(asset.depreciationMethod || '');
     setShowModal(true);
   };
 
@@ -108,20 +126,42 @@ export default function AssetRegisterPage() {
     }
   };
 
+  const handleGenerateCode = () => {
+    // Generar un código simple basado en la cantidad existente, ej: ACT-001, ACT-002, etc.
+    const base = 'ACT';
+    const nextNumber = assets.length + 1;
+    const padded = String(nextNumber).padStart(3, '0');
+    setCodeValue(`${base}-${padded}`);
+  };
+
+  const handleCategoryChange = (value: string) => {
+    setFormCategory(value);
+    if (!value) return;
+    const type = assetTypes.find((t: any) => String(t.name || '') === value);
+    if (type) {
+      if (type.useful_life != null) {
+        setUsefulLifeValue(String(type.useful_life));
+      }
+      if (type.depreciation_method) {
+        setDepreciationMethodValue(String(type.depreciation_method));
+      }
+    }
+  };
+
   const handleSaveAsset = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!user) return;
 
     const formData = new FormData(e.currentTarget);
     const payload: any = {
-      code: String(formData.get('code') || '').trim(),
+      code: String(formData.get('code') || '').trim() || codeValue.trim(),
       name: String(formData.get('name') || '').trim(),
-      category: String(formData.get('category') || '').trim(),
+      category: String(formData.get('category') || formCategory || '').trim(),
       location: String(formData.get('location') || '').trim() || null,
       purchase_date: String(formData.get('acquisitionDate') || ''),
       purchase_cost: Number(formData.get('acquisitionCost') || 0) || 0,
-      useful_life: Number(formData.get('usefulLife') || 0) || 0,
-      depreciation_method: String(formData.get('depreciationMethod') || '').trim(),
+      useful_life: Number(usefulLifeValue || formData.get('usefulLife') || 0) || 0,
+      depreciation_method: String(depreciationMethodValue || formData.get('depreciationMethod') || '').trim(),
       current_value: Number(formData.get('currentValue') || 0) || 0,
       accumulated_depreciation: Number(formData.get('accumulatedDepreciation') || 0) || 0,
       status: String(formData.get('status') || 'Activo'),
@@ -596,14 +636,24 @@ export default function AssetRegisterPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Código del Activo *
                     </label>
-                    <input
-                      type="text"
-                      required
-                      name="code"
-                      defaultValue={editingAsset?.code || ''}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="ACT-001"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        required
+                        name="code"
+                        value={codeValue}
+                        onChange={(e) => setCodeValue(e.target.value)}
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="ACT-001"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleGenerateCode}
+                        className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg border border-gray-300 hover:bg-gray-200 transition-colors whitespace-nowrap text-sm"
+                      >
+                        Generar
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -620,12 +670,13 @@ export default function AssetRegisterPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Categoría *
+                      Tipo de Activo *
                     </label>
                     <select
                       required
                       name="category"
-                      defaultValue={editingAsset?.category || ''}
+                      value={formCategory}
+                      onChange={(e) => handleCategoryChange(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Seleccionar categoría</option>
@@ -680,7 +731,8 @@ export default function AssetRegisterPage() {
                       type="number"
                       required
                       name="usefulLife"
-                      defaultValue={editingAsset?.usefulLife || ''}
+                      value={usefulLifeValue}
+                      onChange={(e) => setUsefulLifeValue(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="10"
                     />
@@ -692,7 +744,8 @@ export default function AssetRegisterPage() {
                     <select
                       required
                       name="depreciationMethod"
-                      defaultValue={editingAsset?.depreciationMethod || ''}
+                      value={depreciationMethodValue}
+                      onChange={(e) => setDepreciationMethodValue(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Seleccionar método</option>
@@ -705,13 +758,18 @@ export default function AssetRegisterPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Proveedor
                     </label>
-                    <input
-                      type="text"
+                    <select
                       name="supplier"
                       defaultValue={editingAsset?.supplier || ''}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="Nombre del proveedor"
-                    />
+                    >
+                      <option value="">Seleccionar proveedor</option>
+                      {suppliers.map((s: any) => (
+                        <option key={s.id} value={s.name || s.company_name || ''}>
+                          {s.name || s.company_name || 'Proveedor'}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">

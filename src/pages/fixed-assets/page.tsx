@@ -160,6 +160,20 @@ export default function FixedAssetsPage() {
       color: 'purple'
     },
     {
+      title: 'Tipos de Depreciación',
+      description: 'Catálogo de métodos y parámetros de depreciación',
+      icon: 'ri-settings-3-line',
+      href: '/fixed-assets/depreciation-types',
+      color: 'indigo'
+    },
+    {
+      title: 'Reporte de Activos Fijos',
+      description: 'Listado consolidado de activos con valores y depreciación acumulada',
+      icon: 'ri-file-list-3-line',
+      href: '/fixed-assets/report',
+      color: 'cyan'
+    },
+    {
       title: 'Revalorización',
       description: 'Revalorización de activos fijos',
       icon: 'ri-trending-up-line',

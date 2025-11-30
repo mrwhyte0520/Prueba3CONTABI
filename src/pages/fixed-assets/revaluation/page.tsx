@@ -187,6 +187,8 @@ export default function RevaluationPage() {
           await fixedAssetsService.update(asset.id, {
             current_value: newValue,
           });
+          // Actualizar también el estado local de assets para futuras revalorizaciones
+          setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, currentValue: newValue } : a));
         }
 
         const mapped: Revaluation = {
@@ -216,6 +218,8 @@ export default function RevaluationPage() {
           await fixedAssetsService.update(asset.id, {
             current_value: newValue,
           });
+          // Actualizar también el estado local de assets para futuras revalorizaciones
+          setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, currentValue: newValue } : a));
         }
 
         const mapped: Revaluation = {
@@ -282,6 +286,9 @@ export default function RevaluationPage() {
         current_value: rev.newValue,
       });
 
+      // Sincronizar el estado local de assets para que la próxima revalorización use el nuevo valor
+      setAssets(prev => prev.map(a => a.id === rev.assetId ? { ...a, currentValue: rev.newValue } : a));
+
       setRevaluations(prev => prev.map(r => r.id === revaluationId ? { ...r, status: updated.status || 'Aprobado' } : r));
     } catch (error) {
       console.error('Error approving revaluation:', error);
@@ -318,6 +325,21 @@ export default function RevaluationPage() {
     } catch (error) {
       console.error('Error rejecting revaluation:', error);
       alert('Error al rechazar la revalorización');
+    }
+  };
+
+  const handleDeleteRevaluation = async (revaluationId: string) => {
+    if (!user) return;
+    const rev = revaluations.find(r => r.id === revaluationId);
+    if (!rev) return;
+    if (!confirm('¿Está seguro de que desea eliminar esta revalorización?')) return;
+
+    try {
+      await revaluationService.delete(revaluationId);
+      setRevaluations(prev => prev.filter(r => r.id !== revaluationId));
+    } catch (error) {
+      console.error('Error deleting revaluation:', error);
+      alert('Error al eliminar la revalorización');
     }
   };
 

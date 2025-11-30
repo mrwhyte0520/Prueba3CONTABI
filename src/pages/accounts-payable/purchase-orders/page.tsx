@@ -298,10 +298,26 @@ export default function PurchaseOrdersPage() {
         const unitCost = Number(it.unit_cost) || 0;
         if (quantity <= 0) continue;
 
-        // Si la línea está asociada a un producto de inventario, actualizamos su stock
+        // Si la línea está asociada a un producto de inventario, actualizamos su stock y costos
         if (it.inventory_item_id) {
+          const invItem = it.inventory_items as any | null;
+          const oldStock = Number(invItem?.current_stock) || 0;
+          const oldAvg =
+            invItem?.average_cost != null
+              ? Number(invItem.average_cost) || 0
+              : Number(invItem?.cost_price) || 0;
+
+          const newStock = oldStock + quantity;
+          const newAvg = newStock > 0
+            ? (oldAvg * oldStock + unitCost * quantity) / newStock
+            : oldAvg;
+
           await inventoryService.updateItem(String(it.inventory_item_id), {
-            current_stock: ((it.inventory_items as any)?.current_stock || 0) + quantity,
+            current_stock: newStock,
+            last_purchase_price: unitCost,
+            last_purchase_date: today,
+            average_cost: newAvg,
+            cost_price: newAvg,
           });
         }
 
@@ -315,6 +331,9 @@ export default function PurchaseOrdersPage() {
           movement_date: today,
           reference: `PO ${orderId}`,
           notes: it.description || null,
+          source_type: 'purchase_order',
+          source_id: orderId,
+          source_number: `PO-${orderId}`,
         });
       }
 

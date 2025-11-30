@@ -118,6 +118,13 @@ export default function TaxesPage() {
       icon: 'ri-file-list-3-line',
       href: '/taxes/formulario-607',
       color: 'purple'
+    },
+    {
+      title: 'Proporcionalidad ITBIS',
+      description: 'Cálculo mensual de proporcionalidad del ITBIS deducible',
+      icon: 'ri-calculator-line',
+      href: '/taxes/itbis-proportionality',
+      color: 'emerald'
     }
   ];
 

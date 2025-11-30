@@ -2,9 +2,11 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { customersService, invoicesService, receiptsService, inventoryService, customerTypesService } from '../../services/database';
+import { toast } from 'sonner';
+import { customersService, invoicesService, receiptsService, inventoryService, customerTypesService, cashClosingService } from '../../services/database';
 import { exportToExcelStyled } from '../../utils/exportImportUtils';
 
 interface Product {
@@ -59,6 +61,7 @@ interface Sale {
 
 export default function POSPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -86,6 +89,14 @@ export default function POSPage() {
   const amountInputRef = useRef<HTMLInputElement | null>(null);
   const isUuid = (val: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
   const [customerTypes, setCustomerTypes] = useState<any[]>([]);
+  const [cashDenominations, setCashDenominations] = useState(
+    [2000, 1000, 500, 200, 100, 50, 25, 10, 5, 1].map((value) => ({
+      value,
+      quantity: '',
+    }))
+  );
+  const [cashClosingNotes, setCashClosingNotes] = useState('');
+  const [savingCashClosing, setSavingCashClosing] = useState(false);
 
   // Helpers: input masks
   const formatDocument = (raw: string) => {
@@ -115,6 +126,15 @@ export default function POSPage() {
     // Permitir solo dígitos, coma y punto, y normalizar a punto decimal
     const cleaned = raw.replace(/[^0-9.,]/g, '').replace(',', '.');
     setAmountReceived(cleaned);
+  };
+
+  const handleCashDenominationChange = (index: number, raw: string) => {
+    const cleaned = raw.replace(/[^0-9]/g, '');
+    setCashDenominations((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], quantity: cleaned };
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -586,6 +606,9 @@ export default function POSPage() {
               reference: newSale.id,
               total_cost: (cartItem.quantity || 0) * (cartItem.cost ?? 0),
               notes: `Salida por venta POS ${newSale.id}`,
+              source_type: 'pos_sale',
+              source_id: null,
+              source_number: newSale.id,
             });
           }
         } catch (error) {
@@ -990,7 +1013,7 @@ export default function POSPage() {
                     className="max-h-full w-auto object-contain"
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
-                      target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xNTAgMTAwQzE2MS4wNDYgMTAwIDE3MCA5MC45NTQzIDE3MCA4MEM1NyA2OS4wNDU3IDE0Ny45NTQgNjAgMTM2IDYwQzEyNC45NTQgNjAgMTE2IDY5LjA0NTcgMTE2IDgwQzExNiA5MC45NTQzIDEyNC45NTQgMTAwIDEzNiAxMDBIMTUwWiIgZmlsbD0iIzlDQTNBRiIvPgo8cGF0aCBkPSJNMTg2IDEyMEgxMTRDMTA3LjM3MyAxMjAgMTAyIDEyNS4zNzMgMTAyIDEzMlYyMDBDMTAyIDIwNi2MjcgMTA3LjM3MyAyMTIgMTE0IDIxMkgxODZDMTkyLjYyNyAyMTIgMTk4IDIwNi4yMjJgMTk0IDIwMFYxMzJDMTk0IDEyNS4zNzMgMTkyLjYyNyAxMjAgMTg2IDEyMFoiIGZpbGw9IiM5Q0EzQUYiLz4KPC9zdmc+';
+                      target.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xNTAgMTAwQzE2MS4wNDYgMTAwIDE3MCA5MC45NTQzIDE3MCA4MEM1NyA2OS4wNDU3IDE0Ny45NTQgNjAgMTM2IDYwQzEyNC45NTQgNjAgMTE2IDY5LjA0NTcgMTE2IDgwQzExNiA5MC45NTQzIDEyNC45NTQgMTAwIDEzNiAxMDBIMTUwWiIgZmlsbD0iIzlDQTNBRiIvPgo8cGF0aCBkPSJNMTg2IDEyMEgxMTRDMTA3LjM3MyAxMjAgMTAyIDEyNS4zNzMgMTAyIDEzMlYyMDBDMTAyIDIwNi4yMjcgMTA3LjM3MyAyMTIgMTE0IDIxMkgxODZDMTkyLjYyNyAyMTIgMTk4IDIwNi4yMjJgMTk0IDIwMFYxMzJDMTk0IDEyNS4zNzMgMTkyLjYyNyAxMjAgMTg2IDEyMFoiIGZpbGw9IiM5Q0EzQUYiLz4KPC9zdmc+';
                     }}
                   />
                 )}
@@ -1224,6 +1247,426 @@ export default function POSPage() {
     </div>
   );
 
+  const renderInventoryView = () => (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Inventario (vista rápida)</h2>
+          <p className="text-gray-600 text-sm">
+            Consulta básica de productos y existencias disponibles para el Punto de Ventas.
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        <div className="flex flex-col md:flex-row gap-4 mb-4">
+          <div className="flex-1 relative">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <i className="ri-search-line text-gray-400"></i>
+            </div>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              placeholder="Buscar por nombre, SKU o código de barras..."
+            />
+          </div>
+          <div className="w-full md:w-60">
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm pr-8"
+            >
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category === 'all' ? 'Todas las categorías' : category}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  SKU
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Producto
+                </th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Categoría
+                </th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Stock
+                </th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Precio Venta
+                </th>
+                <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Estado
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {filteredProducts.map((product) => (
+                <tr key={product.id}>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-700">{product.sku}</td>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900 truncate max-w-xs">
+                    {product.name}
+                  </td>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
+                    {product.category || 'N/A'}
+                  </td>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
+                    {product.stock}
+                  </td>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
+                    RD${product.price.toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2 whitespace-nowrap text-sm text-center">
+                    <span
+                      className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        product.status === 'active'
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}
+                    >
+                      {product.status === 'active' ? 'Activo' : 'Inactivo'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {filteredProducts.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    className="px-4 py-6 text-center text-sm text-gray-500"
+                  >
+                    No se encontraron productos para los filtros seleccionados.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderCashCount = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const todaySales = sales.filter((sale) => sale.date === today && sale.status === 'completed');
+
+    const totalCash = todaySales
+      .filter((sale) => sale.paymentMethod === 'cash')
+      .reduce((sum, sale) => sum + sale.total, 0);
+
+    const totalCard = todaySales
+      .filter((sale) => sale.paymentMethod === 'card')
+      .reduce((sum, sale) => sum + sale.total, 0);
+
+    const totalTransfer = todaySales
+      .filter((sale) => sale.paymentMethod === 'transfer')
+      .reduce((sum, sale) => sum + sale.total, 0);
+
+    const totalSalesAmount = todaySales.reduce((sum, sale) => sum + sale.total, 0);
+
+    const countedCash = cashDenominations.reduce((sum, denom) => {
+      const qty = parseInt(denom.quantity || '0', 10) || 0;
+      return sum + denom.value * qty;
+    }, 0);
+
+    const cashDifference = countedCash - totalCash;
+
+    const handleSaveCashClosing = async () => {
+      if (!user?.id) {
+        toast.error('Debes iniciar sesión para guardar el arqueo de caja');
+        return;
+      }
+      if (todaySales.length === 0) {
+        toast.error('No hay ventas completadas para el día de hoy');
+        return;
+      }
+
+      try {
+        setSavingCashClosing(true);
+        await cashClosingService.create(user.id, {
+          closing_date: today,
+          cashier_name: (user as any)?.user_metadata?.full_name || user.email || 'Punto de Venta',
+          shift_name: 'Turno POS',
+          opening_balance: 0,
+          total_sales: totalSalesAmount,
+          cash_sales: totalCash,
+          card_sales: totalCard,
+          transfer_sales: totalTransfer,
+          other_sales: 0,
+          total_expenses: 0,
+          expected_cash_balance: totalCash,
+          actual_cash_balance: countedCash,
+          difference: cashDifference,
+          status: cashDifference === 0 ? 'closed' : 'pending_review',
+          notes: cashClosingNotes || null,
+        });
+
+        toast.success('Arqueo de caja guardado correctamente');
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[POS] Error saving cash closing from POS', error);
+        toast.error('Error al guardar el arqueo de caja');
+      } finally {
+        setSavingCashClosing(false);
+      }
+    };
+
+    const handleExportCashClosing = async () => {
+      try {
+        const rows = todaySales.map((sale) => ({
+          id: sale.id,
+          date: sale.date,
+          time: sale.time,
+          customer: sale.customer?.name || 'Cliente General',
+          total: sale.total || 0,
+          paymentMethod: sale.paymentMethod,
+          status: sale.status,
+        }));
+
+        await exportToExcelStyled(
+          rows,
+          [
+            { key: 'id', title: 'ID Venta', width: 20 },
+            { key: 'date', title: 'Fecha', width: 12 },
+            { key: 'time', title: 'Hora', width: 10 },
+            { key: 'customer', title: 'Cliente', width: 28 },
+            { key: 'total', title: 'Total', width: 14, numFmt: '#,##0.00' },
+            { key: 'paymentMethod', title: 'Método', width: 16 },
+            { key: 'status', title: 'Estado', width: 12 },
+          ],
+          `arqueo_caja_pos_${today}`,
+          'ArqueoCajaPOS'
+        );
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[POS] Error exporting cash count to Excel', error);
+        alert('Error al exportar el arqueo a Excel');
+      }
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Registro de Sobrantes y Faltantes</h2>
+            <p className="text-gray-600 text-sm">
+              Basado en el arqueo de caja del Punto de Venta: compara efectivo esperado vs contado y registra diferencias.
+            </p>
+          </div>
+          <div className="flex space-x-3">
+            <button
+              onClick={handleExportCashClosing}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+              disabled={todaySales.length === 0}
+            >
+              <i className="ri-file-excel-2-line mr-2" />
+              Exportar Excel
+            </button>
+            <button
+              onClick={handleSaveCashClosing}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap disabled:opacity-60 disabled:cursor-not-allowed"
+              disabled={savingCashClosing || !user?.id || todaySales.length === 0}
+            >
+              {savingCashClosing ? 'Guardando...' : 'Guardar Arqueo'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Resumen de ventas del día</h3>
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Ventas completadas:</span>
+                <span className="font-medium">{todaySales.length}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Total en ventas:</span>
+                <span className="font-medium">RD${totalSalesAmount.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Efectivo esperado en caja:</span>
+                <span className="font-medium">RD${totalCash.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Tarjetas:</span>
+                <span className="font-medium">RD${totalCard.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Transferencias:</span>
+                <span className="font-medium">RD${totalTransfer.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Conteo de efectivo en caja</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-medium text-gray-500 uppercase tracking-wider">
+                      Denominación
+                    </th>
+                    <th className="px-4 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">
+                      Cantidad
+                    </th>
+                    <th className="px-4 py-2 text-right font-medium text-gray-500 uppercase tracking-wider">
+                      Total
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {cashDenominations.map((row, index) => {
+                    const qty = parseInt(row.quantity || '0', 10) || 0;
+                    const rowTotal = row.value * qty;
+                    return (
+                      <tr key={row.value}>
+                        <td className="px-4 py-2 whitespace-nowrap text-gray-700">
+                          RD${row.value.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap text-right">
+                          <input
+                            type="text"
+                            value={row.quantity}
+                            onChange={(e) => handleCashDenominationChange(index, e.target.value)}
+                            className="w-20 px-2 py-1 border border-gray-300 rounded-lg text-right focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="0"
+                          />
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900">
+                          RD${rowTotal.toLocaleString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="bg-gray-50">
+                  <tr>
+                    <td className="px-4 py-2 text-right font-semibold text-gray-700" colSpan={2}>
+                      Total contado en efectivo
+                    </td>
+                    <td className="px-4 py-2 text-right font-semibold text-gray-900">
+                      RD${countedCash.toLocaleString()}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2 text-right font-semibold text-gray-700" colSpan={2}>
+                      Diferencia vs efectivo esperado
+                    </td>
+                    <td
+                      className={`px-4 py-2 text-right font-semibold ${
+                        cashDifference === 0
+                          ? 'text-emerald-600'
+                          : cashDifference > 0
+                          ? 'text-blue-600'
+                          : 'text-red-600'
+                      }`}
+                    >
+                      RD${cashDifference.toLocaleString()}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Observaciones del arqueo</h3>
+          <textarea
+            rows={3}
+            value={cashClosingNotes}
+            onChange={(e) => setCashClosingNotes(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+            placeholder="Notas u observaciones sobre el arqueo de caja..."
+          ></textarea>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="p-6 border-b border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900">Ventas del día usadas en el arqueo</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID Venta</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hora</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cliente</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Método</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {todaySales.map((sale) => (
+                  <tr key={sale.id}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{sale.id}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{sale.time}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {sale.customer?.name || 'Cliente General'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
+                      RD${sale.total.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
+                      {sale.paymentMethod === 'cash'
+                        ? 'Efectivo'
+                        : sale.paymentMethod === 'card'
+                        ? 'Tarjeta'
+                        : sale.paymentMethod === 'transfer'
+                        ? 'Transferencia'
+                        : sale.paymentMethod}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <span
+                        className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                          sale.status === 'completed'
+                            ? 'bg-green-100 text-green-800'
+                            : sale.status === 'cancelled'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}
+                      >
+                        {sale.status === 'completed'
+                          ? 'Completada'
+                          : sale.status === 'cancelled'
+                          ? 'Cancelada'
+                          : 'Reembolsada'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {todaySales.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="px-6 py-6 text-center text-sm text-gray-500"
+                    >
+                      No hay ventas completadas para el día de hoy.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderSales = () => (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -1416,16 +1859,28 @@ export default function POSPage() {
 
         {/* Navigation Tabs */}
         <div className="border-b border-gray-200 mb-6">
-          <nav className="-mb-px flex space-x-8">
+          <nav className="-mb-px flex flex-wrap gap-x-4 gap-y-2">
             {[
               { id: 'dashboard', name: 'Dashboard', icon: 'ri-dashboard-line' },
               { id: 'pos', name: 'Punto de Venta', icon: 'ri-shopping-cart-line' },
+              { id: 'inventory', name: 'Inventario', icon: 'ri-archive-line' },
+              { id: 'cash-diff', name: 'Sobrantes / Faltantes', icon: 'ri-scales-3-line' },
+              { id: 'cash-closing', name: 'Cierre de Caja', icon: 'ri-safe-line' },
               { id: 'sales', name: 'Ventas', icon: 'ri-file-list-line' },
+              { id: 'invoicing', name: 'Facturación', icon: 'ri-file-text-line' },
               { id: 'reports', name: 'Reportes', icon: 'ri-bar-chart-line' }
             ].map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  if (tab.id === 'invoicing') {
+                    navigate('/billing/invoicing');
+                  } else if (tab.id === 'cash-closing') {
+                    navigate('/billing/cash-closing');
+                  } else {
+                    setActiveTab(tab.id);
+                  }
+                }}
                 className={`flex items-center py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600'
@@ -1442,6 +1897,8 @@ export default function POSPage() {
         {/* Tab Content */}
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'pos' && renderPOS()}
+        {activeTab === 'inventory' && renderInventoryView()}
+        {activeTab === 'cash-diff' && renderCashCount()}
         {activeTab === 'sales' && renderSales()}
         {activeTab === 'reports' && renderReports()}
 

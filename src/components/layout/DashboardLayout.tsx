@@ -246,6 +246,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Registro de Activos', href: '/fixed-assets/register' },
         { name: 'Tipos de Activos', href: '/fixed-assets/types' },
         { name: 'Depreciación', href: '/fixed-assets/depreciation' },
+        { name: 'Tipos de Depreciación', href: '/fixed-assets/depreciation-types' },
+        { name: 'Reporte de Activos Fijos', href: '/fixed-assets/report' },
         { name: 'Revalorización', href: '/fixed-assets/revaluation' },
         { name: 'Retiro de Activos', href: '/fixed-assets/disposal' }
       ]
@@ -285,7 +287,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Reporte 607', href: '/taxes/report-607' },
         { name: 'Reporte 608', href: '/taxes/report-608' },
         { name: 'Reporte IT-1', href: '/taxes/report-it1' },
-        { name: 'Reporte IR-17', href: '/taxes/report-ir17' }
+        { name: 'Reporte IR-17', href: '/taxes/report-ir17' },
+        { name: 'Proporcionalidad ITBIS', href: '/taxes/itbis-proportionality' }
       ]
     },
     // 11. Planes

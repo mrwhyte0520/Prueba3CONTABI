@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { departmentsService, positionsService, employeesService, payrollService } from '../../services/database';
+import { departmentsService, positionsService, employeesService, payrollService, taxService } from '../../services/database';
 
 interface Employee {
   id: string;
@@ -84,9 +84,11 @@ export default function PayrollPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<string>('');
+  const [tssConfig, setTssConfig] = useState<any | null>(null);
 
   useEffect(() => {
     loadData();
+    loadTssConfig();
   }, [user]);
 
   const loadData = async () => {
@@ -140,6 +142,20 @@ export default function PayrollPage() {
       console.error('Error loading payroll catalogs:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadTssConfig = async () => {
+    try {
+      const data = await taxService.getTaxConfiguration();
+      if (data && data.tss_rates) {
+        setTssConfig(data.tss_rates);
+      } else {
+        setTssConfig(null);
+      }
+    } catch (error) {
+      console.error('Error loading TSS configuration for payroll:', error);
+      setTssConfig(null);
     }
   };
 
@@ -457,7 +473,26 @@ export default function PayrollPage() {
       const activeEmployees = employees.filter(emp => emp.status === 'active');
       const entries = activeEmployees.map(emp => {
         const gross = Number(emp.salary) || 0;
-        const deductions = gross * 0.1667;
+
+        let baseSalary = gross;
+        let employeeRate = 0;
+
+        if (tssConfig) {
+          const sfsEmp = Number(tssConfig.sfs_employee) || 0;
+          const afpEmp = Number(tssConfig.afp_employee) || 0;
+          const configuredRate = sfsEmp + afpEmp;
+          const fallbackRate = 16.67;
+          employeeRate = configuredRate > 0 ? configuredRate : fallbackRate;
+
+          const maxSalary = Number(tssConfig.max_salary_tss) || 0;
+          if (maxSalary > 0) {
+            baseSalary = Math.min(gross, maxSalary);
+          }
+        } else {
+          employeeRate = 16.67;
+        }
+
+        const deductions = baseSalary * (employeeRate / 100);
         const net = gross - deductions;
         return {
           user_id: user.id,

@@ -1,7 +1,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import { inventoryService, chartAccountsService } from '../../services/database';
+import { inventoryService, chartAccountsService, settingsService } from '../../services/database';
 import { useAuth } from '../../hooks/useAuth';
 
 interface Product {
@@ -24,6 +24,7 @@ interface Product {
   expenseAccountId?: string | null;
   inventoryAccountId?: string | null;
   cogsAccountId?: string | null;
+  warehouseId?: string | null;
 }
 
 interface Category {
@@ -52,6 +53,8 @@ export default function ProductsPage() {
   const [accounts, setAccounts] = useState<{ id: string; code: string; name: string }[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
 
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+
   const [formData, setFormData] = useState({
     name: '',
     sku: '',
@@ -68,7 +71,8 @@ export default function ProductsPage() {
     status: 'active' as 'active' | 'inactive',
     expenseAccountId: '' as string | '',
     inventoryAccountId: '' as string | '',
-    cogsAccountId: '' as string | ''
+    cogsAccountId: '' as string | '',
+    warehouseId: '' as string | ''
   });
 
   const [categoryFormData, setCategoryFormData] = useState({
@@ -84,6 +88,7 @@ export default function ProductsPage() {
     loadProducts();
     loadCategories();
     loadAccounts();
+    loadWarehouses();
   }, [user]);
 
   const loadProducts = async () => {
@@ -112,6 +117,7 @@ export default function ProductsPage() {
             expenseAccountId: item.expense_account_id || null,
             inventoryAccountId: item.inventory_account_id || null,
             cogsAccountId: item.cogs_account_id || null,
+            warehouseId: item.warehouse_id || null,
           }));
           setProducts(transformedProducts);
         } else {
@@ -142,6 +148,17 @@ export default function ProductsPage() {
       console.error('Error loading chart of accounts for products:', error);
     } finally {
       setLoadingAccounts(false);
+    }
+  };
+
+  const loadWarehouses = async () => {
+    try {
+      const data = await settingsService.getWarehouses();
+      setWarehouses(data || []);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading warehouses for products:', error);
+      setWarehouses([]);
     }
   };
 
@@ -222,6 +239,7 @@ export default function ProductsPage() {
         expenseAccountId: formData.expenseAccountId || null,
         inventoryAccountId: formData.inventoryAccountId || null,
         cogsAccountId: formData.cogsAccountId || null,
+        warehouseId: formData.warehouseId || null,
       };
 
       if (user) {
@@ -242,6 +260,7 @@ export default function ProductsPage() {
           expense_account_id: formData.expenseAccountId || null,
           inventory_account_id: formData.inventoryAccountId || null,
           cogs_account_id: formData.cogsAccountId || null,
+          warehouse_id: formData.warehouseId || null,
         };
 
         if (editingProduct && isUuid(editingProduct.id)) {
@@ -283,7 +302,8 @@ export default function ProductsPage() {
       status: product.status,
       expenseAccountId: product.expenseAccountId || '',
       inventoryAccountId: product.inventoryAccountId || '',
-      cogsAccountId: product.cogsAccountId || ''
+      cogsAccountId: product.cogsAccountId || '',
+      warehouseId: product.warehouseId || ''
     });
     setShowModal(true);
   };
@@ -371,7 +391,8 @@ export default function ProductsPage() {
       status: 'active',
       expenseAccountId: '',
       inventoryAccountId: '',
-      cogsAccountId: ''
+      cogsAccountId: '',
+      warehouseId: ''
     });
     setEditingProduct(null);
   };
@@ -780,6 +801,27 @@ export default function ProductsPage() {
                       {accounts.map((acc) => (
                         <option key={acc.id} value={acc.id}>
                           {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Almacén
+                    </label>
+                    <select
+                      value={formData.warehouseId || (warehouses[0]?.id ?? '')}
+                      onChange={(e) =>
+                        setFormData(prev => ({ ...prev, warehouseId: e.target.value || '' }))
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {warehouses.length === 0 && (
+                        <option value="">Sin almacenes configurados</option>
+                      )}
+                      {warehouses.map((wh) => (
+                        <option key={wh.id} value={wh.id}>
+                          {wh.name}
                         </option>
                       ))}
                     </select>

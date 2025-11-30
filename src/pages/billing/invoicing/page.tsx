@@ -64,6 +64,8 @@ export default function InvoicingPage() {
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [stores, setStores] = useState<Array<{ id: string; name: string; is_active?: boolean }>>([]);
 
+  const [taxConfig, setTaxConfig] = useState<{ itbis_rate: number } | null>(null);
+
   const [newInvoiceCustomerId, setNewInvoiceCustomerId] = useState('');
   const [newInvoiceCustomerSearch, setNewInvoiceCustomerSearch] = useState('');
   const [newInvoiceDate, setNewInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
@@ -93,6 +95,8 @@ export default function InvoicingPage() {
     { id: '5', name: 'Mouse Inalámbrico', price: 5000, stock: 120 }
   ];
 
+  const currentItbisRate = taxConfig?.itbis_rate ?? 18;
+
   const recalcNewInvoiceTotals = (
     items: NewItem[],
     discountType = newInvoiceDiscountType,
@@ -110,11 +114,26 @@ export default function InvoicingPage() {
       discountAmount = rawSubtotal;
     }
     const subtotal = rawSubtotal - discountAmount;
-    const tax = noTaxFlag ? 0 : subtotal * 0.18;
+    const tax = noTaxFlag ? 0 : subtotal * (currentItbisRate / 100);
     const total = subtotal + tax;
     setNewInvoiceSubtotal(subtotal);
     setNewInvoiceTax(tax);
     setNewInvoiceTotal(total);
+  };
+
+  const loadTaxConfig = async () => {
+    try {
+      const data = await taxService.getTaxConfiguration();
+      if (data && typeof data.itbis_rate === 'number') {
+        setTaxConfig({ itbis_rate: data.itbis_rate });
+      } else {
+        setTaxConfig({ itbis_rate: 18 });
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error cargando configuración de impuestos para facturación:', error);
+      setTaxConfig({ itbis_rate: 18 });
+    }
   };
 
   const loadInvoices = async () => {
@@ -223,6 +242,7 @@ export default function InvoicingPage() {
   useEffect(() => {
     if (user?.id) {
       loadInvoices();
+      loadTaxConfig();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -423,6 +443,7 @@ export default function InvoicingPage() {
   const handlePrintInvoice = (invoiceId: string) => {
     const invoice = invoices.find((inv) => inv.id === invoiceId);
     if (!invoice) return;
+    const itbisLabel = (taxConfig?.itbis_rate ?? 18).toFixed(2);
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       alert('No se pudo abrir la ventana de impresión.');
@@ -479,7 +500,7 @@ export default function InvoicingPage() {
                 <td>RD$ ${invoice.amount.toLocaleString()}</td>
               </tr>
               <tr>
-                <td colspan="3" class="total">ITBIS (18%):</td>
+                <td colspan="3" class="total">ITBIS (${itbisLabel}%):</td>
                 <td>RD$ ${invoice.tax.toLocaleString()}</td>
               </tr>
               <tr>
@@ -1285,7 +1306,7 @@ export default function InvoicingPage() {
                               <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900">RD$ {invoice.amount.toLocaleString()}</td>
                             </tr>
                             <tr>
-                              <td colSpan={3} className="px-4 py-2 text-right text-xs text-gray-500">ITBIS (18%)</td>
+                              <td colSpan={3} className="px-4 py-2 text-right text-xs text-gray-500">ITBIS ({(taxConfig?.itbis_rate ?? 18).toFixed(2)}%)</td>
                               <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900">RD$ {invoice.tax.toLocaleString()}</td>
                             </tr>
                             <tr>
@@ -1627,7 +1648,7 @@ export default function InvoicingPage() {
                         </div>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-sm text-gray-600">ITBIS (18%):</span>
+                        <span className="text-sm text-gray-600">ITBIS ({currentItbisRate.toFixed(2)}%):</span>
                         <span className="text-sm font-medium">RD$ {newInvoiceTax.toLocaleString('es-DO')}</span>
                       </div>
                       <div className="border-t border-gray-200 pt-2">

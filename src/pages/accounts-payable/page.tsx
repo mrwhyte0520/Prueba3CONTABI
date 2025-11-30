@@ -1,8 +1,31 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import { apInvoicesService, suppliersService, supplierPaymentsService } from '../../services/database';
+import { useAuth } from '../../hooks/useAuth';
 
 export default function AccountsPayablePage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  const [summary, setSummary] = useState({
+    totalBalance: 0,
+    dueThisWeek: 0,
+    overdue: 0,
+    activeSuppliers: 0,
+  });
+
+  const [topSuppliers, setTopSuppliers] = useState<
+    Array<{ name: string; rnc: string; balance: string; dueDate: string; status: string }>
+  >([]);
+
+  const [recentPurchases, setRecentPurchases] = useState<
+    Array<{ type: string; supplier: string; amount: string; reference: string; date: string }>
+  >([]);
+
+  const [pendingApprovals, setPendingApprovals] = useState<
+    Array<{ type: string; supplier: string; amount: string; requestedBy: string; date: string }>
+  >([]);
 
   const modules = [
     {
@@ -52,39 +75,205 @@ export default function AccountsPayablePage() {
   const apStats = [
     {
       title: 'Balance total CxP',
-      value: 'RD$ 0',
+      value: `RD$ ${summary.totalBalance.toLocaleString()}`,
       change: '0%',
       icon: 'ri-file-list-3-line',
-      color: 'red'
+      color: 'red',
     },
     {
       title: 'Vence esta semana',
-      value: 'RD$ 0',
+      value: `RD$ ${summary.dueThisWeek.toLocaleString()}`,
       change: '0%',
       icon: 'ri-calendar-line',
-      color: 'orange'
+      color: 'orange',
     },
     {
       title: 'Pagos vencidos',
-      value: 'RD$ 0',
+      value: `RD$ ${summary.overdue.toLocaleString()}`,
       change: '0%',
       icon: 'ri-alert-line',
-      color: 'red'
+      color: 'red',
     },
     {
       title: 'Proveedores activos',
-      value: '0',
+      value: summary.activeSuppliers.toString(),
       change: '0',
       icon: 'ri-truck-line',
-      color: 'blue'
-    }
+      color: 'blue',
+    },
   ];
 
-  const topSuppliers: Array<{ name: string; rnc: string; balance: string; dueDate: string; status: string; }> = [];
+  useEffect(() => {
+    const loadDashboard = async () => {
+      if (!user?.id) {
+        setSummary({ totalBalance: 0, dueThisWeek: 0, overdue: 0, activeSuppliers: 0 });
+        setTopSuppliers([]);
+        setRecentPurchases([]);
+        setPendingApprovals([]);
+        return;
+      }
 
-  const recentPurchases: Array<{ type: string; supplier: string; amount: string; reference: string; date: string; }> = [];
+      try {
+        const [invoices, suppliers, payments] = await Promise.all([
+          apInvoicesService.getAll(user.id),
+          suppliersService.getAll(user.id),
+          supplierPaymentsService.getAll(user.id),
+        ]);
 
-  const pendingApprovals: Array<{ type: string; supplier: string; amount: string; requestedBy: string; date: string; }> = [];
+        const today = new Date();
+        const weekAhead = new Date();
+        weekAhead.setDate(today.getDate() + 7);
+
+        let totalBalance = 0;
+        let dueThisWeek = 0;
+        let overdue = 0;
+
+        const supplierAgg = new Map<
+          string,
+          { name: string; rnc: string; balance: number; nextDueDate?: string | null }
+        >();
+
+        (invoices || []).forEach((inv: any) => {
+          const balance = Number(inv.balance_amount ?? inv.total_to_pay ?? inv.total_gross ?? 0);
+          if (!balance || balance <= 0) return;
+
+          totalBalance += balance;
+
+          const dueDateStr = inv.due_date as string | null;
+          if (dueDateStr) {
+            const due = new Date(dueDateStr);
+            if (!Number.isNaN(due.getTime())) {
+              if (due < today) {
+                overdue += balance;
+              } else if (due <= weekAhead) {
+                dueThisWeek += balance;
+              }
+            }
+          }
+
+          const supplierId = String(inv.supplier_id ?? '');
+          if (!supplierId) return;
+
+          const current = supplierAgg.get(supplierId) || {
+            name: (inv.suppliers as any)?.name || 'Suplidor',
+            rnc: inv.tax_id || '',
+            balance: 0,
+            nextDueDate: null as string | null,
+          };
+
+          current.balance += balance;
+
+          if (dueDateStr) {
+            if (!current.nextDueDate) {
+              current.nextDueDate = dueDateStr;
+            } else {
+              const prev = new Date(current.nextDueDate);
+              const next = new Date(dueDateStr);
+              if (!Number.isNaN(next.getTime()) && (Number.isNaN(prev.getTime()) || next < prev)) {
+                current.nextDueDate = dueDateStr;
+              }
+            }
+          }
+
+          supplierAgg.set(supplierId, current);
+        });
+
+        const suppliersList = (suppliers || []) as any[];
+        const activeSuppliers = suppliersList.filter((s) => s.is_active !== false).length;
+
+        const topSuppliersArr = Array.from(supplierAgg.values())
+          .sort((a, b) => b.balance - a.balance)
+          .slice(0, 5)
+          .map((s) => {
+            let status: string = 'Current';
+            if (s.nextDueDate) {
+              const due = new Date(s.nextDueDate);
+              if (!Number.isNaN(due.getTime())) {
+                if (due < today) {
+                  status = 'Overdue';
+                } else if (due <= weekAhead) {
+                  status = 'Due Soon';
+                }
+              }
+            }
+
+            return {
+              name: s.name,
+              rnc: s.rnc,
+              balance: `RD$ ${s.balance.toLocaleString()}`,
+              dueDate: s.nextDueDate || '-',
+              status,
+            };
+          });
+
+        const recentPurchasesArr: Array<{
+          type: string;
+          supplier: string;
+          amount: string;
+          reference: string;
+          date: string;
+        }> = (invoices || [])
+          .slice()
+          .sort((a: any, b: any) => {
+            const da = new Date(a.invoice_date || a.created_at || 0).getTime();
+            const db = new Date(b.invoice_date || b.created_at || 0).getTime();
+            return db - da;
+          })
+          .slice(0, 5)
+          .map((inv: any) => ({
+            type: 'Factura',
+            supplier: (inv.suppliers as any)?.name || 'Suplidor',
+            amount: `RD$ ${Number(
+              inv.total_to_pay ?? inv.total_gross ?? 0,
+            ).toLocaleString()}`,
+            reference: String(inv.invoice_number || ''),
+            date: String(inv.invoice_date || '').slice(0, 10),
+          }));
+
+        const pendingApprovalsArr: Array<{
+          type: string;
+          supplier: string;
+          amount: string;
+          requestedBy: string;
+          date: string;
+        }> = (payments || [])
+          .filter((p: any) => (p.status || 'Pendiente') === 'Pendiente')
+          .slice()
+          .sort((a: any, b: any) => {
+            const da = new Date(a.payment_date || a.created_at || 0).getTime();
+            const db = new Date(b.payment_date || b.created_at || 0).getTime();
+            return db - da;
+          })
+          .slice(0, 6)
+          .map((p: any) => ({
+            type: 'Pago a proveedor',
+            supplier: (p.suppliers as any)?.name || 'Proveedor',
+            amount: `RD$ ${Number(p.amount || 0).toLocaleString()}`,
+            requestedBy: '',
+            date: String(p.payment_date || '').slice(0, 10),
+          }));
+
+        setSummary({
+          totalBalance,
+          dueThisWeek,
+          overdue,
+          activeSuppliers,
+        });
+        setTopSuppliers(topSuppliersArr);
+        setRecentPurchases(recentPurchasesArr);
+        setPendingApprovals(pendingApprovalsArr);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading Accounts Payable dashboard data', error);
+        setSummary({ totalBalance: 0, dueThisWeek: 0, overdue: 0, activeSuppliers: 0 });
+        setTopSuppliers([]);
+        setRecentPurchases([]);
+        setPendingApprovals([]);
+      }
+    };
+
+    loadDashboard();
+  }, [user?.id]);
 
   // Module Access Functions
   const handleAccessModule = (moduleHref: string) => {

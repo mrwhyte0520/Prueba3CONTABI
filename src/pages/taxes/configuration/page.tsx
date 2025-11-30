@@ -11,6 +11,25 @@ interface TaxConfiguration {
   withholding_rates: {
     [key: string]: number;
   };
+  tss_rates: {
+    sfs_employee: number;      // Seguro Familiar de Salud - Empleado
+    sfs_employer: number;      // Seguro Familiar de Salud - Empleador
+    afp_employee: number;      // AFP - Empleado
+    afp_employer: number;      // AFP - Empleador
+    srl_employer: number;      // Riesgos Laborales (SRL) - Empleador
+    infotep_employer: number;  // INFOTEP - Empleador
+    max_salary_tss: number;    // Tope salarial cotizable TSS
+  };
+  other_tax_rates: {
+    isc: number;
+    ipi: number;
+    ipi_exempt_threshold: number;
+    itbi: number;
+    inheritance: number;
+    donation: number;
+    vehicle_registration: number;
+    vehicle_circulation: number;
+  };
   fiscal_year_start: number;
   auto_generate_ncf: boolean;
   ncf_validation: boolean;
@@ -30,6 +49,25 @@ export default function TaxConfigurationPage() {
       'itbis': 30,
       'isr': 27
     },
+    tss_rates: {
+      sfs_employee: 0,
+      sfs_employer: 0,
+      afp_employee: 0,
+      afp_employer: 0,
+      srl_employer: 0,
+      infotep_employer: 0,
+      max_salary_tss: 0,
+    },
+    other_tax_rates: {
+      isc: 0,
+      ipi: 0,
+      ipi_exempt_threshold: 0,
+      itbi: 0,
+      inheritance: 0,
+      donation: 0,
+      vehicle_registration: 0,
+      vehicle_circulation: 0,
+    },
     fiscal_year_start: 1,
     auto_generate_ncf: true,
     ncf_validation: true,
@@ -46,10 +84,31 @@ export default function TaxConfigurationPage() {
     try {
       const data = await taxService.getTaxConfiguration();
       if (data) {
+        const tss = data.tss_rates || {};
+        const other = data.other_tax_rates || {};
         setConfig({
           itbis_rate: data.itbis_rate || 18.00,
           isr_rates: data.isr_rates || { 'salary': 15, 'professional_services': 10, 'rent': 10 },
           withholding_rates: data.withholding_rates || { 'itbis': 30, 'isr': 27 },
+          tss_rates: {
+            sfs_employee: tss.sfs_employee ?? 0,
+            sfs_employer: tss.sfs_employer ?? 0,
+            afp_employee: tss.afp_employee ?? 0,
+            afp_employer: tss.afp_employer ?? 0,
+            srl_employer: tss.srl_employer ?? 0,
+            infotep_employer: tss.infotep_employer ?? 0,
+            max_salary_tss: tss.max_salary_tss ?? 0,
+          },
+          other_tax_rates: {
+            isc: other.isc ?? 0,
+            ipi: other.ipi ?? 0,
+            ipi_exempt_threshold: other.ipi_exempt_threshold ?? 0,
+            itbi: other.itbi ?? 0,
+            inheritance: other.inheritance ?? 0,
+            donation: other.donation ?? 0,
+            vehicle_registration: other.vehicle_registration ?? 0,
+            vehicle_circulation: other.vehicle_circulation ?? 0,
+          },
           fiscal_year_start: data.fiscal_year_start || 1,
           auto_generate_ncf: data.auto_generate_ncf ?? true,
           ncf_validation: data.ncf_validation ?? true,
@@ -83,6 +142,26 @@ export default function TaxConfigurationPage() {
         ...prev.isr_rates,
         [type]: value
       }
+    }));
+  };
+
+  const updateTssRate = (key: keyof TaxConfiguration['tss_rates'], value: number) => {
+    setConfig(prev => ({
+      ...prev,
+      tss_rates: {
+        ...prev.tss_rates,
+        [key]: value,
+      },
+    }));
+  };
+
+  const updateOtherTaxRate = (key: keyof TaxConfiguration['other_tax_rates'], value: number) => {
+    setConfig(prev => ({
+      ...prev,
+      other_tax_rates: {
+        ...prev.other_tax_rates,
+        [key]: value,
+      },
     }));
   };
 
@@ -178,6 +257,88 @@ export default function TaxConfigurationPage() {
                     step="0.01"
                     value={config.isr_rates.rent || 0}
                     onChange={(e) => updateIsrRate('rent', parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* TSS / Seguridad Social */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Parámetros TSS / Seguridad Social (RD)
+              </label>
+              <p className="text-xs text-gray-500 mb-3">
+                Configure aquí los porcentajes de aportes a la TSS (SFS, AFP, Riesgos Laborales, INFOTEP) y el tope salarial cotizable.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">SFS Empleado (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={config.tss_rates.sfs_employee}
+                    onChange={(e) => updateTssRate('sfs_employee', parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">SFS Empleador (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={config.tss_rates.sfs_employer}
+                    onChange={(e) => updateTssRate('sfs_employer', parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">AFP Empleado (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={config.tss_rates.afp_employee}
+                    onChange={(e) => updateTssRate('afp_employee', parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">AFP Empleador (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={config.tss_rates.afp_employer}
+                    onChange={(e) => updateTssRate('afp_employer', parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">SRL Empleador (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={config.tss_rates.srl_employer}
+                    onChange={(e) => updateTssRate('srl_employer', parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">INFOTEP Empleador (%)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={config.tss_rates.infotep_employer}
+                    onChange={(e) => updateTssRate('infotep_employer', parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Tope Salarial TSS (monto)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={config.tss_rates.max_salary_tss}
+                    onChange={(e) => updateTssRate('max_salary_tss', parseFloat(e.target.value) || 0)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>

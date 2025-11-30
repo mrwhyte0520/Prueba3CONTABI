@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { settingsService } from '../../../services/database';
+import { settingsService, chartAccountsService } from '../../../services/database';
+import { useAuth } from '../../../hooks/useAuth';
 
 interface InventorySettings {
   id?: string;
@@ -21,6 +22,7 @@ interface Warehouse {
 }
 
 export default function InventorySettingsPage() {
+  const { user } = useAuth();
   const [settings, setSettings] = useState<InventorySettings>({
     valuation_method: 'fifo',
     auto_reorder: true,
@@ -31,15 +33,24 @@ export default function InventorySettingsPage() {
     negative_stock_allowed: false
   });
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [accounts, setAccounts] = useState<{ id: string; code: string; name: string }[]>([]);
   const [showModal, setShowModal] = useState(false);
-  const [newWarehouse, setNewWarehouse] = useState({ name: '', location: '' });
+  const [newWarehouse, setNewWarehouse] = useState({
+    name: '',
+    location: '',
+    description: '',
+    address: '',
+    phone: '',
+    inventoryAccountId: '',
+  });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     loadSettings();
     loadWarehouses();
-  }, []);
+    loadAccounts();
+  }, [user?.id]);
 
   const loadSettings = async () => {
     try {
@@ -70,6 +81,23 @@ export default function InventorySettingsPage() {
     }
   };
 
+  const loadAccounts = async () => {
+    try {
+      if (!user?.id) {
+        setAccounts([]);
+        return;
+      }
+      const data = await chartAccountsService.getAll(user.id);
+      const options = (data || [])
+        .filter((acc: any) => acc.allow_posting !== false && acc.type === 'asset')
+        .map((acc: any) => ({ id: acc.id, code: acc.code, name: acc.name }));
+      setAccounts(options);
+    } catch (error) {
+      console.error('Error loading accounts for warehouses:', error);
+      setAccounts([]);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -90,10 +118,25 @@ export default function InventorySettingsPage() {
     setLoading(true);
 
     try {
-      await settingsService.createWarehouse(newWarehouse);
+      await settingsService.createWarehouse({
+        name: newWarehouse.name,
+        location: newWarehouse.location,
+        description: newWarehouse.description || null,
+        address: newWarehouse.address || null,
+        phone: newWarehouse.phone || null,
+        inventory_account_id: newWarehouse.inventoryAccountId || null,
+        active: true,
+      });
       setMessage({ type: 'success', text: 'Almacén creado exitosamente' });
       setShowModal(false);
-      setNewWarehouse({ name: '', location: '' });
+      setNewWarehouse({
+        name: '',
+        location: '',
+        description: '',
+        address: '',
+        phone: '',
+        inventoryAccountId: '',
+      });
       loadWarehouses();
     } catch (error) {
       setMessage({ type: 'error', text: 'Error al crear el almacén' });
@@ -377,6 +420,56 @@ export default function InventorySettingsPage() {
                   onChange={(e) => setNewWarehouse(prev => ({ ...prev, location: e.target.value }))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Descripción
+                </label>
+                <textarea
+                  value={newWarehouse.description}
+                  onChange={(e) => setNewWarehouse(prev => ({ ...prev, description: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  rows={2}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Dirección
+                </label>
+                <input
+                  type="text"
+                  value={newWarehouse.address}
+                  onChange={(e) => setNewWarehouse(prev => ({ ...prev, address: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Teléfono
+                </label>
+                <input
+                  type="text"
+                  value={newWarehouse.phone}
+                  onChange={(e) => setNewWarehouse(prev => ({ ...prev, phone: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Cuenta de inventario
+                </label>
+                <select
+                  value={newWarehouse.inventoryAccountId}
+                  onChange={(e) => setNewWarehouse(prev => ({ ...prev, inventoryAccountId: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="">Seleccionar cuenta</option>
+                  {accounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.code} - {acc.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="flex justify-end space-x-3 pt-4">
                 <button

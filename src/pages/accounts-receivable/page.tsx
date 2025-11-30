@@ -1,12 +1,92 @@
-
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import { useAuth } from '../../hooks/useAuth';
+import { invoicesService, customersService } from '../../services/database';
 
 export default function AccountsReceivablePage() {
-  const totalReceivables = 0;
-  const overdueAmount = 0;
-  const currentAmount = 0;
-  const activeCustomers = 0;
+  const { user } = useAuth();
+
+  const [summary, setSummary] = useState({
+    totalReceivables: 0,
+    overdueAmount: 0,
+    currentAmount: 0,
+    activeCustomers: 0,
+  });
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      if (!user?.id) {
+        setSummary({
+          totalReceivables: 0,
+          overdueAmount: 0,
+          currentAmount: 0,
+          activeCustomers: 0,
+        });
+        return;
+      }
+
+      try {
+        const [invoices, customers] = await Promise.all([
+          invoicesService.getAll(user.id),
+          customersService.getAll(user.id),
+        ]);
+
+        let totalReceivables = 0;
+        let overdueAmount = 0;
+        let currentAmount = 0;
+        const today = new Date();
+
+        (invoices || []).forEach((inv: any) => {
+          const total = Number(
+            inv.total_amount ??
+            inv.total ??
+            inv.subtotal ??
+            0,
+          );
+          const paid = Number(inv.paid_amount ?? 0);
+          const remaining = Math.max(total - paid, 0);
+          if (remaining <= 0) return;
+
+          totalReceivables += remaining;
+
+          const dueStr = inv.due_date as string | null;
+          if (dueStr) {
+            const due = new Date(dueStr);
+            if (!Number.isNaN(due.getTime()) && due < today) {
+              overdueAmount += remaining;
+            } else {
+              currentAmount += remaining;
+            }
+          } else {
+            currentAmount += remaining;
+          }
+        });
+
+        const activeCustomers = (customers || []).filter(
+          (c: any) => c.is_active !== false && c.status !== 'inactive',
+        ).length;
+
+        setSummary({
+          totalReceivables,
+          overdueAmount,
+          currentAmount,
+          activeCustomers,
+        });
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading Accounts Receivable dashboard data', error);
+        setSummary({
+          totalReceivables: 0,
+          overdueAmount: 0,
+          currentAmount: 0,
+          activeCustomers: 0,
+        });
+      }
+    };
+
+    loadDashboard();
+  }, [user?.id]);
 
   const modules = [
     {
@@ -123,7 +203,7 @@ export default function AccountsReceivablePage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Total por Cobrar</p>
-                <p className="text-2xl font-bold text-gray-900">RD${totalReceivables.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-gray-900">RD${summary.totalReceivables.toLocaleString()}</p>
               </div>
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
                 <i className="ri-money-dollar-circle-line text-2xl text-blue-600"></i>
@@ -135,7 +215,7 @@ export default function AccountsReceivablePage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Vencidas</p>
-                <p className="text-2xl font-bold text-red-600">RD${overdueAmount.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-red-600">RD${summary.overdueAmount.toLocaleString()}</p>
               </div>
               <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
                 <i className="ri-alarm-warning-line text-2xl text-red-600"></i>
@@ -147,7 +227,7 @@ export default function AccountsReceivablePage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Corrientes</p>
-                <p className="text-2xl font-bold text-green-600">RD${currentAmount.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-green-600">RD${summary.currentAmount.toLocaleString()}</p>
               </div>
               <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
                 <i className="ri-time-line text-2xl text-green-600"></i>
@@ -159,7 +239,7 @@ export default function AccountsReceivablePage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Clientes Activos</p>
-                <p className="text-2xl font-bold text-gray-900">{activeCustomers}</p>
+                <p className="text-2xl font-bold text-gray-900">{summary.activeCustomers}</p>
               </div>
               <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
                 <i className="ri-user-line text-2xl text-purple-600"></i>

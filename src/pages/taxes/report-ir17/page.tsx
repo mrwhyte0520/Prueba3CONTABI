@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
+import * as XLSX from 'xlsx';
 
 export default function ReportIR17Page() {
   const navigate = useNavigate();
@@ -54,6 +55,40 @@ export default function ReportIR17Page() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const exportToExcel = () => {
+    if (withholdingData.length === 0) return;
+
+    const excelData = withholdingData.map(item => ({
+      'RNC Proveedor': item.supplier_rnc,
+      'Nombre Proveedor': item.supplier_name,
+      'Fecha Pago': item.payment_date,
+      'Tipo Servicio': item.service_type,
+      'Número Factura': item.invoice_number,
+      'Monto Bruto': item.gross_amount,
+      'Tasa Retención (%)': item.withholding_rate,
+      'Monto Retenido': item.withheld_amount,
+      'Monto Neto': item.net_amount
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(excelData);
+
+    ws['!cols'] = [
+      { wch: 15 },
+      { wch: 30 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 15 },
+      { wch: 18 },
+      { wch: 15 },
+      { wch: 15 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Reporte IR-17');
+    XLSX.writeFile(wb, `reporte_ir17_${selectedPeriod}.xlsx`);
   };
 
   const exportToCSV = () => {
@@ -168,13 +203,22 @@ export default function ReportIR17Page() {
               </div>
             </div>
             {withholdingData.length > 0 && (
-              <button
-                onClick={exportToCSV}
-                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
-              >
-                <i className="ri-download-line mr-2"></i>
-                Exportar CSV
-              </button>
+              <div className="flex space-x-2">
+                <button
+                  onClick={exportToExcel}
+                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-excel-2-line mr-2"></i>
+                  Exportar Excel
+                </button>
+                <button
+                  onClick={exportToCSV}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-download-line mr-2"></i>
+                  Exportar CSV
+                </button>
+              </div>
             )}
           </div>
         </div>

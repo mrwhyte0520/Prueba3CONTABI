@@ -14,6 +14,7 @@ import {
   purchaseOrdersService,
   purchaseOrderItemsService,
   storesService,
+  taxService,
 } from '../../../services/database';
 
 interface APInvoice {
@@ -62,6 +63,11 @@ export default function APInvoicesPage() {
   >([]);
   const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
   const [stores, setStores] = useState<Array<{ id: string; name: string; is_active?: boolean }>>([]);
+
+  const [taxConfig, setTaxConfig] = useState<{
+    itbis_rate: number;
+    withholding_rates: { [key: string]: number };
+  } | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -156,6 +162,30 @@ export default function APInvoicesPage() {
     }
   };
 
+  const loadTaxConfig = async () => {
+    try {
+      const data = await taxService.getTaxConfiguration();
+      if (data) {
+        setTaxConfig({
+          itbis_rate: typeof data.itbis_rate === 'number' ? data.itbis_rate : 18,
+          withholding_rates: data.withholding_rates || { itbis: 0, isr: 0 },
+        });
+      } else {
+        setTaxConfig({
+          itbis_rate: 18,
+          withholding_rates: { itbis: 0, isr: 0 },
+        });
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error cargando configuración de impuestos para facturas de suplidor', error);
+      setTaxConfig({
+        itbis_rate: 18,
+        withholding_rates: { itbis: 0, isr: 0 },
+      });
+    }
+  };
+
   const loadInvoices = async () => {
     if (!user?.id) return;
     try {
@@ -246,6 +276,7 @@ export default function APInvoicesPage() {
   useEffect(() => {
     loadLookups();
     loadInvoices();
+    loadTaxConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -276,14 +307,23 @@ export default function APInvoicesPage() {
     const isRst = !!supplierType?.is_rst;
     const isOng = !!supplierType?.is_ong;
 
+    const defaultItbisWithholding =
+      taxConfig?.withholding_rates && typeof taxConfig.withholding_rates.itbis === 'number'
+        ? Number(taxConfig.withholding_rates.itbis)
+        : 0;
+    const defaultIsrWithholding =
+      taxConfig?.withholding_rates && typeof taxConfig.withholding_rates.isr === 'number'
+        ? Number(taxConfig.withholding_rates.isr)
+        : 0;
+
     const itbisWithholdingRate =
       selected && typeof selected.itbis_withholding_rate === 'number'
         ? Number(selected.itbis_withholding_rate)
-        : 0;
+        : defaultItbisWithholding;
     const isrWithholdingRate =
       selected && typeof selected.isr_withholding_rate === 'number'
         ? Number(selected.isr_withholding_rate)
-        : 0;
+        : defaultIsrWithholding;
 
     return { affectsItbis, affectsIsr, isNonTaxpayer, isRst, isOng, itbisWithholdingRate, isrWithholdingRate };
   };
@@ -319,8 +359,9 @@ export default function APInvoicesPage() {
     const grossAfterAllDiscounts = Math.max(0, grossAfterLineDiscounts - globalDiscount);
     const totalDiscount = totalLineDiscounts + globalDiscount;
 
-    // Calcular ITBIS 18% según tipo de suplidor
-    const baseItbis = grossAfterAllDiscounts * 0.18;
+    // Calcular ITBIS según tasa configurada
+    const itbisRate = taxConfig?.itbis_rate ?? 18;
+    const baseItbis = grossAfterAllDiscounts * (itbisRate / 100);
     const itbis = affectsItbis ? baseItbis : 0;
 
     // Calcular otros impuestos
@@ -569,7 +610,8 @@ export default function APInvoicesPage() {
       const discountPct = Number(l.discountPercentage) || 0;
       const lineDiscountAmt = lineTotal * (discountPct / 100);
       const lineTotalAfterDiscount = lineTotal - lineDiscountAmt;
-      const lineItbis = affectsItbis ? lineTotalAfterDiscount * 0.18 : 0;
+      const itbisRate = taxConfig?.itbis_rate ?? 18;
+      const lineItbis = affectsItbis ? lineTotalAfterDiscount * (itbisRate / 100) : 0;
       return {
         description: l.description,
         expense_account_id: l.expenseAccountId || null,

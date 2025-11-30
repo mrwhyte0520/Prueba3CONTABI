@@ -14,6 +14,7 @@ import Report623Page from '../pages/taxes/report-623/page';
 import ReportIT1Page from '../pages/taxes/report-it1/page';
 import ReportIR17Page from '../pages/taxes/report-ir17/page';
 import Formulario607Page from '../pages/taxes/formulario-607/page';
+import ItbisProportionalityPage from '../pages/taxes/itbis-proportionality/page';
 
 // Payroll routes
 import PayrollPage from '../pages/payroll/page';
@@ -53,6 +54,10 @@ const ProductsPage = lazy(() => import('../pages/products/page'));
 const CustomersPage = lazy(() => import('../pages/customers/page'));
 const UsersPage = lazy(() => import('../pages/users/page'));
 const InventoryPage = lazy(() => import('../pages/inventory/page'));
+const InventoryReportsPage = lazy(() => import('../pages/inventory/reports/page'));
+const InventoryPhysicalCountPage = lazy(() => import('../pages/inventory/physical-count/page'));
+const InventoryPhysicalResultPage = lazy(() => import('../pages/inventory/physical-result/page'));
+const InventoryCostRevaluationPage = lazy(() => import('../pages/inventory/cost-revaluation/page'));
 const FixedAssetsPage = lazy(() => import('../pages/fixed-assets/page'));
 const AccountsReceivablePage = lazy(() => import('../pages/accounts-receivable/page'));
 const AccountsPayablePage = lazy(() => import('../pages/accounts-payable/page'));
@@ -115,11 +120,14 @@ const ARDebitNotesPage = lazy(() => import('../pages/accounts-receivable/debit-n
 const ARReturnsPage = lazy(() => import('../pages/accounts-receivable/returns/page'));
 const ARDiscountsPage = lazy(() => import('../pages/accounts-receivable/discounts/page'));
 const ARCustomerTypesPage = lazy(() => import('../pages/accounts-receivable/customer-types/page'));
+const ARDeliveryNotesPage = lazy(() => import('../pages/accounts-receivable/delivery-notes/page'));
 
 // Fixed Assets Pages
 const AssetRegisterPage = lazy(() => import('../pages/fixed-assets/register/page'));
 const AssetTypesPage = lazy(() => import('../pages/fixed-assets/types/page'));
 const DepreciationPage = lazy(() => import('../pages/fixed-assets/depreciation/page'));
+const DepreciationTypesPage = lazy(() => import('../pages/fixed-assets/depreciation-types/page'));
+const FixedAssetsReportPage = lazy(() => import('../pages/fixed-assets/report/page'));
 const RevaluationPage = lazy(() => import('../pages/fixed-assets/revaluation/page'));
 const AssetDisposalPage = lazy(() => import('../pages/fixed-assets/disposal/page'));
 
@@ -341,6 +349,22 @@ const routes: RouteObject[] = [
     element: <ProtectedRoute><InventoryPage /></ProtectedRoute>
   },
   {
+    path: '/inventory/reports',
+    element: <ProtectedRoute><InventoryReportsPage /></ProtectedRoute>
+  },
+  {
+    path: '/inventory/physical-count',
+    element: <ProtectedRoute><InventoryPhysicalCountPage /></ProtectedRoute>
+  },
+  {
+    path: '/inventory/physical-result',
+    element: <ProtectedRoute><InventoryPhysicalResultPage /></ProtectedRoute>
+  },
+  {
+    path: '/inventory/cost-revaluation',
+    element: <ProtectedRoute><InventoryCostRevaluationPage /></ProtectedRoute>
+  },
+  {
     path: '/fixed-assets',
     element: <ProtectedRoute><FixedAssetsPage /></ProtectedRoute>
   },
@@ -356,6 +380,14 @@ const routes: RouteObject[] = [
   {
     path: '/fixed-assets/depreciation',
     element: <ProtectedRoute><DepreciationPage /></ProtectedRoute>
+  },
+  {
+    path: '/fixed-assets/depreciation-types',
+    element: <ProtectedRoute><DepreciationTypesPage /></ProtectedRoute>
+  },
+  {
+    path: '/fixed-assets/report',
+    element: <ProtectedRoute><FixedAssetsReportPage /></ProtectedRoute>
   },
   {
     path: '/fixed-assets/revaluation',
@@ -393,6 +425,10 @@ const routes: RouteObject[] = [
   {
     path: '/accounts-receivable/advances',
     element: <ProtectedRoute><ARAdvancesPage /></ProtectedRoute>
+  },
+  {
+    path: '/inventory/delivery-notes',
+    element: <ProtectedRoute><ARDeliveryNotesPage /></ProtectedRoute>
   },
   {
     path: '/accounts-receivable/returns',
@@ -555,6 +591,10 @@ const routes: RouteObject[] = [
   {
     path: '/taxes/formulario-607',
     element: <ProtectedRoute><DashboardLayout><Formulario607Page /></DashboardLayout></ProtectedRoute>
+  },
+  {
+    path: '/taxes/itbis-proportionality',
+    element: <ProtectedRoute><ItbisProportionalityPage /></ProtectedRoute>
   },
   {
     path: '/plans',

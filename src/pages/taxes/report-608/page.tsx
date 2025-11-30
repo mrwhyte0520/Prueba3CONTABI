@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
+import * as XLSX from 'xlsx';
 
 interface Report608Data {
   ncf: string;
@@ -66,6 +67,38 @@ export default function Report608Page() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const exportToExcel = () => {
+    if (cancelledDocuments.length === 0) return;
+
+    const excelData = cancelledDocuments.map(doc => ({
+      'NCF': doc.ncf,
+      'Tipo Documento': doc.document_type,
+      'Fecha Emisión': doc.issue_date,
+      'Fecha Cancelación': doc.cancellation_date,
+      'RNC Cliente': doc.customer_rnc,
+      'Monto': doc.amount,
+      'ITBIS': doc.tax_amount,
+      'Motivo': doc.reason
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(excelData);
+
+    ws['!cols'] = [
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 18 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 30 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Reporte 608');
+    XLSX.writeFile(wb, `reporte_608_${selectedPeriod}.xlsx`);
   };
 
   const exportToCSV = () => {
@@ -203,8 +236,15 @@ export default function Report608Page() {
             {cancelledDocuments.length > 0 && (
               <div className="flex space-x-2">
                 <button
-                  onClick={exportToCSV}
+                  onClick={exportToExcel}
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-excel-2-line mr-2"></i>
+                  Exportar Excel
+                </button>
+                <button
+                  onClick={exportToCSV}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                 >
                   <i className="ri-download-line mr-2"></i>
                   Exportar CSV

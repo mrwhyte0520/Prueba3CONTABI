@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
+import * as XLSX from 'xlsx';
 
 interface Report623Data {
   beneficiary_name: string;
@@ -42,6 +43,40 @@ export default function Report623Page() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const exportToExcel = () => {
+    if (foreignPayments.length === 0) return;
+
+    const excelData = foreignPayments.map(payment => ({
+      'Beneficiario': payment.beneficiary_name,
+      'País': payment.beneficiary_country,
+      'Concepto': payment.payment_concept,
+      'Fecha Pago': payment.payment_date,
+      'Método de Pago': payment.payment_method,
+      'Monto USD': payment.amount_usd,
+      'Monto RD$': payment.amount_dop,
+      'Tasa de Cambio': payment.exchange_rate,
+      'Impuesto Retenido': payment.tax_withheld
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(excelData);
+
+    ws['!cols'] = [
+      { wch: 30 },
+      { wch: 15 },
+      { wch: 25 },
+      { wch: 15 },
+      { wch: 18 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 18 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Reporte 623');
+    XLSX.writeFile(wb, `reporte_623_${selectedPeriod}.xlsx`);
   };
 
   const exportToCSV = () => {
@@ -184,8 +219,15 @@ export default function Report623Page() {
             {foreignPayments.length > 0 && (
               <div className="flex space-x-2">
                 <button
-                  onClick={exportToCSV}
+                  onClick={exportToExcel}
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-excel-2-line mr-2"></i>
+                  Exportar Excel
+                </button>
+                <button
+                  onClick={exportToCSV}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                 >
                   <i className="ri-download-line mr-2"></i>
                   Exportar CSV

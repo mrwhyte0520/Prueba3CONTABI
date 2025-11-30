@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
+import * as XLSX from 'xlsx';
 
 interface IT1Data {
   id?: string;
@@ -90,6 +91,40 @@ export default function ReportIT1Page() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const exportToExcel = () => {
+    if (!reportData) return;
+
+    const excelData = [
+      { 'Campo': 'Período', 'Valor': new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }) },
+      { 'Campo': '', 'Valor': '' },
+      { 'Campo': 'I. VENTAS Y SERVICIOS GRAVADOS', 'Valor': '' },
+      { 'Campo': 'Total de Ventas y Servicios Gravados', 'Valor': reportData.total_sales },
+      { 'Campo': 'ITBIS Cobrado en Ventas', 'Valor': reportData.itbis_collected },
+      { 'Campo': '', 'Valor': '' },
+      { 'Campo': 'II. COMPRAS Y GASTOS GRAVADOS', 'Valor': '' },
+      { 'Campo': 'Total de Compras y Gastos Gravados', 'Valor': reportData.total_purchases },
+      { 'Campo': 'ITBIS Pagado en Compras', 'Valor': reportData.itbis_paid },
+      { 'Campo': '', 'Valor': '' },
+      { 'Campo': 'III. LIQUIDACIÓN DEL IMPUESTO', 'Valor': '' },
+      { 'Campo': 'ITBIS Cobrado en Ventas', 'Valor': reportData.itbis_collected },
+      { 'Campo': '(-) ITBIS Pagado en Compras', 'Valor': reportData.itbis_paid },
+      { 'Campo': 'ITBIS NETO A PAGAR', 'Valor': reportData.net_itbis_due },
+      { 'Campo': '', 'Valor': '' },
+      { 'Campo': 'Fecha de Generación', 'Valor': new Date(reportData.generated_date).toLocaleDateString('es-DO') }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(excelData);
+
+    ws['!cols'] = [
+      { wch: 40 },
+      { wch: 20 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Declaración IT-1');
+    XLSX.writeFile(wb, `declaracion_it1_${reportData.period}.xlsx`);
   };
 
   const exportToCSV = () => {
@@ -420,8 +455,15 @@ Cumple con las normativas de la DGII
                   {reportData && (
                     <div className="flex space-x-2">
                       <button
-                        onClick={exportToCSV}
+                        onClick={exportToExcel}
                         className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+                      >
+                        <i className="ri-file-excel-2-line mr-2"></i>
+                        Exportar Excel
+                      </button>
+                      <button
+                        onClick={exportToCSV}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
                       >
                         <i className="ri-file-excel-line mr-2"></i>
                         Exportar CSV

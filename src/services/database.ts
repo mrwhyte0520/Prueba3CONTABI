@@ -450,6 +450,158 @@ export const bankReconciliationsListService = {
       return handleDatabaseError(error, []);
     }
   },
+
+  async create(userId: string, entry: any, lines: any[]) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!lines || lines.length === 0) throw new Error('At least one line is required');
+
+      const { data: entryData, error: entryError } = await supabase
+        .from('warehouse_entries')
+        .insert({ ...entry, user_id: userId })
+        .select('*')
+        .single();
+
+      if (entryError) throw entryError;
+
+      const linesPayload = lines.map((line: any) => ({
+        ...line,
+        entry_id: entryData.id,
+      }));
+
+      const { data: linesData, error: linesError } = await supabase
+        .from('warehouse_entry_lines')
+        .insert(linesPayload)
+        .select('*');
+
+      if (linesError) throw linesError;
+
+      return { entry: entryData, lines: linesData };
+    } catch (error) {
+      console.error('warehouseEntriesService.create error', error);
+      throw error;
+    }
+  },
+
+  async post(userId: string, id: string) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!id) throw new Error('warehouse entry id required');
+
+      const { data: entry, error: entryError } = await supabase
+        .from('warehouse_entries')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('id', id)
+        .maybeSingle();
+
+      if (entryError) throw entryError;
+      if (!entry) throw new Error('Warehouse entry not found');
+
+      if (entry.status === 'posted' || entry.status === 'cancelled') {
+        return entry;
+      }
+
+      const movementDate = entry.document_date
+        ? String(entry.document_date)
+        : new Date().toISOString().split('T')[0];
+
+      const { data: lines, error: linesError } = await supabase
+        .from('warehouse_entry_lines')
+        .select(`
+          *,
+          inventory_items (
+            id,
+            name,
+            current_stock,
+            cost_price,
+            average_cost,
+            last_purchase_price
+          )
+        `)
+        .eq('entry_id', entry.id);
+
+      if (linesError) throw linesError;
+      if (!lines || lines.length === 0) throw new Error('Warehouse entry has no lines');
+
+      for (const rawLine of lines as any[]) {
+        const invItem = rawLine.inventory_items as any | null;
+        const rawQty = Number(rawLine.quantity) || 0;
+        const qty = Number.isFinite(rawQty) ? Math.round(rawQty) : 0;
+
+        if (!invItem || qty <= 0) continue;
+
+        const oldStock = Number(invItem.current_stock ?? 0) || 0;
+        const oldAvg =
+          invItem.average_cost != null
+            ? Number(invItem.average_cost) || 0
+            : Number(invItem.cost_price) || 0;
+
+        const lineUnitCost =
+          rawLine.unit_cost != null && rawLine.unit_cost !== ''
+            ? Number(rawLine.unit_cost) || 0
+            : 0;
+
+        const unitCost = lineUnitCost > 0 ? lineUnitCost : oldAvg;
+        const lineCost = qty * unitCost;
+
+        if (lineCost <= 0) continue;
+
+        const newStock = oldStock + qty;
+        const newAvg = newStock > 0 ? (oldAvg * oldStock + unitCost * qty) / newStock : oldAvg;
+
+        try {
+          if (invItem.id) {
+            await inventoryService.updateItem(String(invItem.id), {
+              current_stock: newStock,
+              last_purchase_price: unitCost,
+              last_purchase_date: movementDate,
+              average_cost: newAvg,
+              cost_price: newAvg,
+            });
+          }
+        } catch (updateError) {
+          console.error('warehouseEntriesService.post updateItem error', updateError);
+        }
+
+        try {
+          await inventoryService.createMovement(userId, {
+            item_id: invItem.id ? String(invItem.id) : null,
+            movement_type: 'entry',
+            quantity: qty,
+            unit_cost: unitCost,
+            total_cost: lineCost,
+            movement_date: movementDate,
+            reference: entry.document_number || entry.id,
+            notes: rawLine.notes || invItem.name || null,
+            source_type: 'warehouse_entry',
+            source_id: entry.id ? String(entry.id) : null,
+            source_number: entry.document_number || (entry.id ? String(entry.id) : null),
+            to_warehouse_id: (entry as any).warehouse_id || null,
+          });
+        } catch (movError) {
+          console.error('warehouseEntriesService.post createMovement error', movError);
+        }
+      }
+
+      const { data: updated, error: updateError } = await supabase
+        .from('warehouse_entries')
+        .update({
+          status: 'posted',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', entry.id)
+        .select('*')
+        .maybeSingle();
+
+      if (updateError) throw updateError;
+
+      return updated ?? entry;
+    } catch (error) {
+      console.error('warehouseEntriesService.post error', error);
+      throw error;
+    }
+  },
 };
 
 /* ==========================================================
@@ -1669,55 +1821,17 @@ export const customerTypesService = {
 export const chartAccountsService = {
   async getAll(userId: string) {
     try {
+      if (!userId) return [];
       const { data, error } = await supabase
         .from('chart_accounts')
         .select('*')
         .eq('user_id', userId)
         .order('code');
-      
-      if (error) {
-        console.error('Database error:', error);
-        return [];
-      }
-      
-      // Mapear los datos de la base de datos al formato esperado por el componente
-      const rawAccounts = data || [];
 
-      const mappedData = rawAccounts.map(account => {
-        const level = account.level || 1;
-        const parentId = account.parent_id || undefined;
-
-        // Determinar si la cuenta tiene subcuentas (hijas)
-        const hasChildren = rawAccounts.some(a => a.parent_id === account.id);
-
-        // Regla de negocio:
-        // - Niveles 1 y 2 siempre son cuentas de control (no permiten movimientos).
-        // - Para nivel >= 3, si la cuenta tiene subcuentas también se trata como control.
-        const effectiveAllowPosting =
-          level <= 2 || hasChildren ? false : account.allow_posting !== false;
-
-        return {
-          id: account.id,
-          code: account.code || '',
-          name: account.name || '',
-          type: account.type || 'asset',
-          parentId,
-          level,
-          balance: account.balance || 0,
-          isActive: account.is_active !== false,
-          description: account.description || '',
-          normalBalance: account.normal_balance || 'debit',
-          allowPosting: effectiveAllowPosting,
-          isBankAccount: account.is_bank_account === true,
-          createdAt: account.created_at || new Date().toISOString(),
-          updatedAt: account.updated_at || new Date().toISOString()
-        };
-      });
-
-      return mappedData;
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
     } catch (error) {
-      console.error('Error in getAll:', error);
-      return [];
+      return handleDatabaseError(error, []);
     }
   },
 
@@ -3314,7 +3428,7 @@ export const inventoryService = {
         .from('inventory_movements')
         .select(`
           *,
-          inventory_items (name, sku)
+          inventory_items (name, sku, warehouse_id)
         `)
         .eq('user_id', userId)
         .order('movement_date', { ascending: false });
@@ -3379,8 +3493,12 @@ export const inventoryService = {
 
   async createMovement(userId: string, movement: any) {
     try {
+      const rawQty = Number(movement.quantity) || 0;
+      const quantity = Number.isFinite(rawQty) ? Math.round(rawQty) : 0;
+
       const payload = {
         ...movement,
+        quantity,
         user_id: userId,
       };
       const { data, error } = await supabase
@@ -3392,6 +3510,494 @@ export const inventoryService = {
       return data;
     } catch (error) {
       console.error('inventoryService.createMovement error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Warehouse Entries Service
+========================================================== */
+export const warehouseEntriesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('warehouse_entries')
+        .select(`
+          *,
+          warehouse_entry_lines (*),
+          warehouses (name)
+        `)
+        .eq('user_id', userId)
+        .order('document_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, entry: any, lines: any[]) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!lines || lines.length === 0) throw new Error('At least one line is required');
+
+      const { data: entryData, error: entryError } = await supabase
+        .from('warehouse_entries')
+        .insert({ ...entry, user_id: userId })
+        .select('*')
+        .single();
+
+      if (entryError) throw entryError;
+
+      const linesPayload = lines.map((line: any) => ({
+        ...line,
+        entry_id: entryData.id,
+      }));
+
+      const { data: linesData, error: linesError } = await supabase
+        .from('warehouse_entry_lines')
+        .insert(linesPayload)
+        .select('*');
+
+      if (linesError) throw linesError;
+
+      return { entry: entryData, lines: linesData };
+    } catch (error) {
+      console.error('warehouseEntriesService.create error', error);
+      throw error;
+    }
+  },
+
+  async post(userId: string, id: string) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!id) throw new Error('warehouse entry id required');
+
+      const { data: entry, error: entryError } = await supabase
+        .from('warehouse_entries')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('id', id)
+        .maybeSingle();
+
+      if (entryError) throw entryError;
+      if (!entry) throw new Error('Warehouse entry not found');
+
+      if (entry.status === 'posted' || entry.status === 'cancelled') {
+        return entry;
+      }
+
+      const movementDate = entry.document_date
+        ? String(entry.document_date)
+        : new Date().toISOString().split('T')[0];
+
+      const { data: lines, error: linesError } = await supabase
+        .from('warehouse_entry_lines')
+        .select(`
+          *,
+          inventory_items (
+            id,
+            name,
+            current_stock,
+            cost_price,
+            average_cost,
+            last_purchase_price
+          )
+        `)
+        .eq('entry_id', entry.id);
+
+      if (linesError) throw linesError;
+      if (!lines || lines.length === 0) throw new Error('Warehouse entry has no lines');
+
+      for (const rawLine of lines as any[]) {
+        const invItem = rawLine.inventory_items as any | null;
+        const rawQty = Number(rawLine.quantity) || 0;
+        const qty = Number.isFinite(rawQty) ? Math.round(rawQty) : 0;
+
+        if (!invItem || qty <= 0) continue;
+
+        const oldStock = Number(invItem.current_stock ?? 0) || 0;
+        const oldAvg =
+          invItem.average_cost != null
+            ? Number(invItem.average_cost) || 0
+            : Number(invItem.cost_price) || 0;
+
+        const lineUnitCost =
+          rawLine.unit_cost != null && rawLine.unit_cost !== ''
+            ? Number(rawLine.unit_cost) || 0
+            : 0;
+
+        const unitCost = lineUnitCost > 0 ? lineUnitCost : oldAvg;
+        const lineCost = qty * unitCost;
+
+        if (lineCost <= 0) continue;
+
+        const newStock = oldStock + qty;
+        const newAvg = newStock > 0 ? (oldAvg * oldStock + unitCost * qty) / newStock : oldAvg;
+
+        try {
+          if (invItem.id) {
+            await inventoryService.updateItem(String(invItem.id), {
+              current_stock: newStock,
+              last_purchase_price: unitCost,
+              last_purchase_date: movementDate,
+              average_cost: newAvg,
+              cost_price: newAvg,
+            });
+          }
+        } catch (updateError) {
+          console.error('warehouseEntriesService.post updateItem error', updateError);
+        }
+
+        try {
+          await inventoryService.createMovement(userId, {
+            item_id: invItem.id ? String(invItem.id) : null,
+            movement_type: 'entry',
+            quantity: qty,
+            unit_cost: unitCost,
+            total_cost: lineCost,
+            movement_date: movementDate,
+            reference: entry.document_number || entry.id,
+            notes: rawLine.notes || invItem.name || null,
+            source_type: 'warehouse_entry',
+            source_id: entry.id ? String(entry.id) : null,
+            source_number: entry.document_number || (entry.id ? String(entry.id) : null),
+            to_warehouse_id: (entry as any).warehouse_id || null,
+          });
+        } catch (movError) {
+          console.error('warehouseEntriesService.post createMovement error', movError);
+        }
+      }
+
+      const { data: updated, error: updateError } = await supabase
+        .from('warehouse_entries')
+        .update({
+          status: 'posted',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', entry.id)
+        .select('*')
+        .maybeSingle();
+
+      if (updateError) throw updateError;
+
+      return updated ?? entry;
+    } catch (error) {
+      console.error('warehouseEntriesService.post error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Warehouse Transfers Service
+========================================================== */
+export const warehouseTransfersService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('warehouse_transfers')
+        .select(`
+          *,
+          warehouse_transfer_lines (*),
+          from_warehouse:from_warehouse_id (name),
+          to_warehouse:to_warehouse_id (name)
+        `)
+        .eq('user_id', userId)
+        .order('transfer_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, transfer: any, lines: any[]) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!lines || lines.length === 0) throw new Error('At least one line is required');
+
+      const { data: transferData, error: transferError } = await supabase
+        .from('warehouse_transfers')
+        .insert({ ...transfer, user_id: userId })
+        .select('*')
+        .single();
+
+      if (transferError) throw transferError;
+
+      const linesPayload = lines.map((line: any) => ({
+        ...line,
+        transfer_id: transferData.id,
+      }));
+
+      const { data: linesData, error: linesError } = await supabase
+        .from('warehouse_transfer_lines')
+        .insert(linesPayload)
+        .select('*');
+
+      if (linesError) throw linesError;
+
+      return { transfer: transferData, lines: linesData };
+    } catch (error) {
+      console.error('warehouseTransfersService.create error', error);
+      throw error;
+    }
+  },
+
+  async post(userId: string, id: string) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!id) throw new Error('warehouse transfer id required');
+
+      const { data: transfer, error: transferError } = await supabase
+        .from('warehouse_transfers')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('id', id)
+        .maybeSingle();
+
+      if (transferError) throw transferError;
+      if (!transfer) throw new Error('Warehouse transfer not found');
+
+      if (transfer.status === 'posted' || transfer.status === 'cancelled') {
+        return transfer;
+      }
+
+      const movementDate = transfer.transfer_date
+        ? String(transfer.transfer_date)
+        : new Date().toISOString().split('T')[0];
+
+      const { data: lines, error: linesError } = await supabase
+        .from('warehouse_transfer_lines')
+        .select(`
+          *,
+          inventory_items (
+            id,
+            name
+          )
+        `)
+        .eq('transfer_id', transfer.id);
+
+      if (linesError) throw linesError;
+      if (!lines || lines.length === 0) throw new Error('Warehouse transfer has no lines');
+
+      for (const rawLine of lines as any[]) {
+        const invItem = rawLine.inventory_items as any | null;
+        const rawQty = Number(rawLine.quantity) || 0;
+        const qty = Number.isFinite(rawQty) ? Math.round(rawQty) : 0;
+
+        if (!invItem || qty <= 0) continue;
+
+        try {
+          await inventoryService.createMovement(userId, {
+            item_id: invItem.id ? String(invItem.id) : null,
+            movement_type: 'transfer',
+            quantity: qty,
+            unit_cost: null,
+            total_cost: null,
+            movement_date: movementDate,
+            reference: transfer.document_number || transfer.id,
+            notes: rawLine.notes || invItem.name || null,
+            source_type: 'warehouse_transfer',
+            source_id: transfer.id ? String(transfer.id) : null,
+            source_number: transfer.document_number || (transfer.id ? String(transfer.id) : null),
+            from_warehouse_id: (transfer as any).from_warehouse_id || null,
+            to_warehouse_id: (transfer as any).to_warehouse_id || null,
+          });
+        } catch (movError) {
+          console.error('warehouseTransfersService.post createMovement error', movError);
+        }
+      }
+
+      const { data: updated, error: updateError } = await supabase
+        .from('warehouse_transfers')
+        .update({
+          status: 'posted',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', transfer.id)
+        .select('*')
+        .maybeSingle();
+
+      if (updateError) throw updateError;
+
+      return updated ?? transfer;
+    } catch (error) {
+      console.error('warehouseTransfersService.post error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Inventory Physical Counts Service
+========================================================== */
+export const inventoryPhysicalCountsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('inventory_physical_counts')
+        .select(`
+          *,
+          warehouses (name)
+        `)
+        .eq('user_id', userId)
+        .order('count_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getWithLines(userId: string, id: string) {
+    try {
+      if (!userId || !id) return null;
+      const { data, error } = await supabase
+        .from('inventory_physical_counts')
+        .select(`
+          *,
+          inventory_physical_count_lines (
+            *,
+            inventory_items (
+              id,
+              sku,
+              name,
+              category,
+              average_cost,
+              cost_price
+            )
+          ),
+          warehouses (name)
+        `)
+        .eq('user_id', userId)
+        .eq('id', id)
+        .maybeSingle();
+      if (error) return handleDatabaseError(error, null);
+      return data ?? null;
+    } catch (error) {
+      return handleDatabaseError(error, null);
+    }
+  },
+
+  async create(userId: string, header: any, lines: any[]) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!lines || lines.length === 0) throw new Error('At least one line is required');
+
+      const { data: headerData, error: headerError } = await supabase
+        .from('inventory_physical_counts')
+        .insert({ ...header, user_id: userId })
+        .select('*')
+        .single();
+
+      if (headerError) throw headerError;
+
+      const linesPayload = lines.map((line: any) => ({
+        ...line,
+        count_id: headerData.id,
+      }));
+
+      const { data: linesData, error: linesError } = await supabase
+        .from('inventory_physical_count_lines')
+        .insert(linesPayload)
+        .select('*');
+
+      if (linesError) throw linesError;
+
+      return { header: headerData, lines: linesData };
+    } catch (error) {
+      console.error('inventoryPhysicalCountsService.create error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+   Inventory Cost Revaluations Service
+========================================================== */
+export const inventoryCostRevaluationsService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('inventory_cost_revaluations')
+        .select('*')
+        .eq('user_id', userId)
+        .order('revaluation_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getWithLines(userId: string, id: string) {
+    try {
+      if (!userId || !id) return null;
+      const { data, error } = await supabase
+        .from('inventory_cost_revaluations')
+        .select(`
+          *,
+          inventory_cost_revaluation_lines (
+            *,
+            inventory_items (
+              id,
+              sku,
+              name,
+              category,
+              average_cost,
+              cost_price
+            ),
+            warehouses (name)
+          )
+        `)
+        .eq('user_id', userId)
+        .eq('id', id)
+        .maybeSingle();
+      if (error) return handleDatabaseError(error, null);
+      return data ?? null;
+    } catch (error) {
+      return handleDatabaseError(error, null);
+    }
+  },
+
+  async create(userId: string, header: any, lines: any[]) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!lines || lines.length === 0) throw new Error('At least one line is required');
+
+      const { data: headerData, error: headerError } = await supabase
+        .from('inventory_cost_revaluations')
+        .insert({ ...header, user_id: userId })
+        .select('*')
+        .single();
+
+      if (headerError) throw headerError;
+
+      const linesPayload = lines.map((line: any) => ({
+        ...line,
+        revaluation_id: headerData.id,
+      }));
+
+      const { data: linesData, error: linesError } = await supabase
+        .from('inventory_cost_revaluation_lines')
+        .insert(linesPayload)
+        .select('*');
+
+      if (linesError) throw linesError;
+
+      return { header: headerData, lines: linesData };
+    } catch (error) {
+      console.error('inventoryCostRevaluationsService.create error', error);
       throw error;
     }
   },
@@ -4223,6 +4829,487 @@ export const accountingSettingsService = {
       }
     } catch (error) {
       console.error('accountingSettingsService.markChartAccountsSeeded error', error);
+    }
+  },
+};
+
+/* ==========================================================
+   Delivery Notes (Conduces) Service
+========================================================== */
+export const deliveryNotesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('delivery_notes')
+        .select(`
+          *,
+          customers (id, name)
+        `)
+        .eq('user_id', userId)
+        .order('delivery_date', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getById(userId: string, id: string) {
+    try {
+      if (!userId || !id) return null;
+      const { data, error } = await supabase
+        .from('delivery_notes')
+        .select(`
+          *,
+          delivery_note_lines (
+            *,
+            inventory_items (name, sku)
+          ),
+          customers (id, name)
+        `)
+        .eq('user_id', userId)
+        .eq('id', id)
+        .maybeSingle();
+
+      if (error) throw error;
+      return data ?? null;
+    } catch (error) {
+      console.error('deliveryNotesService.getById error', error);
+      throw error;
+    }
+  },
+
+  async create(userId: string, note: any, lines: any[]) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!lines || lines.length === 0) throw new Error('At least one line is required');
+
+      const { data: noteData, error: noteError } = await supabase
+        .from('delivery_notes')
+        .insert({ ...note, user_id: userId })
+        .select('*')
+        .single();
+
+      if (noteError) throw noteError;
+
+      const linesPayload = lines.map((line: any) => ({
+        ...line,
+        delivery_note_id: noteData.id,
+      }));
+
+      const { data: linesData, error: linesError } = await supabase
+        .from('delivery_note_lines')
+        .insert(linesPayload)
+        .select('*');
+
+      if (linesError) throw linesError;
+
+      return { deliveryNote: noteData, lines: linesData };
+    } catch (error) {
+      console.error('deliveryNotesService.create error', error);
+      throw error;
+    }
+  },
+
+  async post(userId: string, id: string) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!id) throw new Error('delivery note id required');
+
+      const { data: note, error: noteError } = await supabase
+        .from('delivery_notes')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('id', id)
+        .maybeSingle();
+
+      if (noteError) throw noteError;
+      if (!note) throw new Error('Delivery note not found');
+
+      // No reprocesar si ya está contabilizado
+      if (note.status === 'posted' || note.status === 'invoiced' || note.status === 'cancelled') {
+        return note;
+      }
+
+      const deliveryDate = note.delivery_date
+        ? String(note.delivery_date)
+        : new Date().toISOString().split('T')[0];
+
+      const { data: lines, error: linesError } = await supabase
+        .from('delivery_note_lines')
+        .select(`
+          *,
+          inventory_items (
+            id,
+            name,
+            current_stock,
+            cost_price,
+            average_cost,
+            inventory_account_id,
+            cogs_account_id
+          )
+        `)
+        .eq('delivery_note_id', note.id);
+
+      if (linesError) throw linesError;
+      if (!lines || lines.length === 0) throw new Error('Delivery note has no lines');
+
+      // 1) Actualizar inventario y registrar movimientos de salida
+      const cogsTotals: Record<string, number> = {};
+      const inventoryTotals: Record<string, number> = {};
+      let totalCost = 0;
+
+      for (const rawLine of lines as any[]) {
+        const invItem = rawLine.inventory_items as any | null;
+        const rawQty = Number(rawLine.quantity) || 0;
+        // current_stock y quantity en inventory_movements están definidos como enteros,
+        // por lo que normalizamos la cantidad a entero para evitar errores 22P02.
+        const qty = Number.isFinite(rawQty) ? Math.round(rawQty) : 0;
+
+        if (!invItem || qty <= 0) continue;
+
+        const oldStock = Number(invItem.current_stock ?? 0) || 0;
+        const unitCost =
+          invItem.average_cost != null
+            ? Number(invItem.average_cost) || 0
+            : Number(invItem.cost_price) || 0;
+        const lineCost = qty * unitCost;
+
+        if (lineCost <= 0) continue;
+
+        const inventoryAccountId = invItem.inventory_account_id as string | null;
+        const cogsAccountId = invItem.cogs_account_id as string | null;
+
+        // Actualizar stock del producto
+        try {
+          if (invItem.id) {
+            const newStock = oldStock - qty;
+            await inventoryService.updateItem(String(invItem.id), {
+              current_stock: newStock < 0 ? 0 : newStock,
+              cost_price: unitCost,
+              average_cost: unitCost,
+            });
+          }
+        } catch (updateError) {
+          console.error('deliveryNotesService.post updateItem error', updateError);
+        }
+
+        // Registrar movimiento de salida de inventario
+        try {
+          await inventoryService.createMovement(userId, {
+            item_id: invItem.id ? String(invItem.id) : null,
+            movement_type: 'exit',
+            quantity: qty,
+            unit_cost: unitCost,
+            total_cost: lineCost,
+            movement_date: deliveryDate,
+            reference: note.document_number || note.id,
+            notes: rawLine.description || invItem.name || null,
+            source_type: 'delivery_note',
+            source_id: note.id ? String(note.id) : null,
+            source_number: note.document_number || (note.id ? String(note.id) : null),
+            from_warehouse_id: (note as any).warehouse_id || null,
+            store_id: (note as any).store_id || null,
+          });
+        } catch (movError) {
+          console.error('deliveryNotesService.post createMovement error', movError);
+        }
+
+        if (cogsAccountId && inventoryAccountId) {
+          totalCost += lineCost;
+          cogsTotals[cogsAccountId] = (cogsTotals[cogsAccountId] || 0) + lineCost;
+          inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
+        }
+      }
+
+      // 2) Asiento contable principal: CxC vs Ventas/ITBIS
+      try {
+        const settings = await accountingSettingsService.get(userId);
+        const arAccountId = settings?.ar_account_id;
+        const salesAccountId = settings?.sales_account_id;
+        const taxAccountId = settings?.sales_tax_account_id;
+
+        if (arAccountId && salesAccountId) {
+          const subtotal = Number(note.subtotal) || 0;
+          const taxAmount = Number(note.tax_total) || 0;
+          const totalAmount = Number(note.total_amount) || subtotal + taxAmount;
+
+          const entryLines: any[] = [
+            {
+              account_id: arAccountId,
+              description: 'Cuentas por Cobrar Clientes',
+              debit_amount: totalAmount,
+              credit_amount: 0,
+              line_number: 1,
+            },
+            {
+              account_id: salesAccountId,
+              description: 'Ventas por Conduce',
+              debit_amount: 0,
+              credit_amount: subtotal,
+              line_number: 2,
+            },
+          ];
+
+          if (taxAmount > 0 && taxAccountId) {
+            entryLines.push({
+              account_id: taxAccountId,
+              description: 'ITBIS por pagar (Conduces)',
+              debit_amount: 0,
+              credit_amount: taxAmount,
+              line_number: entryLines.length + 1,
+            });
+          }
+
+          const entryPayload = {
+            entry_number: String(note.document_number || `DN-${note.id}`),
+            entry_date: String(deliveryDate),
+            description: `Conduce ${note.document_number || ''}`.trim(),
+            reference: note.id ? String(note.id) : null,
+            status: 'posted' as const,
+          };
+
+          await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
+        }
+      } catch (ledgerError) {
+        console.error('deliveryNotesService.post AR/Sales ledger error', ledgerError);
+      }
+
+      // 3) Asiento de Costo de Ventas vs Inventario
+      try {
+        if (totalCost > 0) {
+          const cogsLines: any[] = [];
+          let lineNumber = 1;
+
+          for (const [accountId, amount] of Object.entries(cogsTotals)) {
+            if (amount > 0) {
+              cogsLines.push({
+                account_id: accountId,
+                description: 'Costo de Ventas Conduces',
+                debit_amount: amount,
+                credit_amount: 0,
+                line_number: lineNumber++,
+              });
+            }
+          }
+
+          for (const [accountId, amount] of Object.entries(inventoryTotals)) {
+            if (amount > 0) {
+              cogsLines.push({
+                account_id: accountId,
+                description: 'Inventario Conduces',
+                debit_amount: 0,
+                credit_amount: amount,
+                line_number: lineNumber++,
+              });
+            }
+          }
+
+          if (cogsLines.length > 0) {
+            const cogsEntryPayload = {
+              entry_number: `${String(note.document_number || note.id)}-COGS`,
+              entry_date: String(deliveryDate),
+              description: `Costo de ventas conduce ${note.document_number || ''}`.trim(),
+              reference: note.id ? String(note.id) : null,
+              status: 'posted' as const,
+            };
+
+            await journalEntriesService.createWithLines(userId, cogsEntryPayload, cogsLines);
+          }
+        }
+      } catch (cogsError) {
+        console.error('deliveryNotesService.post COGS ledger error', cogsError);
+      }
+
+      // 4) Marcar el conduce como contabilizado
+      const { data: updated, error: updateNoteError } = await supabase
+        .from('delivery_notes')
+        .update({
+          status: 'posted',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', note.id)
+        .select('*')
+        .maybeSingle();
+
+      if (updateNoteError) throw updateNoteError;
+
+      return updated ?? note;
+    } catch (error) {
+      console.error('deliveryNotesService.post error', error);
+      throw error;
+    }
+  },
+
+  async updateStatus(
+    userId: string,
+    id: string,
+    status: 'draft' | 'posted' | 'invoiced' | 'cancelled',
+  ) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!id) throw new Error('delivery note id required');
+
+      const { data, error } = await supabase
+        .from('delivery_notes')
+        .update({
+          status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId)
+        .eq('id', id)
+        .select('*')
+        .maybeSingle();
+
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('deliveryNotesService.updateStatus error', error);
+      throw error;
+    }
+  },
+
+  async createInvoiceFromNotes(userId: string, deliveryNoteIds: string[]) {
+    try {
+      if (!userId) throw new Error('userId required');
+      if (!deliveryNoteIds || deliveryNoteIds.length === 0) {
+        throw new Error('At least one delivery note id is required');
+      }
+
+      // 1) Cargar conduces a facturar
+      const { data: notes, error: notesError } = await supabase
+        .from('delivery_notes')
+        .select('*')
+        .eq('user_id', userId)
+        .in('id', deliveryNoteIds);
+
+      if (notesError) throw notesError;
+      if (!notes || notes.length === 0) {
+        throw new Error('No se encontraron conduces para facturar');
+      }
+
+      const postedNotes = (notes as any[]).filter((n) => n.status === 'posted');
+      if (postedNotes.length === 0) {
+        throw new Error('Solo se pueden facturar conduces en estado Contabilizado');
+      }
+
+      // Asegurar que todos sean del mismo cliente
+      const customerId = String(postedNotes[0].customer_id);
+      const hasDifferentCustomer = postedNotes.some(
+        (n) => String(n.customer_id) !== customerId,
+      );
+      if (hasDifferentCustomer) {
+        throw new Error('Todos los conduces seleccionados deben ser del mismo cliente');
+      }
+
+      const noteIdsToInvoice = postedNotes.map((n) => n.id as string);
+
+      // 2) Cargar líneas de todos esos conduces
+      const { data: lines, error: linesError } = await supabase
+        .from('delivery_note_lines')
+        .select('*')
+        .in('delivery_note_id', noteIdsToInvoice);
+
+      if (linesError) throw linesError;
+      if (!lines || lines.length === 0) {
+        throw new Error('Los conduces seleccionados no tienen líneas para facturar');
+      }
+
+      // 3) Calcular totales de factura a partir de los encabezados de los conduces
+      const subtotal = postedNotes.reduce(
+        (sum, n) => sum + (Number((n as any).subtotal) || 0),
+        0,
+      );
+      const taxTotal = postedNotes.reduce(
+        (sum, n) => sum + (Number((n as any).tax_total) || 0),
+        0,
+      );
+      const totalAmount = postedNotes.reduce(
+        (sum, n) => sum + (Number((n as any).total_amount) || 0),
+        0,
+      );
+
+      const todayStr = new Date().toISOString().split('T')[0];
+      const invoiceNumber = `FAC-DN-${Date.now()}`;
+      const currency = (postedNotes[0] as any).currency || 'DOP';
+
+      const noteNumbers = postedNotes
+        .map((n) => (n as any).document_number || (n as any).id)
+        .join(', ');
+
+      const invoicePayload = {
+        customer_id: customerId,
+        invoice_number: invoiceNumber,
+        invoice_date: todayStr,
+        // La tabla invoices exige due_date NOT NULL, por lo que usamos por defecto
+        // la misma fecha de la factura cuando generamos desde Conduces.
+        due_date: todayStr,
+        currency,
+        subtotal,
+        tax_amount: taxTotal,
+        total_amount: totalAmount,
+        paid_amount: 0,
+        status: 'pending',
+        notes: `Factura generada desde conduces: ${noteNumbers}`,
+      };
+
+      // 4) Crear factura e insertar líneas, sin duplicar asientos contables
+      const { data: invoiceData, error: invoiceError } = await supabase
+        .from('invoices')
+        .insert({ ...invoicePayload, user_id: userId })
+        .select('*')
+        .single();
+
+      if (invoiceError) throw invoiceError;
+
+      const linesPayload = (lines as any[]).map((ln, index) => ({
+        invoice_id: invoiceData.id,
+        description: ln.description,
+        quantity: ln.quantity,
+        unit_price: ln.unit_price,
+        line_total: ln.line_total,
+        line_number: index + 1,
+        delivery_note_id: ln.delivery_note_id,
+        delivery_note_line_id: ln.id,
+      }));
+
+      const { data: invoiceLinesData, error: invoiceLinesError } = await supabase
+        .from('invoice_lines')
+        .insert(linesPayload)
+        .select('*');
+
+      if (invoiceLinesError) throw invoiceLinesError;
+
+      // 5) Marcar conduces como facturados y actualizar cantidad facturada en líneas
+      const now = new Date().toISOString();
+
+      const { error: updateNotesError } = await supabase
+        .from('delivery_notes')
+        .update({ status: 'invoiced', updated_at: now })
+        .in('id', noteIdsToInvoice);
+
+      if (updateNotesError) {
+        console.error('deliveryNotesService.createInvoiceFromNotes update notes error', updateNotesError);
+      }
+
+      for (const ln of lines as any[]) {
+        try {
+          await supabase
+            .from('delivery_note_lines')
+            .update({ invoiced_quantity: ln.quantity })
+            .eq('id', ln.id);
+        } catch (lnError) {
+          console.error('deliveryNotesService.createInvoiceFromNotes update line error', lnError);
+        }
+      }
+
+      return { invoice: invoiceData, lines: invoiceLinesData };
+    } catch (error) {
+      console.error('deliveryNotesService.createInvoiceFromNotes error', error);
+      throw error;
     }
   },
 };
@@ -5725,6 +6812,106 @@ export const apInvoiceLinesService = {
         console.error('Error posting AP invoice to ledger:', jeError);
       }
 
+      // Best-effort: registrar entradas de inventario para líneas con productos
+      try {
+        // Cargar líneas con detalle de ítems de inventario
+        const { data: invLines, error: invLinesError } = await supabase
+          .from('ap_invoice_lines')
+          .select(`
+            *,
+            inventory_items (
+              id,
+              name,
+              current_stock,
+              cost_price,
+              average_cost,
+              warehouse_id,
+              last_purchase_price
+            )
+          `)
+          .eq('ap_invoice_id', apInvoiceId);
+
+        if (invLinesError) {
+          console.error('apInvoiceLinesService.createMany inventory lines error', invLinesError);
+        } else if (invLines && invLines.length > 0) {
+          // Obtener factura para fecha y número de referencia
+          const { data: invoice, error: invHeaderError } = await supabase
+            .from('ap_invoices')
+            .select('*')
+            .eq('id', apInvoiceId)
+            .maybeSingle();
+
+          if (!invHeaderError && invoice && invoice.user_id) {
+            const userId = invoice.user_id as string;
+            const movementDate = invoice.invoice_date
+              ? String(invoice.invoice_date)
+              : new Date().toISOString().split('T')[0];
+
+            for (const rawLine of invLines as any[]) {
+              if (!rawLine.inventory_item_id) continue;
+
+              const invItem = rawLine.inventory_items as any | null;
+              const rawQty = Number(rawLine.quantity) || 0;
+              const qty = Number.isFinite(rawQty) ? Math.round(rawQty) : 0;
+
+              if (!invItem || qty <= 0) continue;
+
+              const oldStock = Number(invItem.current_stock ?? 0) || 0;
+              const oldAvg =
+                invItem.average_cost != null
+                  ? Number(invItem.average_cost) || 0
+                  : Number(invItem.cost_price) || 0;
+
+              const lineUnitCost = Number(rawLine.unit_price) || 0;
+              const unitCost = lineUnitCost > 0 ? lineUnitCost : oldAvg;
+              const lineCost = qty * unitCost;
+
+              if (lineCost <= 0) continue;
+
+              const newStock = oldStock + qty;
+              const newAvg = newStock > 0 ? (oldAvg * oldStock + unitCost * qty) / newStock : oldAvg;
+
+              // Actualizar maestro de inventario
+              try {
+                if (invItem.id) {
+                  await inventoryService.updateItem(String(invItem.id), {
+                    current_stock: newStock,
+                    last_purchase_price: unitCost,
+                    last_purchase_date: movementDate,
+                    average_cost: newAvg,
+                    cost_price: newAvg,
+                  });
+                }
+              } catch (updateError) {
+                console.error('apInvoiceLinesService.createMany updateItem error', updateError);
+              }
+
+              // Registrar movimiento de entrada de inventario
+              try {
+                await inventoryService.createMovement(userId, {
+                  item_id: invItem.id ? String(invItem.id) : null,
+                  movement_type: 'entry',
+                  quantity: qty,
+                  unit_cost: unitCost,
+                  total_cost: lineCost,
+                  movement_date: movementDate,
+                  reference: invoice.invoice_number || invoice.id,
+                  notes: rawLine.description || invItem.name || null,
+                  source_type: 'ap_invoice',
+                  source_id: apInvoiceId,
+                  source_number: invoice.invoice_number || (apInvoiceId ? String(apInvoiceId) : null),
+                  to_warehouse_id: (invItem as any)?.warehouse_id || null,
+                });
+              } catch (movError) {
+                console.error('apInvoiceLinesService.createMany createMovement error', movError);
+              }
+            }
+          }
+        }
+      } catch (invErr) {
+        console.error('apInvoiceLinesService.createMany unexpected inventory error', invErr);
+      }
+
       return insertedLines;
     } catch (error) {
       console.error('apInvoiceLinesService.createMany error', error);
@@ -5846,7 +7033,7 @@ export const purchaseOrderItemsService = {
         .from('purchase_order_items')
         .select(`
           *,
-          inventory_items (current_stock, name, sku)
+          inventory_items (current_stock, name, sku, cost_price, average_cost, last_purchase_price)
         `)
         .eq('purchase_order_id', orderId)
         .order('created_at', { ascending: true });
@@ -7176,7 +8363,7 @@ export const taxService = {
           totalMonto: acc.totalMonto + (item.monto_facturado || 0),
           totalItbis: acc.totalItbis + (item.itbis_facturado || item.itbis_cobrado || 0),
           totalRetenido: acc.totalRetenido + (item.itbis_retenido || 0),
-          totalISR: acc.totalISR + (item.retencion_renta_terceros || 0)
+          totalISR: acc.totalISR + (item.retencion_renta_terceros || 0),
         }),
         { totalMonto: 0, totalItbis: 0, totalRetenido: 0, totalISR: 0 }
       );
@@ -7185,6 +8372,107 @@ export const taxService = {
     } catch (error) {
       console.error('Error getting Report 607 summary:', error);
       return { totalMonto: 0, totalItbis: 0, totalRetenido: 0, totalISR: 0 };
+    }
+  },
+
+  async getItbisProportionality(period: string) {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) return null;
+
+      const [yearStr, monthStr] = period.split('-');
+      const year = Number(yearStr);
+      const month = Number(monthStr);
+      const startDate = `${period}-01`;
+      const lastDay = new Date(year, month, 0).getDate();
+      const endDate = `${period}-${String(lastDay).padStart(2, '0')}`;
+
+      // Ventas del período
+      const { data: invoices, error: invErr } = await supabase
+        .from('invoices')
+        .select('*')
+        .eq('user_id', user.id)
+        .gte('invoice_date', startDate)
+        .lte('invoice_date', endDate)
+        .neq('status', 'draft');
+
+      if (invErr) throw invErr;
+
+      let totalSales = 0;
+      let taxableSales = 0;
+      let exemptSales = 0;
+      let exemptDestinationSales = 0;
+      let exportSales = 0;
+
+      (invoices || []).forEach((inv: any) => {
+        const amount = Number(inv.total_amount ?? inv.subtotal ?? 0) || 0;
+        const itbis = Number(inv.tax_amount ?? 0) || 0;
+        const docType = (inv.document_type as string) || '';
+
+        totalSales += amount;
+
+        if (docType === 'B16') {
+          exportSales += amount;
+          return;
+        }
+
+        if (itbis > 0) {
+          taxableSales += amount;
+        } else {
+          exemptSales += amount;
+        }
+      });
+
+      // Notas de crédito del período
+      const { data: creditNotes, error: cnErr } = await supabase
+        .from('credit_debit_notes')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('note_type', 'credit')
+        .gte('note_date', startDate)
+        .lte('note_date', endDate);
+
+      if (cnErr) throw cnErr;
+
+      const creditNotesLess30Days = (creditNotes || []).reduce((sum: number, note: any) => {
+        const amt = Number(note.total_amount) || 0;
+        return sum + amt;
+      }, 0);
+
+      // ITBIS sujeto a proporcionalidad: ITBIS de compras del período (reporte 606)
+      const report606Summary = await (this as any).getReport606Summary(period);
+      const itbisSubject = Number(report606Summary?.totalItbis ?? 0) || 0;
+
+      const denominator = Math.max(0, totalSales - exportSales - exemptDestinationSales);
+      let coefficient = 0;
+      if (denominator > 0 && taxableSales > 0) {
+        coefficient = taxableSales / denominator;
+      }
+
+      if (!Number.isFinite(coefficient) || coefficient < 0) coefficient = 0;
+      if (coefficient > 1) coefficient = 1;
+
+      const itbisDeductible = itbisSubject * coefficient;
+      const nonAdmitted = Math.max(0, itbisSubject - itbisDeductible);
+
+      return {
+        period,
+        totalSales,
+        taxableSales,
+        exemptSales,
+        exemptDestinationSales,
+        exportSales,
+        creditNotesLess30Days,
+        coefficient,
+        nonAdmittedProportionality: nonAdmitted,
+        itbisSubject,
+        itbisDeductible,
+      };
+    } catch (error) {
+      console.error('Error calculating ITBIS proportionality:', error);
+      return null;
     }
   },
 
@@ -7238,7 +8526,6 @@ export const taxService = {
         if (insErr) throw insErr;
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Error building Report 608 data:', error);
       throw error;
     }
@@ -8572,6 +9859,7 @@ export const settingsService = {
         address: warehouseData.address ?? null,
         manager: warehouseData.manager ?? null,
         phone: warehouseData.phone ?? null,
+        inventory_account_id: warehouseData.inventory_account_id ?? null,
         active: warehouseData.active !== false,
       };
       const { data, error } = await supabase
@@ -8598,9 +9886,11 @@ export const settingsService = {
       const payload = {
         name: warehouseData.name,
         code: safeCode,
+        location: warehouseData.location ?? null,
         address: warehouseData.address ?? null,
         manager: warehouseData.manager ?? null,
         phone: warehouseData.phone ?? null,
+        inventory_account_id: warehouseData.inventory_account_id ?? null,
         active: warehouseData.active !== false,
       };
       const { data, error } = await supabase
@@ -9020,6 +10310,76 @@ export const assetDisposalService = {
       if (error) throw error;
     } catch (error) {
       console.error('assetDisposalService.delete error', error);
+      throw error;
+    }
+  },
+};
+
+/* ==========================================================
+  Fixed Asset Depreciation Types Service
+  Tabla: fixed_asset_depreciation_types
+========================================================== */
+export const assetDepreciationTypesService = {
+  async getAll(userId: string) {
+    try {
+      if (!userId) return [];
+      const { data, error } = await supabase
+        .from('fixed_asset_depreciation_types')
+        .select('*')
+        .eq('user_id', userId)
+        .order('code');
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async create(userId: string, payload: any) {
+    try {
+      if (!userId) throw new Error('userId required');
+      const insertPayload = {
+        ...payload,
+        user_id: userId,
+      };
+      const { data, error } = await supabase
+        .from('fixed_asset_depreciation_types')
+        .insert(insertPayload)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('assetDepreciationTypesService.create error', error);
+      throw error;
+    }
+  },
+
+  async update(id: string, payload: any) {
+    try {
+      const { data, error } = await supabase
+        .from('fixed_asset_depreciation_types')
+        .update(payload)
+        .eq('id', id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('assetDepreciationTypesService.update error', error);
+      throw error;
+    }
+  },
+
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('fixed_asset_depreciation_types')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('assetDepreciationTypesService.delete error', error);
       throw error;
     }
   },
