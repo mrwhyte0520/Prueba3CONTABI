@@ -1322,7 +1322,7 @@ export default function POSPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
                   <input
                     type="text"
-                    value={editCustomer.name}
+                    value={editCustomer.name || ''}
                     onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), name: e.target.value }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     required
@@ -1332,7 +1332,7 @@ export default function POSPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Documento *</label>
                   <input
                     type="text"
-                    value={editCustomer.document}
+                    value={editCustomer.document || ''}
                     onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), document: formatDocument(e.target.value) }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     required
@@ -1342,7 +1342,7 @@ export default function POSPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono <span className="text-red-500">*</span></label>
                   <input
                     type="tel"
-                    value={editCustomer.phone}
+                    value={editCustomer.phone || ''}
                     onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), phone: formatPhone(e.target.value) }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
@@ -1351,7 +1351,7 @@ export default function POSPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                   <input
                     type="email"
-                    value={editCustomer.email}
+                    value={editCustomer.email || ''}
                     onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), email: e.target.value }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
@@ -1359,7 +1359,7 @@ export default function POSPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
                   <textarea
-                    value={editCustomer.address}
+                    value={editCustomer.address || ''}
                     onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), address: e.target.value }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     rows={2}
@@ -1368,7 +1368,7 @@ export default function POSPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Cliente</label>
                   <select
-                    value={editCustomer.type}
+                    value={editCustomer.type || 'regular'}
                     onChange={(e) => setEditCustomer(prev => ({ ...(prev as Customer), type: e.target.value as 'regular' | 'vip' }))}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >

@@ -86,13 +86,12 @@ export default function CustomersPage() {
     return name.includes('cuentas por cobrar');
   });
 
-  // Cuentas de anticipos de clientes: cuentas de pasivo posteables (opcionalmente que contengan "anticipo" en el nombre)
+  // Cuentas de anticipos de clientes: cuentas de pasivo posteables y ACTIVAS
   const advanceAccounts = accounts.filter((acc) => {
     if (!acc.allowPosting) return false;
     if (acc.type !== 'liability') return false;
-    const name = String(acc.name || '').toLowerCase();
-    // Si el catálogo tiene nombres específicos, esto ayuda a filtrar; si no, al menos se limita a pasivos posteables
-    return name.includes('anticipo') || name.includes('anticipos') || true;
+    if (acc.isActive === false) return false; // Solo cuentas activas
+    return true;
   });
 
   const getCustomerStatusColor = (status: string) => {

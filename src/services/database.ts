@@ -1829,7 +1829,27 @@ export const chartAccountsService = {
         .order('code');
 
       if (error) return handleDatabaseError(error, []);
-      return data ?? [];
+
+      // Normalizar el formato para que todas las pantallas puedan usar
+      // propiedades camelCase como isActive / allowPosting / isBankAccount,
+      // sin perder los campos originales snake_case.
+      return (data ?? []).map((row: any) => ({
+        ...row,
+        id: row.id,
+        code: row.code || '',
+        name: row.name || '',
+        type: row.type || 'asset',
+        parentId: row.parent_id || undefined,
+        level: row.level || 1,
+        balance: row.balance || 0,
+        isActive: row.is_active !== false,
+        description: row.description || '',
+        normalBalance: row.normal_balance || 'debit',
+        allowPosting: row.allow_posting !== false,
+        isBankAccount: row.is_bank_account === true,
+        createdAt: row.created_at || null,
+        updatedAt: row.updated_at || null,
+      }));
     } catch (error) {
       return handleDatabaseError(error, []);
     }
