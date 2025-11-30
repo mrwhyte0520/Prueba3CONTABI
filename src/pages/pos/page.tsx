@@ -1105,25 +1105,24 @@ export default function POSPage() {
 
         {/* Controles de Paginación */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between bg-white rounded-lg shadow-sm border border-gray-200 px-6 py-4">
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-600">
-                Mostrando {startIndex + 1}-{Math.min(endIndex, filteredProducts.length)} de {filteredProducts.length} productos
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 px-4 py-3">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+              <span className="text-xs sm:text-sm text-gray-600 whitespace-nowrap">
+                {startIndex + 1}-{Math.min(endIndex, filteredProducts.length)} de {filteredProducts.length}
               </span>
-            </div>
-            
-            <div className="flex items-center space-x-2">
+              
+              <div className="flex items-center space-x-1 sm:space-x-2">
               <button
                 onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                 disabled={currentPage === 1}
-                className={`px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors ${
+                className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg flex items-center space-x-1 text-sm transition-colors ${
                   currentPage === 1
                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
-                <i className="ri-arrow-left-s-line"></i>
-                <span>Anterior</span>
+                <i className="ri-arrow-left-s-line text-base"></i>
+                <span className="hidden sm:inline">Anterior</span>
               </button>
 
               <div className="flex items-center space-x-1">
@@ -1134,7 +1133,7 @@ export default function POSPage() {
                     <button
                       key={page}
                       onClick={() => setCurrentPage(page)}
-                      className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                      className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg text-sm font-medium transition-colors ${
                         currentPage === page
                           ? 'bg-blue-600 text-white'
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -1148,7 +1147,7 @@ export default function POSPage() {
                   <>
                     <button
                       onClick={() => setCurrentPage(1)}
-                      className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                      className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg text-sm font-medium transition-colors ${
                         currentPage === 1
                           ? 'bg-blue-600 text-white'
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -1158,7 +1157,7 @@ export default function POSPage() {
                     </button>
                     
                     {currentPage > 3 && (
-                      <span className="px-2 text-gray-400">...</span>
+                      <span className="px-1 text-gray-400 text-sm">...</span>
                     )}
                     
                     {Array.from({ length: 3 }, (_, i) => {
@@ -1168,7 +1167,7 @@ export default function POSPage() {
                         <button
                           key={page}
                           onClick={() => setCurrentPage(page)}
-                          className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                          className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg text-sm font-medium transition-colors ${
                             currentPage === page
                               ? 'bg-blue-600 text-white'
                               : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -1180,12 +1179,12 @@ export default function POSPage() {
                     })}
                     
                     {currentPage < totalPages - 2 && (
-                      <span className="px-2 text-gray-400">...</span>
+                      <span className="px-1 text-gray-400 text-sm">...</span>
                     )}
                     
                     <button
                       onClick={() => setCurrentPage(totalPages)}
-                      className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                      className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg text-sm font-medium transition-colors ${
                         currentPage === totalPages
                           ? 'bg-blue-600 text-white'
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -1200,15 +1199,16 @@ export default function POSPage() {
               <button
                 onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                 disabled={currentPage === totalPages}
-                className={`px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors ${
+                className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg flex items-center space-x-1 text-sm transition-colors ${
                   currentPage === totalPages
                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
-                <span>Siguiente</span>
-                <i className="ri-arrow-right-s-line"></i>
+                <span className="hidden sm:inline">Siguiente</span>
+                <i className="ri-arrow-right-s-line text-base"></i>
               </button>
+              </div>
             </div>
           </div>
         )}
