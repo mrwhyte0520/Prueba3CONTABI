@@ -1842,7 +1842,7 @@ export const chartAccountsService = {
       // 1. Cargar cuentas activas con su tipo y saldo normal
       const { data: accounts, error: accError } = await supabase
         .from('chart_accounts')
-        .select('id, code, name, type, normal_balance, is_active')
+        .select('id, code, name, type, normal_balance, is_active, is_bank_account, allow_posting')
         .eq('user_id', userId)
         .eq('is_active', true)
         .order('code');
@@ -1892,6 +1892,8 @@ export const chartAccountsService = {
           code: acc.code || '',
           name: acc.name || '',
           type: acc.type || 'asset',
+          isBankAccount: Boolean(acc.is_bank_account),
+          allowPosting: acc.allow_posting !== false,
           normalBalance: normal,
           debit: sum.debit,
           credit: sum.credit,

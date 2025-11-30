@@ -145,9 +145,9 @@ export default function AdvancedKPIDashboard() {
       const fromDate = ranges[0].from;
       const toDate = ranges[ranges.length - 1].to;
 
-      const [incomeStmt, accounts, settings] = await Promise.all([
+      const [incomeStmt, accountBalances, settings] = await Promise.all([
         chartAccountsService.generateIncomeStatement(uid, fromDate, toDate),
-        chartAccountsService.getAll(uid),
+        chartAccountsService.getBalances(uid),
         accountingSettingsService.get(uid),
       ]);
 
@@ -164,16 +164,28 @@ export default function AdvancedKPIDashboard() {
       const arId = settings?.ar_account_id || null;
       const apId = settings?.ap_account_id || null;
 
-      (accounts || []).forEach((acc: any) => {
+      const arRoot = arId
+        ? (accountBalances || []).find((acc: any) => acc.id === arId)
+        : null;
+      const apRoot = apId
+        ? (accountBalances || []).find((acc: any) => acc.id === apId)
+        : null;
+
+      (accountBalances || []).forEach((acc: any) => {
         const bal = Number(acc.balance || 0);
+        const code = String(acc.code || '');
+        const isPosting = acc.allowPosting !== false;
+
         if (acc.isBankAccount) {
           bankTotal += bal;
           bankList.push({ id: acc.id, code: acc.code, name: acc.name, balance: bal });
         }
-        if (arId && acc.id === arId) {
+
+        if (isPosting && arRoot && code.startsWith(String(arRoot.code || ''))) {
           arTotal += bal;
         }
-        if (apId && acc.id === apId) {
+
+        if (isPosting && apRoot && code.startsWith(String(apRoot.code || ''))) {
           apTotal += Math.abs(bal);
         }
       });
