@@ -831,7 +831,7 @@ export default function APInvoicesPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Orden de Compra</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Orden de Compra <span className="text-red-500">*</span></label>
                     <select
                       value={headerForm.purchaseOrderId}
                       onChange={(e) => handlePurchaseOrderChange(e.target.value)}

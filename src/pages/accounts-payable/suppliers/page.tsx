@@ -513,7 +513,7 @@ export default function SuppliersPage() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Buscar</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Buscar <span className="text-red-500">*</span></label>
               <div className="relative">
                 <input 
                   type="text"
@@ -768,7 +768,7 @@ export default function SuppliersPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de documento</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de documento <span className="text-red-500">*</span></label>
                     <select
                       value={formData.documentType}
                       onChange={(e) => setFormData({ ...formData, documentType: e.target.value })}

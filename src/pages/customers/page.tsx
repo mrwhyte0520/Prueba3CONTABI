@@ -341,7 +341,7 @@ export default function CustomersPage() {
                 <input type="text" value={form.document} onChange={e => setForm(prev => ({ ...prev, document: e.target.value }))} onBlur={e => setForm(prev => ({ ...prev, document: formatDocument(e.target.value) }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="001-1234567-8" required />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono <span className="text-red-500">*</span></label>
                 <input type="tel" value={form.phone} onChange={e => setForm(prev => ({ ...prev, phone: e.target.value }))} onBlur={e => setForm(prev => ({ ...prev, phone: formatPhone(e.target.value) }))} autoComplete="off" spellCheck={false} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="809-123-4567" />
               </div>
               <div>

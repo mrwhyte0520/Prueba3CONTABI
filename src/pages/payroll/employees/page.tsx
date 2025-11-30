@@ -534,7 +534,7 @@ export default function EmployeesPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de Nacimiento</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de Nacimiento <span className="text-red-500">*</span></label>
                     <input
                       type="date"
                       value={formData.birth_date || ''}
@@ -663,7 +663,7 @@ export default function EmployeesPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Estado</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Estado <span className="text-red-500">*</span></label>
                   <select
                     value={formData.status || 'active'}
                     onChange={(e) => setFormData({...formData, status: e.target.value})}

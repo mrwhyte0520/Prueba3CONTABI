@@ -255,7 +255,7 @@ export default function SalesRepsPage() {
               </div>
               <form onSubmit={handleSave} className="p-6 space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nombre <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={form.name}

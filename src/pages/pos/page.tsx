@@ -1339,7 +1339,7 @@ export default function POSPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono <span className="text-red-500">*</span></label>
                   <input
                     type="tel"
                     value={editCustomer.phone}

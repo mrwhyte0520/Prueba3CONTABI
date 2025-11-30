@@ -356,7 +356,7 @@ export default function PaymentsPage() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Estado</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Estado <span className="text-red-500">*</span></label>
               <select 
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value)}
@@ -500,7 +500,7 @@ export default function PaymentsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Factura (CxP)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Factura (CxP) <span className="text-red-500">*</span></label>
                     <select
                       value={formData.invoice}
                       onChange={(e) => setFormData({ ...formData, invoice: e.target.value })}
@@ -542,7 +542,7 @@ export default function PaymentsPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Cuenta Bancaria</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Cuenta Bancaria <span className="text-red-500">*</span></label>
                     <select 
                       value={formData.bankAccount}
                       onChange={(e) => setFormData({...formData, bankAccount: e.target.value})}

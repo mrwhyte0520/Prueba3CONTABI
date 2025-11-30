@@ -305,7 +305,7 @@ export default function PayrollConfigurationPage() {
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Información de la Empresa</h3>
         <form onSubmit={handleSaveConfig} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Nombre de la Empresa</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nombre de la Empresa <span className="text-red-500">*</span></label>
             <input
               type="text"
               value={config?.company_name || ''}
@@ -637,7 +637,7 @@ export default function PayrollConfigurationPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Monto Hasta</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Monto Hasta <span className="text-red-500">*</span></label>
               <input
                 type="number" min="0"
                 step="0.01"
@@ -659,7 +659,7 @@ export default function PayrollConfigurationPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Monto Fijo</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Monto Fijo <span className="text-red-500">*</span></label>
               <input
                 type="number" min="0"
                 step="0.01"

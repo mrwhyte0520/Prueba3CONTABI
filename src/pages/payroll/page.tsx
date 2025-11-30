@@ -1507,7 +1507,7 @@ export default function PayrollPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono <span className="text-red-500">*</span></label>
                     <input
                       type="tel"
                       value={formData.phone || ''}
@@ -1575,7 +1575,7 @@ export default function PayrollPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Bancaria</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Bancaria <span className="text-red-500">*</span></label>
                     <input
                       type="text"
                       value={formData.bank_account || ''}
@@ -1626,7 +1626,7 @@ export default function PayrollPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Descripción <span className="text-red-500">*</span></label>
                     <textarea
                       value={formData.description || ''}
                       onChange={(e) => setFormData({...formData, description: e.target.value})}

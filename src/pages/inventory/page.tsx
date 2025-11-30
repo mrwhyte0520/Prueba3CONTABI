@@ -2384,7 +2384,7 @@ export default function InventoryPage() {
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Factura afectada</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Factura afectada <span className="text-red-500">*</span></label>
                       <select
                         value={formData.related_invoice_id || ''}
                         onChange={(e) => {
@@ -2650,7 +2650,7 @@ export default function InventoryPage() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de transferencia</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de transferencia <span className="text-red-500">*</span></label>
                       <input
                         type="date"
                         value={formData.transfer_date || new Date().toISOString().slice(0, 10)}

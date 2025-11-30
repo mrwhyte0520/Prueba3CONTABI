@@ -390,7 +390,7 @@ const Formulario607Page: React.FC = () => {
       <div className="bg-white p-6 rounded-lg shadow-md">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Buscar</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Buscar <span className="text-red-500">*</span></label>
             <input
               type="text"
               placeholder="NCF, cliente, RNC..."
