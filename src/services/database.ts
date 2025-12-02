@@ -3059,12 +3059,29 @@ export const financialReportsService = {
         byAccount[accountId].total_credit += credit;
       });
 
-      // Calcular saldo según el balance normal de la cuenta
+      // Calcular saldo según el TIPO de cuenta (más confiable que normal_balance)
       Object.values(byAccount).forEach((acc: any) => {
-        if (acc.normal_balance === 'credit') {
-          acc.balance = acc.total_credit - acc.total_debit;
-        } else {
+        const accountType = (acc.type || '').toLowerCase();
+        
+        // Cuentas con balance normal DEBIT (Débito - Crédito)
+        if (accountType === 'asset' || accountType === 'activo' || 
+            accountType === 'expense' || accountType === 'gasto' ||
+            accountType === 'cost' || accountType === 'costo' || accountType === 'costos') {
           acc.balance = acc.total_debit - acc.total_credit;
+        } 
+        // Cuentas con balance normal CREDIT (Crédito - Débito)
+        else if (accountType === 'liability' || accountType === 'pasivo' ||
+                 accountType === 'equity' || accountType === 'patrimonio' ||
+                 accountType === 'income' || accountType === 'ingreso') {
+          acc.balance = acc.total_credit - acc.total_debit;
+        }
+        // Fallback al normal_balance si el tipo no coincide
+        else {
+          if (acc.normal_balance === 'credit') {
+            acc.balance = acc.total_credit - acc.total_debit;
+          } else {
+            acc.balance = acc.total_debit - acc.total_credit;
+          }
         }
       });
 

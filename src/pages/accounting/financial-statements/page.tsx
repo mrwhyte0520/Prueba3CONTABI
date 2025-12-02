@@ -3,6 +3,22 @@ import { exportToExcel } from '../../../lib/excel';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { financialReportsService, chartAccountsService, financialStatementsService } from '../../../services/database';
+import * as XLSX from 'xlsx';
+
+// Estilos CSS para impresión
+const printStyles = `
+  @media print {
+    @page { size: portrait; margin: 1cm; }
+    body * { visibility: hidden; }
+    #printable-statement, #printable-statement * { visibility: visible; }
+    #printable-statement { position: absolute; left: 0; top: 0; width: 100%; }
+    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    table { page-break-inside: avoid; font-size: 10pt; }
+    thead { display: table-header-group; }
+    tr { page-break-inside: avoid; }
+    .print-hidden { display: none !important; }
+  }
+`;
 
 interface FinancialStatement {
   id: string;
@@ -105,13 +121,49 @@ export default function FinancialStatementsPage() {
           expenses: []
         };
 
+        // Función helper para identificar cuentas de efecto contrario
+        const isContraAccount = (code: string, name: string, type: string): boolean => {
+          const nameLower = name.toLowerCase();
+          
+          // Depreciación acumulada (activo - efecto contrario)
+          // SOLO si el nombre contiene palabras clave específicas
+          if (type === 'asset' || type === 'activo') {
+            if (nameLower.includes('depreci') || 
+                nameLower.includes('amortiz') || 
+                nameLower.includes('acumulad')) {
+              return true;
+            }
+          }
+          
+          // Devoluciones y descuentos sobre ventas (ingreso - efecto contrario)
+          // SOLO si el nombre contiene palabras clave específicas
+          if (type === 'income' || type === 'ingreso') {
+            if (nameLower.includes('devoluc') || 
+                nameLower.includes('descuent') ||
+                nameLower.includes('rebaj')) {
+              return true;
+            }
+          }
+          
+          // Pérdida en diferencia cambiaria (gasto con efecto contrario en algunos casos)
+          // Estas ya son gastos, no necesitan inversión
+          
+          return false;
+        };
+
         (trialBalance || []).forEach((acc: any) => {
-          const balance = Number(acc.balance) || 0;
+          let balance = Number(acc.balance) || 0;
           if (Math.abs(balance) < 0.005) return; // omitir saldos cero
 
           const code = String(acc.code || '');
           const baseName = String(acc.name || '');
           const label = `${code} - ${baseName}`;
+          
+          // Aplicar efecto contrario si corresponde
+          const isContra = isContraAccount(code, baseName, acc.type);
+          if (isContra) {
+            balance = -balance; // Invertir el signo
+          }
 
           switch (acc.type) {
             case 'asset':
@@ -434,6 +486,34 @@ export default function FinancialStatementsPage() {
 
   const totals = calculateTotals();
 
+  // Función para obtener las fechas formateadas del período
+  const getPeriodDates = () => {
+    const period = selectedPeriod || new Date().toISOString().slice(0, 7); // YYYY-MM
+    const [yearStr, monthStr] = period.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+
+    const formatDate = (date: Date) => {
+      return date.toLocaleDateString('es-DO', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      });
+    };
+
+    return {
+      startDateFormatted: formatDate(startDate),
+      endDateFormatted: formatDate(endDate),
+      periodLabel: `Del ${formatDate(startDate)} al ${formatDate(endDate)}`,
+      asOfDateLabel: `Al ${formatDate(endDate)}`
+    };
+  };
+
+  const periodDates = getPeriodDates();
+
   // Derivados para Estado de Resultados en formato profesional
   const grossProfit = totals.totalRevenue - totals.totalCosts;
 
@@ -579,35 +659,37 @@ export default function FinancialStatementsPage() {
         console.error('No se pudo obtener el nombre de la empresa para el Balance:', err);
       }
 
-      const today = new Date();
-      const asOfDate = today.toLocaleDateString('es-DO', {
-        year: 'numeric',
-        month: 'long',
-        day: '2-digit',
-      });
-
       const rows: any[] = [];
 
       // Encabezado (solo texto en la primera columna)
       rows.push([companyName || '', '', '', null]);
       rows.push(['ESTADO DE SITUACION FINANCIERA', '', '', null]);
-      rows.push([`AL ${asOfDate.toUpperCase()}`, '', '', null]);
+      rows.push([periodDates.asOfDateLabel.toUpperCase(), '', '', null]);
       rows.push(['VALORES EN DOP', '', '', null]);
       rows.push(['', '', '', null]);
 
       // ACTIVOS
       rows.push(['ACTIVOS', '', '', null]);
-      rows.push(['ACTIVOS CIRCULANTES', '', '', null]);
-      financialData.assets.current.forEach((i) => {
-        rows.push([`  ${i.name}`, '', '', i.amount]);
-      });
+      rows.push(['ACTIVOS CORRIENTES', '', '', null]);
+      rows.push(['  Efectivo en Caja y Bancos', '', '', efectivoCajaBancos]);
+      rows.push(['  Cuentas por Cobrar Clientes', '', '', cxcClientes]);
+      rows.push(['  Otras Cuentas por Cobrar', '', '', otrasCxc]);
+      rows.push(['  Inventarios', '', '', inventarios]);
+      rows.push(['  Gastos Pagados por Anticipado', '', '', gastosPagadosAnticipado]);
+      rows.push(['  Anticipos sobre la Renta Pagados', '', '', anticiposISR]);
       rows.push(['  Total Activos Corrientes', '', '', totals.totalCurrentAssets]);
       rows.push(['', '', '', null]);
 
+      rows.push(['ACTIVOS FIJOS', '', '', null]);
+      rows.push(['  Activos Fijos', '', '', activosFijos]);
+      rows.push(['', '', '', null]);
+
       rows.push(['OTROS ACTIVOS', '', '', null]);
-      financialData.assets.nonCurrent.forEach((i) => {
-        rows.push([`  ${i.name}`, '', '', i.amount]);
-      });
+      rows.push(['  Inversiones en Otras Compañías', '', '', invAcciones]);
+      rows.push(['  Certificados Bancarios y Títulos Financieros', '', '', invCertificados]);
+      rows.push(['  Fianzas y Depósitos', '', '', fianzasDepositos]);
+      rows.push(['  Licencias y Softwares', '', '', licenciasSoftware]);
+      rows.push(['  Otros Activos', '', '', otrosActivos]);
       rows.push(['  Total Otros Activos', '', '', totals.totalNonCurrentAssets]);
       rows.push(['', '', '', null]);
 
@@ -617,27 +699,26 @@ export default function FinancialStatementsPage() {
       // PASIVOS Y PATRIMONIO
       rows.push(['PASIVO Y PATRIMONIO DE LOS SOCIOS', '', '', null]);
       rows.push(['PASIVOS CIRCULANTES', '', '', null]);
-      financialData.liabilities.current.forEach((i) => {
-        rows.push([`  ${i.name}`, '', '', i.amount]);
-      });
-      rows.push(['  Total Pasivos Corrientes', '', '', totals.totalCurrentLiabilities]);
+      rows.push(['  Cuentas por Pagar Proveedores', '', '', cppProveedores]);
+      rows.push(['  Acumulaciones y Provisiones por Pagar', '', '', acumulacionesPorPagar]);
+      rows.push(['  Préstamos por Pagar a Corto Plazo', '', '', prestamosCortoPlazo]);
+      rows.push(['  Otras Cuentas por Pagar', '', '', otrasCxPCorrientes]);
+      rows.push(['  Total Pasivos Corrientes', '', '', pasivosCorrientes]);
       rows.push(['', '', '', null]);
 
       rows.push(['PASIVOS A LARGO PLAZO', '', '', null]);
-      financialData.liabilities.nonCurrent.forEach((i) => {
-        rows.push([`  ${i.name}`, '', '', i.amount]);
-      });
-      rows.push(['  Total Pasivos a Largo Plazo', '', '', totals.totalNonCurrentLiabilities]);
+      rows.push(['  Pasivos a Largo Plazo', '', '', pasivosLargoPlazo]);
+      rows.push(['  Total Pasivos a Largo Plazo', '', '', pasivosLargoPlazo]);
       rows.push(['', '', '', null]);
 
       rows.push(['TOTAL PASIVOS', '', '', totals.totalLiabilities]);
       rows.push(['', '', '', null]);
 
       rows.push(['PATRIMONIO', '', '', null]);
-      financialData.equity.forEach((i) => {
-        rows.push([`  ${i.name}`, '', '', i.amount]);
-      });
-      rows.push(['  Total Patrimonio', '', '', totals.totalEquity]);
+      rows.push(['  Capital Suscrito y Pagado', '', '', capitalSuscrito]);
+      rows.push(['  Reservas (incluye Reserva Legal)', '', '', reservas]);
+      rows.push(['  Beneficios o Pérdidas Acumuladas', '', '', resultadosAcumulados]);
+      rows.push(['  Total Patrimonio', '', '', patrimonioTotal]);
       rows.push(['', '', '', null]);
 
       rows.push(['TOTAL PASIVOS Y PATRIMONIO', '', '', totals.totalLiabilities + totals.totalEquity]);
@@ -831,9 +912,12 @@ export default function FinancialStatementsPage() {
 
   return (
     <DashboardLayout>
+      {/* Estilos de impresión */}
+      <style dangerouslySetInnerHTML={{ __html: printStyles }} />
+      
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center print-hidden">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Estados Financieros</h1>
             <p className="text-gray-600">Generación y gestión de reportes financieros</p>
@@ -857,7 +941,7 @@ export default function FinancialStatementsPage() {
         </div>
 
         {/* Tabs */}
-        <div className="border-b border-gray-200">
+        <div className="border-b border-gray-200 print-hidden">
           <nav className="-mb-px flex space-x-8">
             {[
               { id: 'statements', label: 'Estados Generados', icon: 'ri-file-list-3-line' },
@@ -980,22 +1064,31 @@ export default function FinancialStatementsPage() {
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
               {/* Header con botón de descarga */}
-              <div className="flex justify-end mb-4">
+              <div className="flex justify-end gap-2 mb-4 print-hidden">
                 <button
                   onClick={downloadExpensesStatementExcel}
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
                 >
                   <i className="ri-download-line mr-2"></i>
-                  Descargar Excel
+                  Excel
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                >
+                  <i className="ri-file-pdf-line mr-2"></i>
+                  PDF
                 </button>
               </div>
 
+              {/* Contenido para impresión */}
+              <div id="printable-statement">
               {/* Header y título */}
               <div className="text-center mb-8">
                 <h1 className="text-base font-semibold text-gray-800 mb-1">
                   RESUMEN DE LOS GASTOS DE PERSONAL, DE VENTAS Y ADMINISTRATIVOS
                 </h1>
-                <p className="text-sm text-gray-700 mb-0.5">Del 1ro. de Enero del 2024 al 31 de Diciembre del 2024</p>
+                <p className="text-sm text-gray-700 mb-0.5">{periodDates.periodLabel}</p>
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -1007,7 +1100,7 @@ export default function FinancialStatementsPage() {
                   </h2>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex justify-end print-hidden">
                   <label className="inline-flex items-center space-x-2 text-sm text-gray-700">
                     <input
                       type="checkbox"
@@ -1127,6 +1220,7 @@ export default function FinancialStatementsPage() {
                   </div>
                 </div>
               </div>
+              </div> {/* Cierre de printable-statement */}
             </div>
           </div>
         )}
@@ -1135,20 +1229,29 @@ export default function FinancialStatementsPage() {
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
               {/* Header con botón de descarga */}
-              <div className="flex justify-end mb-4">
+              <div className="flex justify-end gap-2 mb-4 print-hidden">
                 <button
                   onClick={downloadCostOfSalesExcel}
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
                 >
                   <i className="ri-download-line mr-2"></i>
-                  Descargar Excel
+                  Excel
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                >
+                  <i className="ri-file-pdf-line mr-2"></i>
+                  PDF
                 </button>
               </div>
 
+              {/* Contenido para impresión */}
+              <div id="printable-statement">
               {/* Header y título */}
               <div className="text-center mb-8">
                 <h1 className="text-base font-semibold text-gray-800 mb-1">NOTAS A LOS ESTADOS FINANCIEROS</h1>
-                <p className="text-sm text-gray-700 mb-0.5">Del 1ro. de Enero del 2024 al 31 de Diciembre del 2024</p>
+                <p className="text-sm text-gray-700 mb-0.5">{periodDates.periodLabel}</p>
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -1221,6 +1324,7 @@ export default function FinancialStatementsPage() {
                   </div>
                 </div>
               </div>
+              </div> {/* Cierre de printable-statement */}
             </div>
           </div>
         )}
@@ -1229,20 +1333,29 @@ export default function FinancialStatementsPage() {
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
               {/* Header con botón de descarga */}
-              <div className="flex justify-end mb-4">
+              <div className="flex justify-end gap-2 mb-4 print-hidden">
                 <button
                   onClick={downloadBalanceSheetExcel}
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
                 >
                   <i className="ri-download-line mr-2"></i>
-                  Descargar Excel
+                  Excel
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                >
+                  <i className="ri-file-pdf-line mr-2"></i>
+                  PDF
                 </button>
               </div>
 
+              {/* Contenido para impresión */}
+              <div id="printable-statement">
               {/* Título centrado estilo profesional */}
               <div className="text-center mb-8">
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE SITUACIÓN FINANCIERA</h1>
-                <p className="text-sm text-gray-700 mb-0.5">A LA FECHA ACTUAL</p>
+                <p className="text-sm text-gray-700 mb-0.5">{periodDates.asOfDateLabel}</p>
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -1427,6 +1540,7 @@ export default function FinancialStatementsPage() {
                   </div>
                 </div>
               </div>
+              </div> {/* Cierre de printable-statement */}
             </div>
           </div>
         )}
@@ -1435,20 +1549,29 @@ export default function FinancialStatementsPage() {
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
               {/* Header con botón de descarga */}
-              <div className="flex justify-end mb-4">
+              <div className="flex justify-end gap-2 mb-4 print-hidden">
                 <button
                   onClick={downloadIncomeStatementExcel}
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
                 >
                   <i className="ri-download-line mr-2"></i>
-                  Descargar Excel
+                  Excel
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                >
+                  <i className="ri-file-pdf-line mr-2"></i>
+                  PDF
                 </button>
               </div>
 
+              {/* Contenido para impresión */}
+              <div id="printable-statement">
               {/* Título centrado estilo profesional */}
               <div className="text-center mb-8">
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE RESULTADOS</h1>
-                <p className="text-sm text-gray-700 mb-0.5">DEL 1 DE ENERO DE 2024 AL 31 DE DICIEMBRE DE 2024</p>
+                <p className="text-sm text-gray-700 mb-0.5">{periodDates.periodLabel}</p>
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -1578,6 +1701,7 @@ export default function FinancialStatementsPage() {
                   </div>
                 </div>
               </div>
+              </div> {/* Cierre de printable-statement */}
             </div>
           </div>
         )}
@@ -1586,20 +1710,29 @@ export default function FinancialStatementsPage() {
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
               {/* Header con botón de descarga */}
-              <div className="flex justify-end mb-4">
+              <div className="flex justify-end gap-2 mb-4 print-hidden">
                 <button
                   onClick={downloadCashFlowExcel}
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
                 >
                   <i className="ri-download-line mr-2"></i>
-                  Descargar Excel
+                  Excel
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                >
+                  <i className="ri-file-pdf-line mr-2"></i>
+                  PDF
                 </button>
               </div>
 
+              {/* Contenido para impresión */}
+              <div id="printable-statement">
               {/* Título centrado estilo profesional */}
               <div className="text-center mb-8">
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE FLUJOS DE EFECTIVO</h1>
-                <p className="text-sm text-gray-700 mb-0.5">DEL 1 DE ENERO DE 2024 AL 31 DE DICIEMBRE DE 2024</p>
+                <p className="text-sm text-gray-700 mb-0.5">{periodDates.periodLabel}</p>
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -1748,6 +1881,7 @@ export default function FinancialStatementsPage() {
                   </div>
                 );
               })()}
+              </div> {/* Cierre de printable-statement */}
             </div>
           </div>
         )}
