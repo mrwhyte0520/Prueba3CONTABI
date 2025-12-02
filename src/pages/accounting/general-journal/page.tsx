@@ -3,6 +3,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+import { resolveTenantId } from '../../../services/database';
 
 interface JournalEntry {
   id: string;
@@ -107,6 +108,9 @@ const GeneralJournalPage: React.FC = () => {
     try {
       setLoading(true);
       
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return;
+      
       // Intentar cargar desde Supabase
       const { data: entriesData, error: entriesError } = await supabase
         .from('journal_entries')
@@ -120,20 +124,20 @@ const GeneralJournalPage: React.FC = () => {
             )
           )
         `)
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('entry_date', { ascending: false });
 
       const { data: accountsData, error: accountsError } = await supabase
         .from('chart_accounts')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .eq('is_active', true)
         .order('code');
 
       const { data: periodsData, error: periodsError } = await supabase
         .from('accounting_periods')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('start_date', { ascending: false });
 
       if (!entriesError && !accountsError && !periodsError) {
@@ -189,6 +193,12 @@ const GeneralJournalPage: React.FC = () => {
         line.account_id && (line.debit_amount > 0 || line.credit_amount > 0)
       );
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        alert('Error: No se pudo resolver el tenant');
+        return;
+      }
+
       try {
         if (isEditing && editingEntryId) {
           // Actualizar asiento existente
@@ -202,7 +212,7 @@ const GeneralJournalPage: React.FC = () => {
               total_credit: totalCredit,
             })
             .eq('id', editingEntryId)
-            .eq('user_id', user.id)
+            .eq('user_id', tenantId)
             .select()
             .single();
 
@@ -235,7 +245,7 @@ const GeneralJournalPage: React.FC = () => {
           const entryNumber = `JE-${Date.now().toString().slice(-6)}`;
 
           const entryData = {
-            user_id: user.id,
+            user_id: tenantId,
             entry_number: entryNumber,
             entry_date: formData.entry_date,
             description: formData.description,

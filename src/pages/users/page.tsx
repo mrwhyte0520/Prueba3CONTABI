@@ -9,7 +9,7 @@ interface RolePermission { role_id: string; permission_id: string }
 interface UserRole { id: string; user_id: string; role_id: string }
 
 const APP_MODULES = [
-  'dashboard','accounting','pos','sales','products','inventory','fixed-assets','accounts-receivable','accounts-payable','billing','taxes','plans','settings','customers','users'
+  'dashboard','accounting','banks-module','pos','sales','products','inventory','fixed-assets','accounts-receivable','accounts-payable','billing','taxes','plans','settings','customers','users'
 ];
 
 export default function UsersPage() {
@@ -73,7 +73,7 @@ export default function UsersPage() {
         try {
           await supabase
             .from('user_roles')
-            .insert({ user_id: createdUser.id, role_id: newUserRoleId });
+            .insert({ user_id: createdUser.id, role_id: newUserRoleId, owner_user_id: user.id });
         } catch (err) {
           console.error('Error al asignar rol al nuevo usuario:', err);
         }

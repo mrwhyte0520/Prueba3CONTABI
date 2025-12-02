@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
+import { resolveTenantId } from '../../../services/database';
 
 interface AccountingPeriod {
   id: string;
@@ -47,11 +48,14 @@ const AccountingPeriodsPage: React.FC = () => {
     try {
       setLoading(true);
       
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return;
+      
       // Intentar cargar desde Supabase
       const { data: periodsData, error } = await supabase
         .from('accounting_periods')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('start_date', { ascending: false });
 
       if (!error && periodsData) {
@@ -176,11 +180,17 @@ const AccountingPeriodsPage: React.FC = () => {
         total_credits: 0
       };
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        alert('Error: No se pudo resolver el tenant');
+        return;
+      }
+
       try {
         const { data, error } = await supabase
           .from('accounting_periods')
           .insert([{
-            user_id: user.id,
+            user_id: tenantId,
             name: newPeriod.name,
             start_date: newPeriod.start_date,
             end_date: newPeriod.end_date,
@@ -664,7 +674,7 @@ const AccountingPeriodsPage: React.FC = () => {
                     Año Fiscal
                   </label>
                   <input
-                    type="number" min="0"
+                    type="number"
                     value={formData.fiscal_year}
                     onChange={(e) => setFormData(prev => ({ ...prev, fiscal_year: e.target.value }))}
                     min="2020"

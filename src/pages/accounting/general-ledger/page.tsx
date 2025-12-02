@@ -3,6 +3,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { exportToExcelStyled } from '../../../utils/exportImportUtils';
+import { resolveTenantId } from '../../../services/database';
 
 interface Account {
   id: string;
@@ -88,17 +89,20 @@ const GeneralLedgerPage: React.FC = () => {
     try {
       setLoading(true);
       
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return;
+      
       const { data: accountsData, error: accountsError } = await supabase
         .from('chart_accounts')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .eq('is_active', true)
         .order('code');
 
       const { data: periodsData, error: periodsError } = await supabase
         .from('accounting_periods')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('start_date', { ascending: false });
 
       if (!accountsError && accountsData && !periodsError && periodsData) {
