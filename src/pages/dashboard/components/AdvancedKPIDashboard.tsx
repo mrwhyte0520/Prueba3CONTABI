@@ -207,21 +207,21 @@ export default function AdvancedKPIDashboard() {
         console.log('📊 AP Invoices cargadas:', apInvoices?.length || 0);
         if (apInvoices && apInvoices.length > 0) {
           apInvoices.forEach((invoice: any) => {
-            const total = Number(invoice.total_amount || 0);
-            const paid = Number(invoice.paid_amount || 0);
-            const pending = total - paid;
+            // Usar balance_amount si existe, sino total_to_pay, sino total_gross
+            const balance = Number(invoice.balance_amount ?? invoice.total_to_pay ?? invoice.total_gross ?? 0);
             
             console.log('Factura AP:', {
               id: invoice.id,
-              total,
-              paid,
-              pending,
+              balance_amount: invoice.balance_amount,
+              total_to_pay: invoice.total_to_pay,
+              total_gross: invoice.total_gross,
+              balance,
               status: invoice.status
             });
             
-            // Solo sumar facturas pendientes (no canceladas ni completamente pagadas)
-            if (invoice.status !== 'cancelled' && pending > 0) {
-              apTotal += pending;
+            // Solo sumar facturas pendientes con balance positivo
+            if (invoice.status !== 'cancelled' && balance > 0) {
+              apTotal += balance;
             }
           });
         }
