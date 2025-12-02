@@ -163,14 +163,16 @@ export default function AdvancedKPIDashboard() {
       // Cargar saldos bancarios reales desde la tabla bank_accounts
       try {
         const bankAccountsData = await bankAccountsService.getAll(uid);
+        console.log('🏦 Bank Accounts cargadas:', bankAccountsData?.length || 0);
         
         if (bankAccountsData && bankAccountsData.length > 0) {
           bankAccountsData.forEach((account: any) => {
-            const bal = Number(account.balance || 0);
+            // Usar current_balance que es el campo correcto en bank_accounts
+            const bal = Number(account.current_balance || 0);
             bankTotal += bal;
             bankList.push({
               id: account.id,
-              name: account.name,
+              name: account.bank_name, // El nombre del banco está en bank_name
               balance: bal,
               bank_name: account.bank_name,
               account_number: account.account_number,
@@ -178,6 +180,7 @@ export default function AdvancedKPIDashboard() {
             });
           });
         }
+        console.log('💰 Total en Bancos:', bankTotal);
       } catch (err) {
         console.error('Error cargando bank_accounts:', err);
       }
