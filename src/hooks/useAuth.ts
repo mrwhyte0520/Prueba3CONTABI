@@ -7,10 +7,15 @@ export const useAuth = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Verificar sesión actual
+    // Cargar sesión primero (no bloqueante)
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoading(false);
+      
+      // Verificar status en segundo plano (después de cargar)
+      if (session?.user) {
+        setTimeout(() => checkUserStatus(session.user.id), 100);
+      }
     });
 
     // Escuchar cambios de autenticación
@@ -19,10 +24,37 @@ export const useAuth = () => {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       setLoading(false);
+      
+      // Verificar status en segundo plano
+      if (session?.user) {
+        setTimeout(() => checkUserStatus(session.user.id), 100);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Función para verificar status (ejecutada en segundo plano)
+  const checkUserStatus = async (userId: string) => {
+    try {
+      const { data: userData } = await supabase
+        .from('users')
+        .select('status')
+        .eq('id', userId)
+        .maybeSingle();
+
+      const status = userData?.status || 'active';
+
+      if (status === 'inactive') {
+        await supabase.auth.signOut();
+        setUser(null);
+        alert('Tu cuenta ha sido desactivada. Contacta al administrador.');
+      }
+    } catch (error) {
+      // No bloquear si hay error (tabla no existe, RLS, etc)
+      console.warn('No se pudo verificar status:', error);
+    }
+  };
 
   const signUp = async (email: string, password: string, fullName: string) => {
     try {

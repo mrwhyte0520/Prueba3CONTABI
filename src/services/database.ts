@@ -1576,10 +1576,13 @@ export const auditLogsService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return [];
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return [];
+
       const { data, error } = await supabase
         .from('audit_logs')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -6641,14 +6644,15 @@ export const supplierTypesService = {
 export const quotesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('quotes')
         .select(`
           *,
           quote_lines (* )
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -6659,9 +6663,12 @@ export const quotesService = {
 
   async create(userId: string, quotePayload: any, linePayloads: Array<any>) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
       const baseQuote = {
         ...quotePayload,
-        user_id: userId,
+        user_id: tenantId,
       };
 
       const { data: quote, error: quoteError } = await supabase
@@ -6705,7 +6712,7 @@ export const quotesService = {
         const totalDiscount = Number((quote as any).total_discount ?? (quote as any).discount_value ?? 0) || 0;
         if (discountType && totalDiscount > 0) {
           await supabase.from('approval_requests').insert({
-            user_id: userId,
+            user_id: tenantId,
             entity_type: 'quote_discount',
             entity_id: quoteId,
             status: 'pending',
@@ -8487,11 +8494,13 @@ export const taxService = {
       const {
         data: { user }
       } = await supabase.auth.getUser();
+      const tenantId = await resolveTenantId(user?.id ?? null);
+      if (!tenantId) return null;
 
       const { data, error } = await supabase
         .from('tax_configuration')
         .select('*')
-        .eq('user_id', user?.id)
+        .eq('user_id', tenantId)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -8509,10 +8518,12 @@ export const taxService = {
       const {
         data: { user }
       } = await supabase.auth.getUser();
+      const tenantId = await resolveTenantId(user?.id ?? null);
+      if (!tenantId) throw new Error('userId required');
 
       const { data, error } = await supabase
         .from('tax_configuration')
-        .upsert({ ...config, user_id: user?.id })
+        .upsert({ ...config, user_id: tenantId })
         .select();
 
       if (error) throw error;
@@ -8533,6 +8544,9 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return;
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return;
+
       // Calcular primer y último día del mes del período (YYYY-MM)
       const [yearStr, monthStr] = period.split('-');
       const year = Number(yearStr);
@@ -8548,7 +8562,7 @@ export const taxService = {
           `*,
            suppliers (name, tax_id)`
         )
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .gte('invoice_date', startDate)
         .lte('invoice_date', endDate)
         .neq('status', 'cancelled');
@@ -8569,7 +8583,7 @@ export const taxService = {
         const isrWithheld = Number((inv as any).total_isr_withheld) || 0;
 
         rows.push({
-          user_id: user.id,
+          user_id: tenantId,
           period,
           fecha_comprobante: fecha,
           tipo_comprobante: (inv.document_type as string) || 'B01',
@@ -8589,7 +8603,7 @@ export const taxService = {
       const { data: pettyExpenses, error: pcErr } = await supabase
         .from('petty_cash_expenses')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .gte('expense_date', startDate)
         .lte('expense_date', endDate);
 
@@ -8603,7 +8617,7 @@ export const taxService = {
           const itbis = Number(exp.itbis) || 0;
 
           rows.push({
-            user_id: user.id,
+            user_id: tenantId,
             period,
             fecha_comprobante: fecha,
             tipo_comprobante: 'B01',
@@ -8624,7 +8638,7 @@ export const taxService = {
         .from('report_606_data')
         .delete()
         .eq('period', period)
-        .eq('user_id', user.id);
+        .eq('user_id', tenantId);
       if (delErr) throw delErr;
 
       if (rows.length > 0) {
@@ -8647,12 +8661,15 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return [];
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return [];
+
       await this.buildReport606(period);
       const { data, error } = await supabase
         .from('report_606_data')
         .select('*')
         .eq('period', period)
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('fecha_comprobante');
 
       if (error) throw error;
@@ -8679,11 +8696,16 @@ export const taxService = {
         return { totalMonto: 0, totalItbis: 0, totalRetenido: 0, totalISR: 0 };
       }
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        return { totalMonto: 0, totalItbis: 0, totalRetenido: 0, totalISR: 0 };
+      }
+
       const { data, error } = await supabase
         .from('report_606_data')
         .select('monto_facturado, itbis_facturado, itbis_retenido, monto_retencion_renta')
         .eq('period', period)
-        .eq('user_id', user.id);
+        .eq('user_id', tenantId);
 
       if (error) throw error;
 
@@ -8714,6 +8736,9 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return;
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return;
+
       // Calcular rango de fechas del mes
       const [yearStr, monthStr] = period.split('-');
       const year = Number(yearStr);
@@ -8729,7 +8754,7 @@ export const taxService = {
           `*,
            customers (name, tax_id)`
         )
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .gte('invoice_date', startDate)
         .lte('invoice_date', endDate)
         .neq('status', 'draft');
@@ -8744,7 +8769,7 @@ export const taxService = {
         const itbis = Number(inv.tax_amount ?? 0);
 
         return {
-          user_id: user.id,
+          user_id: tenantId,
           period,
           fecha_factura: fecha,
           fecha_comprobante: fecha,
@@ -8772,7 +8797,7 @@ export const taxService = {
         .from('report_607_data')
         .delete()
         .eq('period', period)
-        .eq('user_id', user.id);
+        .eq('user_id', tenantId);
       if (delErr) throw delErr;
 
       if (rows.length > 0) {
@@ -8795,12 +8820,15 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return [];
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return [];
+
       await this.buildReport607(period);
       const { data, error } = await supabase
         .from('report_607_data')
         .select('*')
         .eq('period', period)
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('fecha_comprobante');
 
       if (error) throw error;
@@ -8839,11 +8867,16 @@ export const taxService = {
         return { totalMonto: 0, totalItbis: 0, totalRetenido: 0, totalISR: 0 };
       }
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        return { totalMonto: 0, totalItbis: 0, totalRetenido: 0, totalISR: 0 };
+      }
+
       const { data, error } = await supabase
         .from('report_607_data')
         .select('monto_facturado, itbis_facturado, itbis_retenido, retencion_renta_terceros, itbis_cobrado')
         .eq('period', period)
-        .eq('user_id', user.id);
+        .eq('user_id', tenantId);
 
       if (error) throw error;
 
@@ -8871,6 +8904,9 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return null;
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return null;
+
       const [yearStr, monthStr] = period.split('-');
       const year = Number(yearStr);
       const month = Number(monthStr);
@@ -8882,7 +8918,7 @@ export const taxService = {
       const { data: invoices, error: invErr } = await supabase
         .from('invoices')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .gte('invoice_date', startDate)
         .lte('invoice_date', endDate)
         .neq('status', 'draft');
@@ -8918,7 +8954,7 @@ export const taxService = {
       const { data: creditNotes, error: cnErr } = await supabase
         .from('credit_debit_notes')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .eq('note_type', 'credit')
         .gte('note_date', startDate)
         .lte('note_date', endDate);
@@ -9270,12 +9306,15 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return null;
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return null;
+
       // Verificar si ya existe una declaración para este período
       const { data: existing, error: existingError } = await supabase
         .from('report_it1_data')
         .select('*')
         .eq('period', period)
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .maybeSingle();
 
       if (!existingError && existing) {
@@ -9288,12 +9327,12 @@ export const taxService = {
           .from('report_607_data')
           .select('*')
           .eq('period', period)
-          .eq('user_id', user.id),
+          .eq('user_id', tenantId),
         supabase
           .from('report_606_data')
           .select('*')
           .eq('period', period)
-          .eq('user_id', user.id),
+          .eq('user_id', tenantId),
       ]);
 
       // Calcular totales de ventas
@@ -9323,7 +9362,7 @@ export const taxService = {
 
       // Construir la declaración SIEMPRE con datos reales (o ceros si no hay datos)
       const reportData = {
-        user_id: user.id,
+        user_id: tenantId,
         period,
         total_sales: totalSales,
         itbis_collected: itbisCollected,
@@ -9365,10 +9404,23 @@ export const taxService = {
         };
       }
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        return {
+          totalDeclaraciones: 0,
+          totalVentasGravadas: 0,
+          totalITBISCobrado: 0,
+          totalComprasGravadas: 0,
+          totalITBISPagado: 0,
+          saldoNeto: 0,
+          ultimaDeclaracion: null,
+        };
+      }
+
       const { data, error } = await supabase
         .from('report_it1_data')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('period', { ascending: false })
         .limit(12);
 
@@ -9733,10 +9785,13 @@ export const settingsService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return null;
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return null;
+
       const { data, error } = await supabase
         .from('company_info')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .limit(1)
         .maybeSingle();
 
@@ -9756,9 +9811,12 @@ export const settingsService = {
       } = await supabase.auth.getUser();
       if (!user?.id) throw new Error('Usuario no autenticado');
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) throw new Error('No se pudo resolver el tenant');
+
       const payload: any = {
         ...companyInfo,
-        user_id: user.id,
+        user_id: tenantId,
       };
 
       // No enviar id en el upsert para evitar conflicto con la PK (company_info_pkey)
@@ -9905,10 +9963,13 @@ export const settingsService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return null;
 
-      const { data, error } = await supabase
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return null;
+
+      const { data, error} = await supabase
         .from('tax_settings')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .limit(1)
         .maybeSingle();
 
@@ -9927,9 +9988,12 @@ export const settingsService = {
       } = await supabase.auth.getUser();
       if (!user?.id) throw new Error('Usuario no autenticado');
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) throw new Error('No se pudo resolver el tenant');
+
       const payload: any = {
         ...settings,
-        user_id: user.id,
+        user_id: tenantId,
       };
 
       // Evitar conflicto con la PK de tax_settings
@@ -10066,10 +10130,13 @@ export const settingsService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return null;
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return null;
+
       const { data, error } = await supabase
         .from('inventory_settings')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .limit(1)
         .maybeSingle();
 
@@ -10088,9 +10155,12 @@ export const settingsService = {
       } = await supabase.auth.getUser();
       if (!user?.id) throw new Error('Usuario no autenticado');
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) throw new Error('No se pudo resolver el tenant');
+
       const normalized: any = {
         ...settings,
-        user_id: user.id,
+        user_id: tenantId,
         default_warehouse: settings.default_warehouse || null,
       };
 

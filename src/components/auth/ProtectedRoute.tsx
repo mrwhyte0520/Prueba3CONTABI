@@ -46,14 +46,52 @@ function mapPathToModule(pathname: string): string {
 }
 
 export default function ProtectedRoute({ children }: { children: ReactElement }) {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
   const [allowed, setAllowed] = useState<Set<string> | null>(null);
+  const [userStatus, setUserStatus] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchAllowedModules(user?.id || null).then(setAllowed);
+    async function checkAccess() {
+      if (!user?.id) {
+        setAllowed(new Set());
+        setUserStatus(null);
+        return;
+      }
+
+      // Verificar status del usuario
+      try {
+        const { data: userData } = await supabase
+          .from('users')
+          .select('status')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        const status = userData?.status || 'active';
+        setUserStatus(status);
+
+        // Si el usuario está inactivo, bloquear acceso
+        if (status === 'inactive') {
+          alert('Tu cuenta ha sido desactivada. Contacta al administrador.');
+          await signOut();
+          return;
+        }
+      } catch (error) {
+        console.error('Error verificando status del usuario:', error);
+      }
+
+      // Si está activo, verificar permisos
+      const modules = await fetchAllowedModules(user.id);
+      setAllowed(modules);
+    }
+
+    checkAccess();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  if (allowed === null) return null; // could show a spinner
+  if (allowed === null || userStatus === null) return null; // could show a spinner
+
+  // Si el usuario está inactivo, no renderizar nada (ya se hizo signOut arriba)
+  if (userStatus === 'inactive') return null;
 
   const moduleName = mapPathToModule(window.location.pathname);
 

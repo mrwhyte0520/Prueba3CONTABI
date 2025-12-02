@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { usePlans } from '../../hooks/usePlans';
-import { customersService, invoicesService, inventoryService } from '../../services/database';
+import { customersService, invoicesService, inventoryService, resolveTenantId } from '../../services/database';
 import { supabase } from '../../lib/supabase';
 
 interface DashboardLayoutProps {
@@ -39,6 +39,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [kpiCounts, setKpiCounts] = useState({ invoices: 0, customers: 0, products: 0 });
   const trialStatus = getTrialStatus();
   const [allowedModules, setAllowedModules] = useState<Set<string> | null>(null);
+  const [isOwner, setIsOwner] = useState(true); // Por defecto true hasta verificar
 
   useEffect(() => {
     setUserProfile(prev => ({
@@ -76,6 +77,21 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
     loadProfile();
   }, [profilePanelOpen, user?.id, user?.email]);
+
+  // Verificar si el usuario es owner
+  useEffect(() => {
+    const checkIfOwner = async () => {
+      if (!user?.id) return;
+      try {
+        const tenantId = await resolveTenantId(user.id);
+        setIsOwner(tenantId === user.id);
+      } catch (error) {
+        console.error('Error verificando si es owner:', error);
+        setIsOwner(false);
+      }
+    };
+    checkIfOwner();
+  }, [user?.id]);
 
   useEffect(() => {
     const STORAGE_PREFIX = 'contabi_rbac_';
@@ -310,15 +326,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       icon: 'ri-share-forward-line',
       current: location.pathname.startsWith('/referrals')
     },
-    // 13. Usuarios
-    {
+    // 13. Usuarios (solo para owners)
+    ...(isOwner ? [{
       name: 'Usuarios',
       href: '/users',
       icon: 'ri-shield-user-line',
       current: location.pathname.startsWith('/users')
-    },
-    // 14. Configuración
-    {
+    }] : []),
+    // 14. Configuración (solo para owners)
+    ...(isOwner ? [{
       name: 'Configuración',
       href: '/settings',
       icon: 'ri-settings-line',
@@ -326,14 +342,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       submenu: [
         { name: 'Empresa', href: '/settings/company' },
         { name: 'Balances Iniciales', href: '/settings/opening-balances' },
-        { name: 'Usuarios', href: '/settings/users' },
         { name: 'Contabilidad', href: '/settings/accounting' },
         { name: 'Impuestos', href: '/settings/taxes' },
         { name: 'Inventario', href: '/settings/inventory' },
         { name: 'Nómina', href: '/settings/payroll' },
         { name: 'Respaldos', href: '/settings/backup' }
       ]
-    }
+    }] : [])
   ];
 
   const [expandedMenus, setExpandedMenus] = useState<string[]>([]);

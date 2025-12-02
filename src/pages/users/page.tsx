@@ -2,14 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
+import { resolveTenantId } from '../../services/database';
 
 interface Role { id: string; name: string; description?: string }
 interface Permission { id: string; module: string; action: string }
 interface RolePermission { role_id: string; permission_id: string }
 interface UserRole { id: string; user_id: string; role_id: string }
+interface UserWithRole { id: string; email: string; status: string; role_id: string; role_name: string; user_role_id: string }
 
 const APP_MODULES = [
-  'dashboard','accounting','banks-module','pos','sales','products','inventory','fixed-assets','accounts-receivable','accounts-payable','billing','taxes','plans','settings','customers','users'
+  'dashboard','accounting','banks-module','pos','sales','products','inventory','fixed-assets','accounts-receivable','accounts-payable','billing','taxes','plans','customers','users'
 ];
 
 export default function UsersPage() {
@@ -19,22 +21,24 @@ export default function UsersPage() {
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [rolePerms, setRolePerms] = useState<RolePermission[]>([]);
   const [userRoles, setUserRoles] = useState<UserRole[]>([]);
+  const [usersWithRoles, setUsersWithRoles] = useState<UserWithRole[]>([]);
 
   const [newRoleName, setNewRoleName] = useState('');
   const [newRoleDesc, setNewRoleDesc] = useState('');
 
-  const [assignEmail, setAssignEmail] = useState('');
-  const [assignRoleId, setAssignRoleId] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRoleId, setNewUserRoleId] = useState('');
   const [creatingUser, setCreatingUser] = useState(false);
+  const [isOwner, setIsOwner] = useState(true);
 
   const storageKey = (key: string) => `contabi_rbac_${key}`;
 
   const loadLocal = () => {
     setRoles(JSON.parse(localStorage.getItem(storageKey('roles')) || '[]'));
-    setPermissions(JSON.parse(localStorage.getItem(storageKey('permissions')) || '[]'));
+    const localPerms = JSON.parse(localStorage.getItem(storageKey('permissions')) || '[]');
+    // Filtrar permisos de 'settings'
+    setPermissions(localPerms.filter((p: Permission) => p.module !== 'settings'));
     setRolePerms(JSON.parse(localStorage.getItem(storageKey('role_permissions')) || '[]'));
     setUserRoles(JSON.parse(localStorage.getItem(storageKey('user_roles')) || '[]'));
   };
@@ -54,7 +58,42 @@ export default function UsersPage() {
     try {
       setCreatingUser(true);
 
-      // Crear usuario en Supabase Auth con email + contraseña
+      // Verificar si el email ya existe en auth.users
+      const { data: existingUsers } = await supabase
+        .from('users')
+        .select('id, email')
+        .eq('email', email)
+        .maybeSingle();
+
+      if (existingUsers) {
+        // El usuario ya existe, verificar si es owner de otro tenant
+        const { data: ownerCheck } = await supabase
+          .from('user_roles')
+          .select('owner_user_id, user_id')
+          .eq('user_id', existingUsers.id)
+          .eq('owner_user_id', existingUsers.id)
+          .maybeSingle();
+
+        if (ownerCheck) {
+          alert('Este usuario ya es propietario de otro tenant y no puede ser agregado como subusuario.');
+          return;
+        }
+
+        // Usuario existe pero no es owner, agregarlo como subusuario
+        const ownerId = await resolveTenantId(user!.id);
+        await supabase
+          .from('user_roles')
+          .insert({ user_id: existingUsers.id, role_id: newUserRoleId, owner_user_id: ownerId || user!.id });
+        
+        setNewUserEmail('');
+        setNewUserPassword('');
+        setNewUserRoleId('');
+        await load();
+        alert('Usuario existente agregado como subusuario correctamente.');
+        return;
+      }
+
+      // Usuario no existe, crear nuevo
       const { data, error } = await supabase.auth.signUp({
         email,
         password: newUserPassword,
@@ -68,19 +107,16 @@ export default function UsersPage() {
 
       const createdUser = data.user;
 
-      // Si tenemos user.id real, registrar rol en user_roles
+      // Si tenemos user.id real, registrar rol en user_roles usando el owner del tenant
       if (user?.id && createdUser?.id) {
         try {
+          const ownerId = await resolveTenantId(user.id);
           await supabase
             .from('user_roles')
-            .insert({ user_id: createdUser.id, role_id: newUserRoleId, owner_user_id: user.id });
+            .insert({ user_id: createdUser.id, role_id: newUserRoleId, owner_user_id: ownerId || user.id });
         } catch (err) {
           console.error('Error al asignar rol al nuevo usuario:', err);
         }
-      } else {
-        // Fallback local usando email como identificador legible
-        const localUr = [...userRoles, { id: `ur-${Date.now()}`, user_id: email, role_id: newUserRoleId }];
-        setUserRoles(localUr); saveLocal('user_roles', localUr);
       }
 
       setNewUserEmail('');
@@ -97,7 +133,11 @@ export default function UsersPage() {
   const load = async () => {
     try {
       if (!user?.id) { loadLocal(); return; }
-      const ownerId = user.id;
+      const ownerId = await resolveTenantId(user.id);
+      if (!ownerId) { loadLocal(); return; }
+      
+      // Verificar si el usuario actual es el owner del tenant
+      setIsOwner(user.id === ownerId);
 
       const { data: r } = await supabase
         .from('roles')
@@ -118,15 +158,45 @@ export default function UsersPage() {
         .from('user_roles')
         .select('*')
         .eq('owner_user_id', ownerId);
+      
+      // Cargar información completa de usuarios
+      let usersData: UserWithRole[] = [];
+      if (ur && ur.length > 0) {
+        const userIds = ur.map((u: any) => u.user_id);
+        const { data: usersInfo } = await supabase
+          .from('users')
+          .select('id, email, status')
+          .in('id', userIds);
+        
+        if (usersInfo) {
+          usersData = ur.map((userRole: any) => {
+            const userInfo = usersInfo.find((u: any) => u.id === userRole.user_id);
+            const role = (r || []).find((role: any) => role.id === userRole.role_id);
+            return {
+              id: userInfo?.id || userRole.user_id,
+              email: userInfo?.email || 'Sin email',
+              status: userInfo?.status || 'active',
+              role_id: userRole.role_id,
+              role_name: role?.name || '—',
+              user_role_id: userRole.id
+            };
+          });
+        }
+      }
+
       if (r && p && ur) {
         // Combinar permisos: si Supabase devuelve role_permissions, usarlos; si no, usar los de localStorage
         const localRp: RolePermission[] = JSON.parse(localStorage.getItem(storageKey('role_permissions')) || '[]');
         const effectiveRp = rp && rp.length > 0 ? (rp as any as RolePermission[]) : localRp;
 
+        // Filtrar permisos para excluir 'settings'
+        const filteredPermissions = (p as any[]).filter((perm: any) => perm.module !== 'settings');
+
         setRoles(r as any);
-        setPermissions(p as any);
+        setPermissions(filteredPermissions as any);
         setRolePerms(effectiveRp);
         setUserRoles(ur as any);
+        setUsersWithRoles(usersData);
         return;
       }
       loadLocal();
@@ -228,31 +298,38 @@ export default function UsersPage() {
     const ur = userRoles.filter(ur => ur.role_id !== roleId); setUserRoles(ur); saveLocal('user_roles', ur);
   };
 
-  const assignRole = async () => {
-    if (!assignEmail || !assignRoleId) return;
+  const toggleUserStatus = async (userId: string, currentStatus: string) => {
+    if (!user?.id || !isOwner) return;
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
     try {
-      // In Supabase, you should map email -> user_id from your profiles table if available
-      if (user?.id) {
-        try {
-          const { data: profile } = await supabase.from('profiles').select('id,email').eq('email', assignEmail).single();
-          const uid = (profile as any)?.id;
-          if (uid) {
-            await supabase
-              .from('user_roles')
-              .insert({ user_id: uid, role_id: assignRoleId, owner_user_id: user.id });
-            setAssignEmail(''); setAssignRoleId(''); await load();
-            return;
-          }
-        } catch (error) {
-          console.error('Error al asignar rol en Supabase:', error);
-        }
-      }
-      // local fallback with email as pseudo user_id
-      const localUr = [...userRoles, { id: `ur-${Date.now()}`, user_id: assignEmail, role_id: assignRoleId }];
-      setUserRoles(localUr); saveLocal('user_roles', localUr);
-    } finally {
-      setAssignEmail('');
-      setAssignRoleId('');
+      await supabase
+        .from('users')
+        .update({ status: newStatus })
+        .eq('id', userId);
+      await load();
+    } catch (error) {
+      console.error('Error al cambiar status del usuario:', error);
+      alert('Error al cambiar el estado del usuario');
+    }
+  };
+
+  const deleteUser = async (userId: string, userRoleId: string) => {
+    if (!user?.id || !isOwner) return;
+    if (!confirm('¿Eliminar este usuario? Se eliminará su acceso al sistema.')) return;
+    try {
+      const ownerId = await resolveTenantId(user.id);
+      // Eliminar user_role
+      await supabase
+        .from('user_roles')
+        .delete()
+        .eq('id', userRoleId)
+        .eq('owner_user_id', ownerId || user.id);
+      
+      await load();
+      alert('Usuario eliminado correctamente');
+    } catch (error) {
+      console.error('Error al eliminar usuario:', error);
+      alert('Error al eliminar el usuario');
     }
   };
 
@@ -282,7 +359,13 @@ export default function UsersPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
               <input value={newRoleDesc} onChange={e => setNewRoleDesc(e.target.value)} className="w-full p-2 border rounded" placeholder="Opcional" />
             </div>
-            <button onClick={addRole} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap">Crear Rol</button>
+            <button 
+              onClick={addRole} 
+              disabled={!isOwner}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Crear Rol
+            </button>
           </div>
 
           <div className="mt-6 overflow-x-auto">
@@ -305,14 +388,31 @@ export default function UsersPage() {
                       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                         {row.perms.map(({ perm, checked }) => (
                           <label key={perm.id} className="inline-flex items-center gap-2 text-sm">
-                            <input type="checkbox" checked={checked} onChange={(e) => toggleRolePerm(row.role.id, perm.id, e.target.checked)} />
-                            <span>{perm.module}</span>
+                            <input 
+                              type="checkbox" 
+                              checked={checked} 
+                              onChange={(e) => toggleRolePerm(row.role.id, perm.id, e.target.checked)} 
+                              disabled={!isOwner}
+                              className={!isOwner ? 'cursor-not-allowed opacity-50' : ''}
+                            />
+                            <span className={!isOwner ? 'text-gray-400' : ''}>{perm.module}</span>
                           </label>
                         ))}
                       </div>
+                      {!isOwner && (
+                        <div className="text-xs text-gray-500 mt-2">
+                          Solo el usuario principal puede modificar permisos
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <button onClick={() => deleteRole(row.role.id)} className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Eliminar</button>
+                      <button 
+                        onClick={() => deleteRole(row.role.id)} 
+                        disabled={!isOwner}
+                        className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Eliminar
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -326,7 +426,12 @@ export default function UsersPage() {
 
         {/* Crear Usuario */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold mb-4">Crear Usuario</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold">Crear Usuario</h3>
+            {!isOwner && (
+              <span className="text-xs text-gray-500">Solo el usuario principal puede crear usuarios</span>
+            )}
+          </div>
           <div className="flex flex-col md:flex-row gap-3 md:items-end">
             <div className="flex-1">
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
@@ -334,7 +439,8 @@ export default function UsersPage() {
                 type="email"
                 value={newUserEmail}
                 onChange={e => setNewUserEmail(e.target.value)}
-                className="w-full p-2 border rounded"
+                disabled={!isOwner}
+                className="w-full p-2 border rounded disabled:bg-gray-100 disabled:cursor-not-allowed"
                 placeholder="usuario@gmail.com"
               />
             </div>
@@ -344,7 +450,8 @@ export default function UsersPage() {
                 type="password"
                 value={newUserPassword}
                 onChange={e => setNewUserPassword(e.target.value)}
-                className="w-full p-2 border rounded"
+                disabled={!isOwner}
+                className="w-full p-2 border rounded disabled:bg-gray-100 disabled:cursor-not-allowed"
                 placeholder="Mínimo 6 caracteres"
               />
             </div>
@@ -353,7 +460,8 @@ export default function UsersPage() {
               <select
                 value={newUserRoleId}
                 onChange={e => setNewUserRoleId(e.target.value)}
-                className="w-full p-2 border rounded"
+                disabled={!isOwner}
+                className="w-full p-2 border rounded disabled:bg-gray-100 disabled:cursor-not-allowed"
               >
                 <option value="">Seleccionar...</option>
                 {roles.map(r => (
@@ -363,49 +471,69 @@ export default function UsersPage() {
             </div>
             <button
               onClick={createUser}
-              disabled={creatingUser || !newUserEmail || !newUserPassword || !newUserRoleId}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap disabled:opacity-50"
+              disabled={!isOwner || creatingUser || !newUserEmail || !newUserPassword || !newUserRoleId}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {creatingUser ? 'Creando…' : 'Crear Usuario'}
             </button>
           </div>
         </div>
 
-        {/* Asignación de roles a usuarios */}
+        {/* Usuarios con roles asignados */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold mb-4">Asignar Rol a Usuario</h3>
-          <div className="flex flex-col md:flex-row gap-3 md:items-end">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email del usuario</label>
-              <input value={assignEmail} onChange={e => setAssignEmail(e.target.value)} className="w-full p-2 border rounded" placeholder="usuario@correo.com" />
-            </div>
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Rol</label>
-              <select value={assignRoleId} onChange={e => setAssignRoleId(e.target.value)} className="w-full p-2 border rounded">
-                <option value="">Seleccionar...</option>
-                {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-            </div>
-            <button onClick={assignRole} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap">Asignar Rol</button>
-          </div>
-
-          <div className="mt-4 overflow-x-auto">
+          <h3 className="text-lg font-semibold mb-4">Usuarios con Roles Asignados</h3>
+          <div className="overflow-x-auto">
             <table className="min-w-full">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Usuario</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Rol</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {userRoles.map(ur => (
-                  <tr key={ur.id}>
-                    <td className="px-4 py-2 text-sm text-gray-700">{ur.user_id}</td>
-                    <td className="px-4 py-2 text-sm text-gray-700">{roles.find(r => r.id === ur.role_id)?.name || '—'}</td>
+                {usersWithRoles.map(u => (
+                  <tr key={u.id}>
+                    <td className="px-4 py-2 text-sm text-gray-700">{u.email}</td>
+                    <td className="px-4 py-2 text-sm text-gray-700">
+                      <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                        {u.role_name}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-sm">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        u.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        {u.status === 'active' ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <div className="flex items-center justify-end space-x-2">
+                        <button
+                          onClick={() => toggleUserStatus(u.id, u.status)}
+                          disabled={!isOwner}
+                          className={`px-3 py-1 text-xs rounded ${
+                            u.status === 'active'
+                              ? 'bg-yellow-600 text-white hover:bg-yellow-700'
+                              : 'bg-green-600 text-white hover:bg-green-700'
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                          {u.status === 'active' ? 'Desactivar' : 'Activar'}
+                        </button>
+                        <button
+                          onClick={() => deleteUser(u.id, u.user_role_id)}
+                          disabled={!isOwner}
+                          className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
-                {userRoles.length === 0 && (
-                  <tr><td colSpan={2} className="px-4 py-6 text-center text-sm text-gray-500">Sin asignaciones</td></tr>
+                {usersWithRoles.length === 0 && (
+                  <tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-gray-500">Sin usuarios asignados</td></tr>
                 )}
               </tbody>
             </table>
