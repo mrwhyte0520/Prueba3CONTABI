@@ -156,6 +156,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       icon: 'ri-dashboard-line',
       current: location.pathname === '/dashboard'
     },
+    {
+      name: 'Estadísticas',
+      href: '/statistics',
+      icon: 'ri-bar-chart-2-line',
+      current: location.pathname === '/statistics'
+    },
     // 1. Contabilidad
     {
       name: 'Contabilidad',

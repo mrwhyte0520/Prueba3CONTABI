@@ -40,6 +40,7 @@ import PayrollJournalEntryPage from '../pages/payroll/journal-entry/page';
 
 const HomePage = lazy(() => import('../pages/home/page'));
 const DashboardPage = lazy(() => import('../pages/dashboard/page'));
+const StatisticsPage = lazy(() => import('../pages/statistics/page'));
 const AccountingPage = lazy(() => import('../pages/accounting/page'));
 const ChartAccountsPage = lazy(() => import('../pages/accounting/chart-accounts/page'));
 
@@ -167,6 +168,10 @@ const routes: RouteObject[] = [
   {
     path: '/dashboard',
     element: <DashboardPage />
+  },
+  {
+    path: '/statistics',
+    element: <StatisticsPage />
   },
   {
     path: '/profile',

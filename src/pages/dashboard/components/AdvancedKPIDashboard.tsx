@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
-import { chartAccountsService, accountingSettingsService } from '../../../services/database';
+import { chartAccountsService, accountingSettingsService, bankAccountsService } from '../../../services/database';
 
 type PeriodType = 'weekly' | 'monthly' | 'quarterly' | 'semiannual' | 'annual';
 
@@ -24,9 +24,12 @@ interface ChartData {
 
 interface BankAccountInfo {
   id: string;
-  code: string;
+  code?: string;
   name: string;
   balance: number;
+  bank_name?: string;
+  account_number?: string;
+  currency?: string;
 }
 
 export default function AdvancedKPIDashboard() {
@@ -161,6 +164,28 @@ export default function AdvancedKPIDashboard() {
       let apTotal = 0;
       const bankList: BankAccountInfo[] = [];
 
+      // Cargar saldos bancarios reales desde la tabla bank_accounts
+      try {
+        const bankAccountsData = await bankAccountsService.getAll(uid);
+        
+        if (bankAccountsData && bankAccountsData.length > 0) {
+          bankAccountsData.forEach((account: any) => {
+            const bal = Number(account.balance || 0);
+            bankTotal += bal;
+            bankList.push({
+              id: account.id,
+              name: account.name,
+              balance: bal,
+              bank_name: account.bank_name,
+              account_number: account.account_number,
+              currency: account.currency || 'DOP',
+            });
+          });
+        }
+      } catch (err) {
+        console.error('Error cargando bank_accounts:', err);
+      }
+
       const arId = settings?.ar_account_id || null;
       const apId = settings?.ap_account_id || null;
 
@@ -175,11 +200,6 @@ export default function AdvancedKPIDashboard() {
         const bal = Number(acc.balance || 0);
         const code = String(acc.code || '');
         const isPosting = acc.allowPosting !== false;
-
-        if (acc.isBankAccount) {
-          bankTotal += bal;
-          bankList.push({ id: acc.id, code: acc.code, name: acc.name, balance: bal });
-        }
 
         if (isPosting && arRoot && code.startsWith(String(arRoot.code || ''))) {
           arTotal += bal;
@@ -416,24 +436,47 @@ export default function AdvancedKPIDashboard() {
                   {bankAccounts.map((b) => (
                     <div
                       key={b.id}
-                      className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-3"
+                      className="bg-gray-50 rounded-lg px-4 py-3 border border-gray-200 hover:border-blue-300 transition-colors"
                     >
-                      <div>
-                        <p className="font-medium text-gray-900">
-                          {b.code} - {b.name}
-                        </p>
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1">
+                          <p className="font-semibold text-gray-900 mb-1">
+                            {b.name}
+                          </p>
+                          {b.bank_name && (
+                            <p className="text-xs text-gray-500">
+                              <i className="ri-bank-line mr-1"></i>
+                              {b.bank_name}
+                            </p>
+                          )}
+                          {b.account_number && (
+                            <p className="text-xs text-gray-400 mt-1">
+                              Cuenta: #{b.account_number}
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-bold text-blue-600">
+                            {b.currency === 'DOP' ? 'RD$' : b.currency === 'USD' ? '$' : b.currency || 'RD$'}{' '}
+                            {b.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                          {b.currency && b.currency !== 'DOP' && (
+                            <p className="text-xs text-gray-500">{b.currency}</p>
+                          )}
+                        </div>
                       </div>
-                      <p className="text-blue-600 font-semibold">{formatCurrency(b.balance)}</p>
                     </div>
                   ))}
-                  <div className="border-t pt-3 mt-2 flex items-center justify-between">
-                    <p className="font-semibold text-gray-900">Total bancos</p>
-                    <p className="text-blue-600 font-bold">{formatCurrency(kpi.bankBalance)}</p>
+                  <div className="border-t-2 border-gray-300 pt-4 mt-4 flex items-center justify-between bg-blue-50 rounded-lg px-4 py-3">
+                    <p className="font-bold text-gray-900 text-lg">Total en Bancos</p>
+                    <p className="text-blue-600 font-bold text-xl">{formatCurrency(kpi.bankBalance)}</p>
                   </div>
                 </>
               ) : (
-                <div className="text-gray-500 text-sm text-center py-6">
-                  No hay cuentas bancarias configuradas.
+                <div className="text-center py-8">
+                  <i className="ri-bank-line text-5xl text-gray-300 mb-3"></i>
+                  <p className="text-gray-500 text-sm">No hay cuentas bancarias registradas</p>
+                  <p className="text-gray-400 text-xs mt-2">Agrega cuentas bancarias en el módulo de Bancos</p>
                 </div>
               )}
             </div>

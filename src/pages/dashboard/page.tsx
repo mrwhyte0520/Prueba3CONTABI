@@ -1,20 +1,12 @@
-
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import BasicDashboard from './components/BasicDashboard';
-import AdvancedKPIDashboard from './components/AdvancedKPIDashboard';
-import FeatureGuard from '../../components/common/FeatureGuard';
-import { usePlanLimitations } from '../../hooks/usePlanLimitations';
 import { useAuth } from '../../hooks/useAuth';
 
 export default function DashboardPage() {
-  const [activeView, setActiveView] = useState<'basic' | 'advanced'>('advanced');
-  const { checkFeatureAccess } = usePlanLimitations();
   const { signOut } = useAuth();
   const navigate = useNavigate();
-
-  const hasAdvancedDashboard = checkFeatureAccess('hasAdvancedAnalytics');
+  const [currentDate] = useState(new Date());
 
   const handleSignOut = async () => {
     try {
@@ -25,62 +17,125 @@ export default function DashboardPage() {
     }
   };
 
+  // Botones de acceso rápido
+  const quickAccessButtons = [
+    { name: 'Usuario', icon: 'ri-user-add-line', href: '/users', color: 'from-teal-500 to-teal-600' },
+    { name: 'Nuevo Cliente', icon: 'ri-user-smile-line', href: '/customers', color: 'from-blue-500 to-blue-600' },
+    { name: 'Nuevo Proveedor', icon: 'ri-user-settings-line', href: '/accounts-payable/suppliers', color: 'from-cyan-500 to-cyan-600' },
+    { name: 'Nueva Factura', icon: 'ri-file-text-line', href: '/billing/invoicing', color: 'from-purple-500 to-purple-600' },
+    { name: 'POS', icon: 'ri-shopping-cart-line', href: '/pos', color: 'from-orange-500 to-orange-600' },
+    { name: 'Cierre de Caja', icon: 'ri-money-dollar-box-line', href: '/billing/cash-closing', color: 'from-yellow-500 to-yellow-600' },
+    { name: 'Ventas', icon: 'ri-bar-chart-box-line', href: '/billing/sales-reports', color: 'from-pink-500 to-pink-600' },
+    { name: 'Productos', icon: 'ri-shopping-bag-line', href: '/products', color: 'from-red-500 to-red-600' },
+    { name: 'Inventario', icon: 'ri-archive-line', href: '/inventory', color: 'from-indigo-500 to-indigo-600' },
+    { name: 'Reportes Inventario', icon: 'ri-line-chart-line', href: '/inventory', color: 'from-green-500 to-green-600' },
+    { name: 'Entradas', icon: 'ri-download-line', href: '/inventory', color: 'from-lime-500 to-lime-600' },
+    { name: 'Transferencias', icon: 'ri-arrow-left-right-line', href: '/inventory', color: 'from-emerald-500 to-emerald-600' },
+    { name: 'Almacén', icon: 'ri-building-line', href: '/inventory', color: 'from-sky-500 to-sky-600' },
+    { name: 'Facturación', icon: 'ri-bill-line', href: '/billing', color: 'from-violet-500 to-violet-600' },
+    { name: 'Nóminas', icon: 'ri-wallet-line', href: '/payroll', color: 'from-fuchsia-500 to-fuchsia-600' },
+  ];
+
+  // Generar días del calendario
+  const getDaysInMonth = (date: Date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startingDayOfWeek = firstDay.getDay();
+
+    const days = [];
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null);
+    }
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push(i);
+    }
+    return days;
+  };
+
+  const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const weekDays = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="bg-gradient-to-r from-navy-700 to-navy-800 rounded-lg p-6 text-white">
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg p-6 text-white shadow-lg">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
-              <p className="text-navy-200">Panel de control y métricas de tu empresa</p>
+              <p className="text-blue-100">Panel de acceso rápido a módulos principales</p>
             </div>
-            
-            <div className="flex items-center space-x-4">
-              {/* Dashboard Type Selector */}
-              <div className="flex bg-white/10 rounded-lg p-1">
-                <button
-                  onClick={() => setActiveView('advanced')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${
-                    activeView === 'advanced'
-                      ? 'bg-white text-navy-700 shadow-sm'
-                      : 'text-white hover:bg-white/10'
-                  }`}
-                >
-                  <i className="ri-dashboard-3-line mr-2"></i>
-                  KPI Avanzado
-                </button>
-                <button
-                  onClick={() => setActiveView('basic')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${
-                    activeView === 'basic'
-                      ? 'bg-white text-navy-700 shadow-sm'
-                      : 'text-white hover:bg-white/10'
-                  }`}
-                >
-                  <i className="ri-dashboard-line mr-2"></i>
-                  Básico
-                </button>
-              </div>
-
-              {/* Logout Button */}
-              <button
-                onClick={handleSignOut}
-                className="flex items-center px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl whitespace-nowrap"
-              >
-                <i className="ri-logout-box-line mr-2"></i>
-                Cerrar Sesión
-              </button>
-            </div>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl whitespace-nowrap"
+            >
+              <i className="ri-logout-box-line mr-2"></i>
+              Cerrar Sesión
+            </button>
           </div>
         </div>
 
-        {/* Dashboard Content */}
-        {activeView === 'advanced' ? (
-          <AdvancedKPIDashboard />
-        ) : (
-          <BasicDashboard />
-        )}
+        {/* Botones de Acceso Rápido */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h2 className="text-xl font-bold text-gray-900 mb-6">Acceso Rápido</h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-8 gap-4">
+            {quickAccessButtons.map((button) => (
+              <button
+                key={button.name}
+                onClick={() => navigate(button.href)}
+                className="group relative flex flex-col items-center justify-center p-4 bg-white rounded-xl border-2 border-gray-200 hover:border-transparent transition-all duration-300 hover:shadow-xl hover:scale-105"
+              >
+                <div className={`absolute inset-0 bg-gradient-to-br ${button.color} opacity-0 group-hover:opacity-100 rounded-xl transition-opacity duration-300`}></div>
+                <div className="relative z-10">
+                  <div className={`w-14 h-14 mb-3 rounded-full bg-gradient-to-br ${button.color} flex items-center justify-center text-white shadow-lg group-hover:shadow-xl transition-shadow duration-300`}>
+                    <i className={`${button.icon} text-2xl`}></i>
+                  </div>
+                  <span className="text-sm font-medium text-gray-700 group-hover:text-white text-center block transition-colors duration-300">
+                    {button.name}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Calendario */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold text-gray-900">
+              Calendario - {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
+            </h2>
+            <i className="ri-calendar-line text-2xl text-blue-600"></i>
+          </div>
+          
+          <div className="grid grid-cols-7 gap-2">
+            {/* Encabezados de días */}
+            {weekDays.map((day) => (
+              <div key={day} className="text-center font-semibold text-gray-600 py-2 text-sm">
+                {day}
+              </div>
+            ))}
+            
+            {/* Días del mes */}
+            {getDaysInMonth(currentDate).map((day, index) => (
+              <div
+                key={index}
+                className={`aspect-square flex items-center justify-center rounded-lg text-sm transition-all ${
+                  day === null
+                    ? 'bg-transparent'
+                    : day === currentDate.getDate()
+                    ? 'bg-blue-600 text-white font-bold shadow-lg'
+                    : 'bg-gray-50 hover:bg-blue-50 text-gray-700 hover:text-blue-600 cursor-pointer'
+                }`}
+              >
+                {day}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </DashboardLayout>
   );
