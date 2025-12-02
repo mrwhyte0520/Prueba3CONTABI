@@ -486,13 +486,13 @@ export default function OtherDeductionsPage() {
                       Monto (RD$) *
                     </label>
                     <input
-                      type="number" min="0"
+                      type="number"
                       step="0.01"
+                      min="0.01"
                       value={formData.amount}
                       onChange={(e) => setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                       required
-                      min="0.01"
                     />
                   </div>
 
