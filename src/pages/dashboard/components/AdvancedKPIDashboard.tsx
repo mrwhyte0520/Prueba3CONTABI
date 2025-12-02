@@ -150,10 +150,25 @@ export default function AdvancedKPIDashboard() {
 
       const incomeStmt = await chartAccountsService.generateIncomeStatement(uid, fromDate, toDate);
 
-      const revenue = incomeStmt.totalIncome || 0;
-      const costs = incomeStmt.totalCosts || 0;
-      const expenses = incomeStmt.totalExpenses || 0;
-      const profit = incomeStmt.netIncome || 0;
+      // Los ingresos vienen negativos por la lógica de cuentas de efecto contrario, hay que invertirlos
+      const revenue = Math.abs(incomeStmt.totalIncome || 0);
+      const costs = Math.abs(incomeStmt.totalCosts || 0);
+      const expenses = Math.abs(incomeStmt.totalExpenses || 0);
+      // Recalcular utilidad correctamente: Ingresos - Costos - Gastos
+      const profit = revenue - costs - expenses;
+
+      console.log('📊 Estado de Resultados (corregido):', {
+        revenue,
+        costs,
+        expenses,
+        profit,
+        original: {
+          totalIncome: incomeStmt.totalIncome,
+          totalCosts: incomeStmt.totalCosts,
+          totalExpenses: incomeStmt.totalExpenses,
+          netIncome: incomeStmt.netIncome
+        }
+      });
 
       let bankTotal = 0;
       let arTotal = 0;
