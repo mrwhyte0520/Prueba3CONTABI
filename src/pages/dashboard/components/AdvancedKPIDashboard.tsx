@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
-import { chartAccountsService, accountingSettingsService, bankAccountsService } from '../../../services/database';
+import { chartAccountsService, bankAccountsService, invoicesService, apInvoicesService } from '../../../services/database';
 
 type PeriodType = 'weekly' | 'monthly' | 'quarterly' | 'semiannual' | 'annual';
 
@@ -148,11 +148,7 @@ export default function AdvancedKPIDashboard() {
       const fromDate = ranges[0].from;
       const toDate = ranges[ranges.length - 1].to;
 
-      const [incomeStmt, accountBalances, settings] = await Promise.all([
-        chartAccountsService.generateIncomeStatement(uid, fromDate, toDate),
-        chartAccountsService.getBalances(uid),
-        accountingSettingsService.get(uid),
-      ]);
+      const incomeStmt = await chartAccountsService.generateIncomeStatement(uid, fromDate, toDate);
 
       const revenue = incomeStmt.totalIncome || 0;
       const costs = incomeStmt.totalCosts || 0;
@@ -186,29 +182,53 @@ export default function AdvancedKPIDashboard() {
         console.error('Error cargando bank_accounts:', err);
       }
 
-      const arId = settings?.ar_account_id || null;
-      const apId = settings?.ap_account_id || null;
-
-      const arRoot = arId
-        ? (accountBalances || []).find((acc: any) => acc.id === arId)
-        : null;
-      const apRoot = apId
-        ? (accountBalances || []).find((acc: any) => acc.id === apId)
-        : null;
-
-      (accountBalances || []).forEach((acc: any) => {
-        const bal = Number(acc.balance || 0);
-        const code = String(acc.code || '');
-        const isPosting = acc.allowPosting !== false;
-
-        if (isPosting && arRoot && code.startsWith(String(arRoot.code || ''))) {
-          arTotal += bal;
+      // Cargar cuentas por cobrar desde facturas (invoices)
+      try {
+        const invoices = await invoicesService.getAll(uid);
+        if (invoices && invoices.length > 0) {
+          invoices.forEach((invoice: any) => {
+            const total = Number(invoice.total_amount || 0);
+            const paid = Number(invoice.paid_amount || 0);
+            const pending = total - paid;
+            
+            // Solo sumar facturas pendientes (no canceladas ni completamente pagadas)
+            if (invoice.status !== 'cancelled' && pending > 0) {
+              arTotal += pending;
+            }
+          });
         }
+      } catch (err) {
+        console.error('Error cargando cuentas por cobrar:', err);
+      }
 
-        if (isPosting && apRoot && code.startsWith(String(apRoot.code || ''))) {
-          apTotal += Math.abs(bal);
+      // Cargar cuentas por pagar desde facturas de proveedores (AP invoices)
+      try {
+        const apInvoices = await apInvoicesService.getAll(uid);
+        console.log('📊 AP Invoices cargadas:', apInvoices?.length || 0);
+        if (apInvoices && apInvoices.length > 0) {
+          apInvoices.forEach((invoice: any) => {
+            const total = Number(invoice.total_amount || 0);
+            const paid = Number(invoice.paid_amount || 0);
+            const pending = total - paid;
+            
+            console.log('Factura AP:', {
+              id: invoice.id,
+              total,
+              paid,
+              pending,
+              status: invoice.status
+            });
+            
+            // Solo sumar facturas pendientes (no canceladas ni completamente pagadas)
+            if (invoice.status !== 'cancelled' && pending > 0) {
+              apTotal += pending;
+            }
+          });
         }
-      });
+        console.log('💰 Total CxP calculado:', apTotal);
+      } catch (err) {
+        console.error('Error cargando cuentas por pagar:', err);
+      }
 
       setKpi({
         bankBalance: bankTotal,
