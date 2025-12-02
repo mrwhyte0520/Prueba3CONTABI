@@ -5,6 +5,19 @@ import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { resolveTenantId } from '../../../services/database';
 
+// Estilos CSS para mejorar la impresión
+const printStyles = `
+  @media print {
+    @page { size: landscape; margin: 0.5cm; }
+    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .print-title { text-align: center; font-size: 18pt; font-weight: bold; margin-bottom: 10px; }
+    .print-date { text-align: center; font-size: 10pt; margin-bottom: 20px; }
+    table { page-break-inside: avoid; }
+    thead { display: table-header-group; }
+    tr { page-break-inside: avoid; }
+  }
+`;
+
 interface JournalEntry {
   id: string;
   entry_number: string;
@@ -554,8 +567,18 @@ const GeneralJournalPage: React.FC = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* Estilos de impresión */}
+      <style dangerouslySetInnerHTML={{ __html: printStyles }} />
+      
+      {/* Título para impresión (solo visible al imprimir) */}
+      <div className="hidden print:block print-title">DIARIO GENERAL</div>
+      <div className="hidden print:block print-date">
+        Generado el {new Date().toLocaleDateString('es-DO', {year: 'numeric', month: 'long', day: 'numeric'})}
+        {(dateFrom || dateTo) && ` - Período: ${dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} a ${dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'}`}
+      </div>
+
       {/* Header con botón de regreso */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 print:hidden">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate('/accounting')}
@@ -574,7 +597,15 @@ const GeneralJournalPage: React.FC = () => {
                 title="Exportar a Excel"
               >
                 <i className="ri-file-excel-2-line mr-2"></i>
-                Exportar Excel
+                Excel
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center"
+                title="Imprimir / Exportar a PDF"
+              >
+                <i className="ri-file-pdf-line mr-2"></i>
+                PDF
               </button>
               <button
                 onClick={() => setShowCreateModal(true)}
@@ -589,7 +620,7 @@ const GeneralJournalPage: React.FC = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8 print:hidden">
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center">
             <div className="p-2 bg-blue-100 rounded-lg">
@@ -649,7 +680,7 @@ const GeneralJournalPage: React.FC = () => {
 
       {/* Filters and Actions */}
       <div className="bg-white rounded-lg shadow mb-6">
-        <div className="p-6 border-b border-gray-200">
+        <div className="p-6 border-b border-gray-200 print:hidden">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4">
               <div className="relative">
@@ -769,7 +800,7 @@ const GeneralJournalPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Estado
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider print:hidden">
                   Acciones
                 </th>
               </tr>
@@ -810,7 +841,7 @@ const GeneralJournalPage: React.FC = () => {
                        entry.status === 'draft' ? 'Borrador' : 'Reversado'}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium print:hidden">
                     <button
                       onClick={() => setSelectedEntry(entry)}
                       className="text-blue-600 hover:text-blue-900 mr-3"
@@ -925,15 +956,8 @@ const GeneralJournalPage: React.FC = () => {
 
               {/* Entry Lines */}
               <div className="mb-6">
-                <div className="flex items-center justify-between mb-4">
+                <div className="mb-4">
                   <h3 className="text-lg font-medium text-gray-900">Líneas del Asiento</h3>
-                  <button
-                    onClick={addLine}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    <i className="ri-add-line mr-2"></i>
-                    Agregar Línea
-                  </button>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -985,20 +1009,26 @@ const GeneralJournalPage: React.FC = () => {
                           </td>
                           <td className="px-4 py-3">
                             <input
-                              type="number" min="0"
-                              value={line.debit_amount || ''}
-                              onChange={(e) => updateLine(index, 'debit_amount', parseFloat(e.target.value) || 0)}
+                              type="text"
+                              value={line.debit_amount > 0 ? line.debit_amount.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : ''}
+                              onChange={(e) => {
+                                const value = e.target.value.replace(/[^0-9.]/g, '');
+                                updateLine(index, 'debit_amount', parseFloat(value) || 0);
+                              }}
                               placeholder="0.00"
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-right"
                             />
                           </td>
                           <td className="px-4 py-3">
                             <input
-                              type="number" min="0"
-                              value={line.credit_amount || ''}
-                              onChange={(e) => updateLine(index, 'credit_amount', parseFloat(e.target.value) || 0)}
+                              type="text"
+                              value={line.credit_amount > 0 ? line.credit_amount.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : ''}
+                              onChange={(e) => {
+                                const value = e.target.value.replace(/[^0-9.]/g, '');
+                                updateLine(index, 'credit_amount', parseFloat(value) || 0);
+                              }}
                               placeholder="0.00"
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-right"
                             />
                           </td>
                           <td className="px-4 py-3">
@@ -1020,12 +1050,23 @@ const GeneralJournalPage: React.FC = () => {
                           Totales:
                         </td>
                         <td className="px-4 py-3 font-bold text-gray-900">
-                          RD${totalDebit.toLocaleString()}
+                          RD${totalDebit.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                         </td>
                         <td className="px-4 py-3 font-bold text-gray-900">
-                          RD${totalCredit.toLocaleString()}
+                          RD${totalCredit.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                         </td>
                         <td className="px-4 py-3"></td>
+                      </tr>
+                      <tr>
+                        <td colSpan={5} className="px-4 py-3 text-center">
+                          <button
+                            onClick={addLine}
+                            className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors inline-flex items-center"
+                          >
+                            <i className="ri-add-line mr-2"></i>
+                            Agregar Línea
+                          </button>
+                        </td>
                       </tr>
                     </tfoot>
                   </table>
