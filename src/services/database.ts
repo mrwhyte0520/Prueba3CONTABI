@@ -7,6 +7,28 @@ const handleDatabaseError = (error: any, fallbackData: any = []) => {
   return fallbackData;
 };
 
+// Resolve tenant owner id for a given user (owner or subuser)
+export const resolveTenantId = async (userId: string | null | undefined): Promise<string | null> => {
+  if (!userId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('user_roles')
+      .select('owner_user_id')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && (data as any)?.owner_user_id) {
+      return (data as any).owner_user_id as string;
+    }
+  } catch (err) {
+    console.warn('resolveTenantId failed:', (err as any)?.message ?? err);
+  }
+  // If no mapping is found, the user is its own tenant
+  return userId;
+};
+
 /* ==========================================================
    Referrals Service
 ========================================================== */
@@ -185,7 +207,8 @@ export const referralsService = {
 export const apInvoiceNotesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('ap_invoice_notes')
         .select(`
@@ -193,7 +216,7 @@ export const apInvoiceNotesService = {
           suppliers (name),
           ap_invoices (invoice_number, invoice_date, currency, total_to_pay, balance_amount)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('note_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -205,7 +228,8 @@ export const apInvoiceNotesService = {
 
   async create(userId: string, note: any) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
 
       const { ap_invoice_id, supplier_id, note_type } = note;
       const amount = Number(note.amount || 0);
@@ -218,18 +242,19 @@ export const apInvoiceNotesService = {
         .from('ap_invoices')
         .select('*')
         .eq('id', ap_invoice_id)
+        .eq('user_id', tenantId)
         .maybeSingle();
 
       if (invErr) throw invErr;
       if (!invoice) throw new Error('Factura de suplidor no encontrada');
-      if (String(invoice.user_id) !== String(userId)) throw new Error('Acceso denegado a la factura seleccionada');
+      if (String(invoice.user_id) !== String(tenantId)) throw new Error('Acceso denegado a la factura seleccionada');
 
       const now = new Date().toISOString();
 
       // 2) Insertar nota
       const baseNote = {
         ...note,
-        user_id: userId,
+        user_id: tenantId,
         supplier_id,
         ap_invoice_id,
         note_type,
@@ -264,7 +289,7 @@ export const apInvoiceNotesService = {
 
       // 4) Best-effort: asiento contable de la nota
       try {
-        const settings = await accountingSettingsService.get(userId);
+        const settings = await accountingSettingsService.get(tenantId);
         const apAccountId = settings?.ap_account_id as string | undefined;
         const contraAccountId = note.account_id as string | undefined;
 
@@ -306,11 +331,11 @@ export const apInvoiceNotesService = {
               entry_number: `AP-NOTA-${inserted.id}`,
               entry_date: baseNote.note_date,
               description: `Nota ${note_type === 'debit' ? 'Débito' : 'Crédito'} factura ${invoice.invoice_number || ''}`.trim(),
-              reference: String(inserted.id),
+              reference: inserted.id ? String(inserted.id) : null,
               status: 'posted' as const,
             };
 
-            await journalEntriesService.createWithLines(userId, entryPayload, lines);
+            await journalEntriesService.createWithLines(tenantId, entryPayload, lines);
           }
         }
       } catch (jeError) {
@@ -333,11 +358,12 @@ export const apInvoiceNotesService = {
 export const bankChargesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_charges')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('charge_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -358,11 +384,12 @@ export const bankChargesService = {
     expense_account_code: string;
   }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...charge,
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -378,12 +405,12 @@ export const bankChargesService = {
       // Asiento contable automático: Debe gasto financiero / Haber banco
       try {
         const amount = Number(charge.amount) || 0;
-        if (amount > 0) {
+        if (amount > 0 && charge.expense_account_code) {
           // Buscar cuenta de gasto por código
           const { data: expenseAccount, error: expenseError } = await supabase
             .from('chart_accounts')
             .select('id')
-            .eq('user_id', userId)
+            .eq('user_id', tenantId)
             .eq('code', charge.expense_account_code)
             .maybeSingle();
 
@@ -418,11 +445,10 @@ export const bankChargesService = {
               },
             ];
 
-            await journalEntriesService.createWithLines(userId, entryPayload, lines);
+            await journalEntriesService.createWithLines(tenantId, entryPayload, lines);
           }
         }
       } catch (jeError) {
-        // No interrumpir si falla la parte contable
         console.error('bankChargesService.create journal entry error', jeError);
       }
 
@@ -434,14 +460,19 @@ export const bankChargesService = {
   },
 };
 
+/* ==========================================================
+   Bank Reconciliations List Service
+========================================================== */
 export const bankReconciliationsListService = {
   async getAllByUser(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_reconciliations')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('reconciliation_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -453,12 +484,13 @@ export const bankReconciliationsListService = {
 
   async create(userId: string, entry: any, lines: any[]) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       if (!lines || lines.length === 0) throw new Error('At least one line is required');
 
       const { data: entryData, error: entryError } = await supabase
         .from('warehouse_entries')
-        .insert({ ...entry, user_id: userId })
+        .insert({ ...entry, user_id: tenantId })
         .select('*')
         .single();
 
@@ -485,13 +517,14 @@ export const bankReconciliationsListService = {
 
   async post(userId: string, id: string) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       if (!id) throw new Error('warehouse entry id required');
 
       const { data: entry, error: entryError } = await supabase
         .from('warehouse_entries')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('id', id)
         .maybeSingle();
 
@@ -565,7 +598,7 @@ export const bankReconciliationsListService = {
         }
 
         try {
-          await inventoryService.createMovement(userId, {
+          await inventoryService.createMovement(tenantId, {
             item_id: invItem.id ? String(invItem.id) : null,
             movement_type: 'entry',
             quantity: qty,
@@ -625,6 +658,9 @@ export const journalEntriesService = {
     if (!userId) throw new Error('userId required');
     if (!lines || lines.length === 0) throw new Error('journal entry lines required');
 
+    const tenantId = await resolveTenantId(userId);
+    if (!tenantId) throw new Error('userId required');
+
     const normalizedLines = lines.map((l, idx) => ({
       account_id: l.account_id,
       description: l.description ?? entry.description,
@@ -643,7 +679,7 @@ export const journalEntriesService = {
     const now = new Date().toISOString();
 
     const entryPayload = {
-      user_id: userId,
+      user_id: tenantId,
       entry_number: entry.entry_number,
       entry_date: entry.entry_date,
       description: entry.description,
@@ -686,11 +722,12 @@ export const journalEntriesService = {
 
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('journal_entries')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('entry_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -709,11 +746,12 @@ export const journalEntriesService = {
 export const bankCreditsService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_credits')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('start_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -736,12 +774,13 @@ export const bankCreditsService = {
     loan_account_code?: string;
   }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...credit,
         status: 'active',
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -762,7 +801,7 @@ export const bankCreditsService = {
           const { data: loanAccount, error: loanError } = await supabase
             .from('chart_accounts')
             .select('id')
-            .eq('user_id', userId)
+            .eq('user_id', tenantId)
             .eq('code', credit.loan_account_code)
             .maybeSingle();
 
@@ -819,11 +858,12 @@ export const bankCreditsService = {
 export const bankTransfersService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_transfers')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('transfer_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -846,12 +886,13 @@ export const bankTransfersService = {
     description: string;
   }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...transfer,
         status: 'issued',
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -927,10 +968,12 @@ export const bankChecksService = {
   async getAll(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_checks')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('check_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -955,11 +998,13 @@ export const bankChecksService = {
   }) {
     try {
       if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...check,
         status: 'issued',
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -980,7 +1025,7 @@ export const bankChecksService = {
           const { data: expenseAccount, error: expenseError } = await supabase
             .from('chart_accounts')
             .select('id')
-            .eq('user_id', userId)
+            .eq('user_id', tenantId)
             .eq('code', check.expense_account_code)
             .maybeSingle();
 
@@ -1024,9 +1069,10 @@ export const bankChecksService = {
                   .from('ap_invoices')
                   .select('id, user_id, total_to_pay, paid_amount, balance_amount, status')
                   .eq('id', check.ap_invoice_id)
+                  .eq('user_id', tenantId)
                   .maybeSingle();
 
-                if (!invError && invoice && invoice.user_id === userId) {
+                if (!invError && invoice) {
                   const totalToPay = Number(invoice.total_to_pay) || 0;
                   const currentPaid = Number((invoice as any).paid_amount) || 0;
                   const currentBalance = Number((invoice as any).balance_amount) || totalToPay;
@@ -1056,7 +1102,8 @@ export const bankChecksService = {
                       balance_amount: newBalance,
                       updated_at: new Date().toISOString(),
                     })
-                    .eq('id', invoice.id);
+                    .eq('id', invoice.id)
+                    .eq('user_id', tenantId);
                 }
               } catch (updateApError) {
                 // No interrumpir el flujo del cheque por errores al actualizar la factura de CxP
@@ -1085,10 +1132,12 @@ export const paymentRequestsService = {
   async getAll(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_payment_requests')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('request_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -1109,12 +1158,13 @@ export const paymentRequestsService = {
     description: string;
   }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...request,
         status: 'pending',
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -1165,10 +1215,12 @@ export const bankDepositsService = {
   async getAll(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_deposits')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('deposit_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -1189,11 +1241,12 @@ export const bankDepositsService = {
     description: string;
   }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...deposit,
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -1221,10 +1274,12 @@ export const bankCurrenciesService = {
   async getAll(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_currencies')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('is_base', { ascending: false })
         .order('code');
 
@@ -1243,13 +1298,14 @@ export const bankCurrenciesService = {
     is_active?: boolean;
   }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...currency,
         is_base: currency.is_base ?? false,
         is_active: currency.is_active ?? true,
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -1277,10 +1333,12 @@ export const bankExchangeRatesService = {
   async getAll(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_exchange_rates')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('valid_from', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -1299,12 +1357,13 @@ export const bankExchangeRatesService = {
     valid_to?: string | null;
   }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...rate,
         valid_to: rate.valid_to || null,
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -1334,7 +1393,8 @@ export const bankExchangeRatesService = {
     onDate: string,
   ): Promise<number | null> {
     try {
-      if (!userId) return null;
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return null;
       if (!baseCurrencyCode || !targetCurrencyCode) return null;
       if (baseCurrencyCode === targetCurrencyCode) return 1;
 
@@ -1344,7 +1404,7 @@ export const bankExchangeRatesService = {
       const { data: direct, error: directError } = await supabase
         .from('bank_exchange_rates')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('base_currency_code', baseCurrencyCode)
         .eq('target_currency_code', targetCurrencyCode)
         .lte('valid_from', asOf)
@@ -1362,7 +1422,7 @@ export const bankExchangeRatesService = {
       const { data: inverse, error: inverseError } = await supabase
         .from('bank_exchange_rates')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('base_currency_code', targetCurrencyCode)
         .eq('target_currency_code', baseCurrencyCode)
         .lte('valid_from', asOf)
@@ -1392,10 +1452,12 @@ export const cashClosingService = {
   async getAll(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('cash_closings')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('closing_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -1408,10 +1470,12 @@ export const cashClosingService = {
   async getByDate(userId: string, closingDate: string) {
     try {
       if (!userId || !closingDate) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('cash_closings')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('closing_date', closingDate)
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -1424,10 +1488,12 @@ export const cashClosingService = {
   async create(userId: string, closing: any) {
     try {
       if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...closing,
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -1532,11 +1598,12 @@ export const auditLogsService = {
 export const customersService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('customers')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name');
       if (error) throw error;
       return (data || []).map((c: any) => ({
@@ -1591,8 +1658,10 @@ export const customersService = {
     paymentTermId?: string | null 
   }) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
-        user_id: userId,
+        user_id: tenantId,
         name: customer.name,
         document: customer.document,
         phone: customer.phone,
@@ -1705,11 +1774,12 @@ export const customersService = {
 export const customerTypesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('customer_types')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name');
       if (error) return handleDatabaseError(error, []);
       return (data || []).map((t: any) => ({
@@ -1730,7 +1800,8 @@ export const customerTypesService = {
 
   async create(userId: string, payload: { name: string; description?: string; fixedDiscount?: number; creditLimit?: number; allowedDelayDays?: number; noTax?: boolean; arAccountId?: string }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
 
       // Intentamos obtener el código de cuenta si se pasa arAccountId
@@ -1747,7 +1818,7 @@ export const customerTypesService = {
       }
 
       const body = {
-        user_id: userId,
+        user_id: tenantId,
         name: payload.name,
         description: payload.description || null,
         fixed_discount: typeof payload.fixedDiscount === 'number' ? payload.fixedDiscount : 0,
@@ -1822,10 +1893,11 @@ export const chartAccountsService = {
   async getAll(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
       const { data, error } = await supabase
         .from('chart_accounts')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('code');
 
       if (error) return handleDatabaseError(error, []);
@@ -1859,11 +1931,12 @@ export const chartAccountsService = {
   // Esto es la base para balances y estados financieros.
   async getBalances(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
       // 1. Cargar cuentas activas con su tipo y saldo normal
       const { data: accounts, error: accError } = await supabase
         .from('chart_accounts')
         .select('id, code, name, type, normal_balance, is_active, is_bank_account, allow_posting')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('is_active', true)
         .order('code');
 
@@ -1876,7 +1949,7 @@ export const chartAccountsService = {
       const { data: lines, error: linesError } = await supabase
         .from('journal_entry_lines')
         .select('account_id, debit_amount, credit_amount, journal_entries!inner(status, user_id)')
-        .eq('journal_entries.user_id', userId)
+        .eq('journal_entries.user_id', tenantId)
         .eq('journal_entries.status', 'posted');
 
       if (linesError) {
@@ -1888,13 +1961,19 @@ export const chartAccountsService = {
       const sums: Record<string, { debit: number; credit: number }> = {};
 
       (lines || []).forEach((line: any) => {
-        const accountId = line.account_id;
-        if (!accountId) return;
+        const account = line.chart_accounts;
+        // Multi-tenant fuerte: ignorar líneas cuya cuenta no pertenezca al mismo user_id
+        if (!account || account.user_id !== tenantId) return;
+
+        const accountId = line.account_id as string;
+        const debit = Number(line.debit_amount) || 0;
+        const credit = Number(line.credit_amount) || 0;
+
         if (!sums[accountId]) {
           sums[accountId] = { debit: 0, credit: 0 };
         }
-        sums[accountId].debit += Number(line.debit_amount || 0);
-        sums[accountId].credit += Number(line.credit_amount || 0);
+        sums[accountId].debit += debit;
+        sums[accountId].credit += credit;
       });
 
       // 4. Calcular saldo firmado según normal_balance
@@ -1930,6 +2009,7 @@ export const chartAccountsService = {
 
   async create(userId: string, account: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const normalizeAccountType = (t: string) => {
         const v = (t || '').toLowerCase().trim();
         if (['asset', 'liability', 'equity', 'income', 'cost', 'expense'].includes(v)) return v;
@@ -1944,7 +2024,7 @@ export const chartAccountsService = {
 
       const accountData = {
         ...account,
-        user_id: userId,
+        user_id: tenantId,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
@@ -2051,11 +2131,12 @@ export const chartAccountsService = {
 
   async generateBalanceSheet(userId: string, asOfDate: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const { data, error } = await supabase
         .from('chart_accounts')
         .select('*')
         .in('type', ['asset', 'liability', 'equity'])
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('is_active', true)
         .order('code');
 
@@ -2109,6 +2190,7 @@ export const chartAccountsService = {
 
   async seedFromTemplate(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const { data: templateRows, error } = await supabase
         .from('chart_accounts_template')
         .select('*');
@@ -2122,7 +2204,7 @@ export const chartAccountsService = {
       const { data: existing, error: existingError } = await supabase
         .from('chart_accounts')
         .select('code')
-        .eq('user_id', userId);
+        .eq('user_id', tenantId);
 
       if (existingError) throw existingError;
       const existingCodes = new Set((existing || []).map((r: any) => String(r.code || '').trim()));
@@ -2133,7 +2215,7 @@ export const chartAccountsService = {
           return !!code && !existingCodes.has(code);
         })
         .map((row: any) => ({
-          user_id: userId,
+          user_id: tenantId,
           code: row.code,
           name: row.name,
           type: row.type || 'asset',
@@ -2177,11 +2259,12 @@ export const chartAccountsService = {
       };
     }
     try {
+      const tenantId = await resolveTenantId(userId);
       const { data, error } = await supabase
         .from('chart_accounts')
         .select('*')
         .in('type', ['income', 'cost', 'expense'])
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('is_active', true)
         .order('code');
 
@@ -2290,6 +2373,7 @@ export const chartAccountsService = {
       };
     }
     try {
+      const tenantId = await resolveTenantId(userId);
       // Obtener movimientos de efectivo del período
       const { data: journalEntries, error } = await supabase
         .from('journal_entries')
@@ -2300,7 +2384,7 @@ export const chartAccountsService = {
             chart_accounts (code, name, type)
           )
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .gte('entry_date', fromDate)
         .lte('entry_date', toDate)
         .order('entry_date');
@@ -2470,10 +2554,12 @@ export const pettyCashService = {
   async getFunds(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('petty_cash_funds')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -2485,10 +2571,12 @@ export const pettyCashService = {
   async getExpenses(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('petty_cash_expenses')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('expense_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -2501,10 +2589,12 @@ export const pettyCashService = {
   async getReimbursements(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('petty_cash_reimbursements')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('reimbursement_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -2516,9 +2606,11 @@ export const pettyCashService = {
 
   async createFund(userId: string, fund: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...fund,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('petty_cash_funds')
@@ -2584,11 +2676,14 @@ export const pettyCashService = {
         updated_at: new Date().toISOString(),
       };
 
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
       const { data, error } = await supabase
         .from('petty_cash_funds')
         .update(payload)
         .eq('id', fundId)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .select('*')
         .single();
 
@@ -2602,9 +2697,11 @@ export const pettyCashService = {
 
   async createExpense(userId: string, expense: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...expense,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('petty_cash_expenses')
@@ -2621,6 +2718,9 @@ export const pettyCashService = {
 
   async approveExpense(userId: string, expenseId: string, approvedBy: string | null) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
       const updatePayload: any = {
         status: 'approved',
         approved_by: approvedBy,
@@ -2630,7 +2730,7 @@ export const pettyCashService = {
         .from('petty_cash_expenses')
         .update(updatePayload)
         .eq('id', expenseId)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .select('*')
         .single();
       if (error) throw error;
@@ -2687,6 +2787,9 @@ export const pettyCashService = {
 
   async rejectExpense(userId: string, expenseId: string, approvedBy: string | null) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
       const updatePayload: any = {
         status: 'rejected',
         approved_by: approvedBy,
@@ -2696,7 +2799,7 @@ export const pettyCashService = {
         .from('petty_cash_expenses')
         .update(updatePayload)
         .eq('id', expenseId)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .select('*')
         .single();
       if (error) throw error;
@@ -2709,9 +2812,11 @@ export const pettyCashService = {
 
   async createReimbursement(userId: string, reimbursement: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...reimbursement,
-        user_id: userId,
+        user_id: tenantId,
       };
 
       const { data, error } = await supabase
@@ -2900,6 +3005,7 @@ export const financialReportsService = {
   async getTrialBalance(userId: string, fromDate: string, toDate: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
 
       const { data, error } = await supabase
         .from('journal_entry_lines')
@@ -2910,7 +3016,7 @@ export const financialReportsService = {
           journal_entries (entry_date, user_id),
           chart_accounts (id, user_id, code, name, type, normal_balance, level, allow_posting, parent_id)
         `)
-        .eq('journal_entries.user_id', userId)
+        .eq('journal_entries.user_id', tenantId)
         .gte('journal_entries.entry_date', fromDate)
         .lte('journal_entries.entry_date', toDate);
 
@@ -2924,7 +3030,7 @@ export const financialReportsService = {
       (data || []).forEach((line: any) => {
         const account = line.chart_accounts;
         // Multi-tenant fuerte: ignorar líneas cuya cuenta no pertenezca al mismo user_id
-        if (!account || account.user_id !== userId) return;
+        if (!account || account.user_id !== tenantId) return;
 
         const accountId = line.account_id as string;
         const debit = Number(line.debit_amount) || 0;
@@ -2975,11 +3081,12 @@ export const financialStatementsService = {
   async getAll(userId: string, period?: string | null) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
 
       let query = supabase
         .from('financial_statements')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (period) {
@@ -3001,6 +3108,7 @@ export const financialStatementsService = {
   async create(userId: string, params: { type: string; period?: string | null; name?: string | null }) {
     try {
       if (!userId) throw new Error('User is required');
+      const tenantId = await resolveTenantId(userId);
 
       const type = params.type as
         | 'balance_sheet'
@@ -3018,7 +3126,7 @@ export const financialStatementsService = {
       const toDate = new Date(year, month, 0).toISOString().slice(0, 10);
 
       let payload: any = {
-        user_id: userId,
+        user_id: tenantId,
         type,
         period,
         from_date: fromDate,
@@ -3091,11 +3199,14 @@ export const bankReconciliationService = {
     try {
       if (!userId || !bankAccountId) throw new Error('User and bank account are required');
 
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
       // Try to find an existing reconciliation for this bank and date
       const { data: existing, error: existingError } = await supabase
         .from('bank_reconciliations')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('bank_account_id', bankAccountId)
         .eq('reconciliation_date', reconciliationDate)
         .maybeSingle();
@@ -3111,7 +3222,7 @@ export const bankReconciliationService = {
 
       // Create a new reconciliation
       const payload = {
-        user_id: userId,
+        user_id: tenantId,
         bank_account_id: bankAccountId,
         reconciliation_date: reconciliationDate,
         bank_statement_balance: bankStatementBalance,
@@ -3351,6 +3462,8 @@ export const bankReconciliationService = {
 export const employeesService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('employees')
         .select(`
@@ -3358,7 +3471,7 @@ export const employeesService = {
           departments (name),
           positions (title)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('employee_code');
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -3369,9 +3482,11 @@ export const employeesService = {
 
   async create(userId: string, employee: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const { data, error } = await supabase
         .from('employees')
-        .insert({ ...employee, user_id: userId })
+        .insert({ ...employee, user_id: tenantId })
         .select()
         .single();
       if (error) throw error;
@@ -3430,11 +3545,12 @@ export const employeesService = {
 export const inventoryService = {
   async getItems(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('inventory_items')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name');
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -3445,14 +3561,15 @@ export const inventoryService = {
 
   async getMovements(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('inventory_movements')
         .select(`
           *,
           inventory_items (name, sku, warehouse_id)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('movement_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -3463,9 +3580,11 @@ export const inventoryService = {
 
   async createItem(userId: string, item: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...item,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('inventory_items')
@@ -3515,13 +3634,15 @@ export const inventoryService = {
 
   async createMovement(userId: string, movement: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const rawQty = Number(movement.quantity) || 0;
       const quantity = Number.isFinite(rawQty) ? Math.round(rawQty) : 0;
 
       const payload = {
         ...movement,
         quantity,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('inventory_movements')
@@ -3543,7 +3664,8 @@ export const inventoryService = {
 export const warehouseEntriesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('warehouse_entries')
         .select(`
@@ -3551,7 +3673,7 @@ export const warehouseEntriesService = {
           warehouse_entry_lines (*),
           warehouses (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('document_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -3564,11 +3686,12 @@ export const warehouseEntriesService = {
   async create(userId: string, entry: any, lines: any[]) {
     try {
       if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
       if (!lines || lines.length === 0) throw new Error('At least one line is required');
 
       const { data: entryData, error: entryError } = await supabase
         .from('warehouse_entries')
-        .insert({ ...entry, user_id: userId })
+        .insert({ ...entry, user_id: tenantId })
         .select('*')
         .single();
 
@@ -3720,7 +3843,8 @@ export const warehouseEntriesService = {
 export const warehouseTransfersService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('warehouse_transfers')
         .select(`
@@ -3729,7 +3853,7 @@ export const warehouseTransfersService = {
           from_warehouse:from_warehouse_id (name),
           to_warehouse:to_warehouse_id (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('transfer_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -3741,12 +3865,13 @@ export const warehouseTransfersService = {
 
   async create(userId: string, transfer: any, lines: any[]) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       if (!lines || lines.length === 0) throw new Error('At least one line is required');
 
       const { data: transferData, error: transferError } = await supabase
         .from('warehouse_transfers')
-        .insert({ ...transfer, user_id: userId })
+        .insert({ ...transfer, user_id: tenantId })
         .select('*')
         .single();
 
@@ -3773,13 +3898,14 @@ export const warehouseTransfersService = {
 
   async post(userId: string, id: string) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       if (!id) throw new Error('warehouse transfer id required');
 
       const { data: transfer, error: transferError } = await supabase
         .from('warehouse_transfers')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('id', id)
         .maybeSingle();
 
@@ -3862,14 +3988,15 @@ export const warehouseTransfersService = {
 export const inventoryPhysicalCountsService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('inventory_physical_counts')
         .select(`
           *,
           warehouses (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('count_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -3881,7 +4008,8 @@ export const inventoryPhysicalCountsService = {
 
   async getWithLines(userId: string, id: string) {
     try {
-      if (!userId || !id) return null;
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId || !id) return null;
       const { data, error } = await supabase
         .from('inventory_physical_counts')
         .select(`
@@ -3902,6 +4030,7 @@ export const inventoryPhysicalCountsService = {
         .eq('user_id', userId)
         .eq('id', id)
         .maybeSingle();
+
       if (error) return handleDatabaseError(error, null);
       return data ?? null;
     } catch (error) {
@@ -3911,12 +4040,13 @@ export const inventoryPhysicalCountsService = {
 
   async create(userId: string, header: any, lines: any[]) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       if (!lines || lines.length === 0) throw new Error('At least one line is required');
 
       const { data: headerData, error: headerError } = await supabase
         .from('inventory_physical_counts')
-        .insert({ ...header, user_id: userId })
+        .insert({ ...header, user_id: tenantId })
         .select('*')
         .single();
 
@@ -3948,11 +4078,12 @@ export const inventoryPhysicalCountsService = {
 export const inventoryCostRevaluationsService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('inventory_cost_revaluations')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('revaluation_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -3964,7 +4095,8 @@ export const inventoryCostRevaluationsService = {
 
   async getWithLines(userId: string, id: string) {
     try {
-      if (!userId || !id) return null;
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId || !id) return null;
       const { data, error } = await supabase
         .from('inventory_cost_revaluations')
         .select(`
@@ -3982,9 +4114,10 @@ export const inventoryCostRevaluationsService = {
             warehouses (name)
           )
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('id', id)
         .maybeSingle();
+
       if (error) return handleDatabaseError(error, null);
       return data ?? null;
     } catch (error) {
@@ -3994,12 +4127,13 @@ export const inventoryCostRevaluationsService = {
 
   async create(userId: string, header: any, lines: any[]) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       if (!lines || lines.length === 0) throw new Error('At least one line is required');
 
       const { data: headerData, error: headerError } = await supabase
         .from('inventory_cost_revaluations')
-        .insert({ ...header, user_id: userId })
+        .insert({ ...header, user_id: tenantId })
         .select('*')
         .single();
 
@@ -4031,10 +4165,12 @@ export const inventoryCostRevaluationsService = {
 export const departmentsService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('departments')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name');
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4045,9 +4181,11 @@ export const departmentsService = {
 
   async create(userId: string, department: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const { data, error } = await supabase
         .from('departments')
-        .insert({ ...department, user_id: userId })
+        .insert({ ...department, user_id: tenantId })
         .select()
         .single();
       if (error) throw error;
@@ -4091,13 +4229,15 @@ export const departmentsService = {
 export const positionsService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('positions')
         .select(`
           *,
           departments (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('title');
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4108,9 +4248,11 @@ export const positionsService = {
 
   async create(userId: string, position: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const { data, error } = await supabase
         .from('positions')
-        .insert({ ...position, user_id: userId })
+        .insert({ ...position, user_id: tenantId })
         .select()
         .single();
       if (error) throw error;
@@ -4154,11 +4296,12 @@ export const positionsService = {
 export const employeeTypesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('employee_types')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name');
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4169,9 +4312,11 @@ export const employeeTypesService = {
 
   async create(userId: string, type: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...type,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('employee_types')
@@ -4222,11 +4367,12 @@ export const employeeTypesService = {
 export const salaryTypesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('salary_types')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name');
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4237,9 +4383,10 @@ export const salaryTypesService = {
 
   async create(userId: string, type: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const payload = {
         ...type,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('salary_types')
@@ -4290,11 +4437,12 @@ export const salaryTypesService = {
 export const commissionTypesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('commission_types')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name');
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4305,9 +4453,10 @@ export const commissionTypesService = {
 
   async create(userId: string, type: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const payload = {
         ...type,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('commission_types')
@@ -4358,11 +4507,12 @@ export const commissionTypesService = {
 export const vacationsService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('vacations')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('start_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4373,9 +4523,11 @@ export const vacationsService = {
 
   async create(userId: string, vacation: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...vacation,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('vacations')
@@ -4426,11 +4578,12 @@ export const vacationsService = {
 export const holidaysService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('holidays')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4441,9 +4594,11 @@ export const holidaysService = {
 
   async create(userId: string, holiday: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...holiday,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('holidays')
@@ -4494,11 +4649,12 @@ export const holidaysService = {
 export const bonusesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bonuses')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4509,9 +4665,11 @@ export const bonusesService = {
 
   async create(userId: string, bonus: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...bonus,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('bonuses')
@@ -4562,11 +4720,12 @@ export const bonusesService = {
 export const royaltiesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('royalties')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('payment_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4577,9 +4736,11 @@ export const royaltiesService = {
 
   async create(userId: string, royalty: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...royalty,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('royalties')
@@ -4630,11 +4791,12 @@ export const royaltiesService = {
 export const overtimeService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('overtime_records')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4645,9 +4807,11 @@ export const overtimeService = {
 
   async create(userId: string, record: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
         ...record,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('overtime_records')
@@ -4698,10 +4862,12 @@ export const overtimeService = {
 export const payrollService = {
   async getPeriods(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('payroll_periods')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('start_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -4712,9 +4878,11 @@ export const payrollService = {
 
   async createPeriod(userId: string, period: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const { data, error } = await supabase
         .from('payroll_periods')
-        .insert({ ...period, user_id: userId })
+        .insert({ ...period, user_id: tenantId })
         .select()
         .single();
       if (error) throw error;
@@ -4787,11 +4955,13 @@ export const payrollService = {
   // Nuevos métodos integrados para deducciones y ausencias
   async getEmployeeDeductions(userId: string, employeeId: string, periodStart: string, periodEnd: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return { periodic: [], other: [] };
       // Obtener deducciones periódicas activas
       const { data: periodicData, error: periodicError } = await supabase
         .from('periodic_deductions')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('employee_id', employeeId)
         .eq('is_active', true)
         .lte('start_date', periodEnd)
@@ -4803,7 +4973,7 @@ export const payrollService = {
       const { data: otherData, error: otherError } = await supabase
         .from('other_deductions')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('employee_id', employeeId)
         .eq('status', 'pendiente')
         .gte('deduction_date', periodStart)
@@ -4823,10 +4993,12 @@ export const payrollService = {
 
   async getEmployeeAbsences(userId: string, employeeId: string, periodStart: string, periodEnd: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('employee_absences')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('employee_id', employeeId)
         .eq('status', 'aprobada')
         .gte('end_date', periodStart)
@@ -4842,6 +5014,8 @@ export const payrollService = {
 
   async calculatePayroll(userId: string, periodId: string, employees: any[], periodStart: string, periodEnd: string, tssConfig: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payrollEntries = [];
 
       for (const employee of employees) {
@@ -4899,7 +5073,7 @@ export const payrollService = {
         const netSalary = grossSalary - totalDeductions;
 
         payrollEntries.push({
-          user_id: userId,
+          user_id: tenantId,
           payroll_period_id: periodId,
           employee_id: employee.id,
           gross_salary: grossSalary,
@@ -4926,10 +5100,12 @@ export const payrollService = {
 
   async markOtherDeductionsAsApplied(userId: string, employeeIds: string[], periodStart: string, periodEnd: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const { error } = await supabase
         .from('other_deductions')
         .update({ status: 'aplicada' })
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .in('employee_id', employeeIds)
         .eq('status', 'pendiente')
         .gte('deduction_date', periodStart)
@@ -4950,10 +5126,12 @@ export const payrollService = {
 export const deductionsService = {
   async getPeriodicDeductions(userId: string, employeeId?: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       let query = supabase
         .from('periodic_deductions')
-        .select('*, employees(first_name, last_name, employee_code)')
-        .eq('user_id', userId)
+        .select('*')
+        .eq('user_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (employeeId) {
@@ -4971,10 +5149,12 @@ export const deductionsService = {
 
   async getOtherDeductions(userId: string, employeeId?: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       let query = supabase
         .from('other_deductions')
-        .select('*, employees(first_name, last_name, employee_code)')
-        .eq('user_id', userId)
+        .select('*')
+        .eq('user_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (employeeId) {
@@ -4994,10 +5174,12 @@ export const deductionsService = {
 export const absencesService = {
   async getAbsences(userId: string, employeeId?: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       let query = supabase
         .from('employee_absences')
-        .select('*, employees(first_name, last_name, employee_code)')
-        .eq('user_id', userId)
+        .select('*')
+        .eq('user_id', tenantId)
         .order('created_at', { ascending: false });
 
       if (employeeId) {
@@ -5020,12 +5202,13 @@ export const absencesService = {
 export const accountingSettingsService = {
   async get(userId?: string) {
     try {
+      const tenantId = userId ? await resolveTenantId(userId) : null;
       const query = supabase
         .from('accounting_settings')
         .select('*');
 
-      if (userId) {
-        query.eq('user_id', userId).limit(1);
+      if (tenantId) {
+        query.eq('user_id', tenantId).limit(1);
       } else {
         query.limit(1);
       }
@@ -5043,10 +5226,11 @@ export const accountingSettingsService = {
   // Verificar si el catálogo de cuentas ya fue sembrado para este usuario
   async hasChartAccountsSeeded(userId: string): Promise<boolean> {
     try {
+      const tenantId = await resolveTenantId(userId);
       const { data, error } = await supabase
         .from('accounting_settings')
         .select('chart_accounts_seeded')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .maybeSingle();
 
       if (error) {
@@ -5064,11 +5248,12 @@ export const accountingSettingsService = {
   // Marcar que el catálogo de cuentas ya fue sembrado para este usuario
   async markChartAccountsSeeded(userId: string): Promise<void> {
     try {
+      const tenantId = await resolveTenantId(userId);
       const { error } = await supabase
         .from('accounting_settings')
         .upsert(
           { 
-            user_id: userId, 
+            user_id: tenantId, 
             chart_accounts_seeded: true,
             updated_at: new Date().toISOString()
           },
@@ -5136,11 +5321,12 @@ export const deliveryNotesService = {
   async create(userId: string, note: any, lines: any[]) {
     try {
       if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
       if (!lines || lines.length === 0) throw new Error('At least one line is required');
 
       const { data: noteData, error: noteError } = await supabase
         .from('delivery_notes')
-        .insert({ ...note, user_id: userId })
+        .insert({ ...note, user_id: tenantId })
         .select('*')
         .single();
 
@@ -5571,7 +5757,8 @@ export const deliveryNotesService = {
 export const invoicesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('invoices')
         .select(`
@@ -5582,7 +5769,7 @@ export const invoicesService = {
             inventory_items (name)
           )
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('invoice_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -5593,9 +5780,11 @@ export const invoicesService = {
 
   async create(userId: string, invoice: any, lines: any[]) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const { data: invoiceData, error: invoiceError } = await supabase
         .from('invoices')
-        .insert({ ...invoice, user_id: userId })
+        .insert({ ...invoice, user_id: tenantId })
         .select()
         .single();
 
@@ -5619,7 +5808,7 @@ export const invoicesService = {
         const totalDiscount = Number((invoiceData as any).total_discount ?? (invoiceData as any).discount_value ?? 0) || 0;
         if (discountType && totalDiscount > 0) {
           await supabase.from('approval_requests').insert({
-            user_id: userId,
+            user_id: tenantId,
             entity_type: 'invoice_discount',
             entity_id: invoiceData.id,
             status: 'pending',
@@ -5633,7 +5822,7 @@ export const invoicesService = {
 
       // Intentar registrar asiento contable para la factura (best-effort)
       try {
-        const settings = await accountingSettingsService.get(userId);
+        const settings = await accountingSettingsService.get(tenantId);
         const arAccountId = settings?.ar_account_id;
         const salesAccountId = settings?.sales_account_id;
         const taxAccountId = settings?.sales_tax_account_id;
@@ -5752,7 +5941,7 @@ export const invoicesService = {
                   status: 'posted' as const,
                 };
 
-                await journalEntriesService.createWithLines(userId, cogsEntryPayload, cogsLines);
+                await journalEntriesService.createWithLines(tenantId, cogsEntryPayload, cogsLines);
               }
             }
           }
@@ -5811,7 +6000,8 @@ export const invoicesService = {
 
   async updateWithLines(userId: string, externalId: string, invoicePatch: any, lines: any[]) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       if (!externalId) throw new Error('externalId (invoice id/number) required');
 
       // Buscar la factura por invoice_number o, en su defecto, por id
@@ -5820,7 +6010,7 @@ export const invoicesService = {
       const { data: byNumber, error: byNumberError } = await supabase
         .from('invoices')
         .select('id, invoice_number')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('invoice_number', externalId)
         .maybeSingle();
 
@@ -5831,7 +6021,7 @@ export const invoicesService = {
         const { data: byId, error: byIdError } = await supabase
           .from('invoices')
           .select('id')
-          .eq('user_id', userId)
+          .eq('user_id', tenantId)
           .eq('id', externalId)
           .maybeSingle();
         if (byIdError) throw byIdError;
@@ -5852,7 +6042,7 @@ export const invoicesService = {
           updated_at: new Date().toISOString(),
         })
         .eq('id', invoiceId)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .select('*')
         .single();
 
@@ -5892,7 +6082,8 @@ export const invoicesService = {
 
   async deleteByExternalId(userId: string, externalId: string) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       if (!externalId) throw new Error('externalId (invoice id/number) required');
 
       // Buscar la factura por invoice_number o por id
@@ -5901,7 +6092,7 @@ export const invoicesService = {
       const { data: byNumber, error: byNumberError } = await supabase
         .from('invoices')
         .select('id, invoice_number')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('invoice_number', externalId)
         .maybeSingle();
 
@@ -5912,7 +6103,7 @@ export const invoicesService = {
         const { data: byId, error: byIdError } = await supabase
           .from('invoices')
           .select('id')
-          .eq('user_id', userId)
+          .eq('user_id', tenantId)
           .eq('id', externalId)
           .maybeSingle();
         if (byIdError) throw byIdError;
@@ -5939,7 +6130,7 @@ export const invoicesService = {
         .from('invoices')
         .delete()
         .eq('id', invoiceId)
-        .eq('user_id', userId);
+        .eq('user_id', tenantId);
 
       if (deleteInvoiceError) throw deleteInvoiceError;
     } catch (error) {
@@ -5962,8 +6153,10 @@ export const receiptApplicationsService = {
     notes?: string | null;
   }) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const body = {
-        user_id: userId,
+        user_id: tenantId,
         receipt_id: payload.receipt_id,
         invoice_id: payload.invoice_id,
         amount_applied: payload.amount_applied,
@@ -5985,10 +6178,12 @@ export const receiptApplicationsService = {
 
   async getByInvoice(userId: string, invoiceId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('receipt_applications')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('invoice_id', invoiceId);
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -5999,13 +6194,15 @@ export const receiptApplicationsService = {
 
   async getByReceipt(userId: string, receiptId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('receipt_applications')
         .select(`
           *,
           invoices (invoice_number)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('receipt_id', receiptId)
         .order('application_date', { ascending: true });
       if (error) return handleDatabaseError(error, []);
@@ -6022,13 +6219,15 @@ export const receiptApplicationsService = {
 export const receiptsService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('receipts')
         .select(`
           *,
           customers (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('receipt_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -6039,8 +6238,10 @@ export const receiptsService = {
 
   async create(userId: string, receipt: { customer_id: string; receipt_number: string; receipt_date: string; amount: number; payment_method: string; reference?: string | null; concept?: string | null; status?: string }) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const payload = {
-        user_id: userId,
+        user_id: tenantId,
         customer_id: receipt.customer_id,
         receipt_number: receipt.receipt_number,
         receipt_date: receipt.receipt_date,
@@ -6086,13 +6287,15 @@ export const receiptsService = {
 export const customerAdvancesService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('customer_advances')
         .select(`
           *,
           customers (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('advance_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -6115,7 +6318,7 @@ export const customerAdvancesService = {
   }) {
     try {
       const body = {
-        user_id: userId,
+        user_id: await resolveTenantId(userId),
         customer_id: payload.customer_id,
         advance_number: payload.advance_number,
         advance_date: payload.advance_date,
@@ -6175,6 +6378,8 @@ export const customerAdvancesService = {
 export const creditDebitNotesService = {
   async getAll(userId: string, noteType: 'credit' | 'debit') {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('credit_debit_notes')
         .select(`
@@ -6182,7 +6387,7 @@ export const creditDebitNotesService = {
           customers (name),
           invoices (invoice_number)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('note_type', noteType)
         .order('note_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -6205,8 +6410,10 @@ export const creditDebitNotesService = {
     balance_amount?: number;
   }) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const body = {
-        user_id: userId,
+        user_id: tenantId,
         note_type: payload.note_type,
         customer_id: payload.customer_id,
         invoice_id: payload.invoice_id ?? null,
@@ -6266,10 +6473,11 @@ export const creditDebitNotesService = {
 export const suppliersService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const { data, error } = await supabase
         .from('suppliers')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name');
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -6280,9 +6488,10 @@ export const suppliersService = {
 
   async create(userId: string, supplier: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const { data, error } = await supabase
         .from('suppliers')
-        .insert({ ...supplier, user_id: userId })
+        .insert({ ...supplier, user_id: tenantId })
         .select()
         .single();
       if (error) throw error;
@@ -6554,14 +6763,15 @@ export const quotesService = {
 export const apQuotesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('ap_quotes')
         .select(`
           *,
           ap_quote_suppliers (*)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -6572,11 +6782,12 @@ export const apQuotesService = {
 
   async create(userId: string, quote: any, supplierNames: string[]) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...quote,
-        user_id: userId,
+        user_id: tenantId,
         created_at: now,
         updated_at: now,
       };
@@ -6690,14 +6901,15 @@ export const apQuotesService = {
 export const apSupplierAdvancesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('ap_supplier_advances')
         .select(`
           *,
           suppliers (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('advance_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -6725,9 +6937,10 @@ export const apSupplierAdvancesService = {
     account_id?: string | null;
   }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const body = {
-        user_id: userId,
+        user_id: tenantId,
         supplier_id: payload.supplier_id,
         advance_number: payload.advance_number,
         advance_date: payload.advance_date,
@@ -6852,14 +7065,15 @@ export const apSupplierAdvancesService = {
 export const apInvoicesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('ap_invoices')
         .select(`
           *,
           suppliers (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('invoice_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -6871,11 +7085,12 @@ export const apInvoicesService = {
 
   async create(userId: string, invoice: any) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const payload = {
         ...invoice,
-        user_id: userId,
+        user_id: tenantId,
         created_at: invoice.created_at || now,
         updated_at: invoice.updated_at || now,
         paid_amount: typeof (invoice as any).paid_amount === 'number' ? (invoice as any).paid_amount : 0,
@@ -7191,13 +7406,14 @@ export const apInvoiceLinesService = {
 export const purchaseOrdersService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const { data, error } = await supabase
         .from('purchase_orders')
         .select(`
           *,
           suppliers (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('order_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -7208,9 +7424,10 @@ export const purchaseOrdersService = {
 
   async create(userId: string, po: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const { data, error } = await supabase
         .from('purchase_orders')
-        .insert({ ...po, user_id: userId })
+        .insert({ ...po, user_id: tenantId })
         .select()
         .single();
       if (error) throw error;
@@ -7348,13 +7565,15 @@ export const purchaseOrderItemsService = {
 export const supplierPaymentsService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('supplier_payments')
         .select(`
           *,
           suppliers (name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('payment_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -7376,8 +7595,10 @@ export const supplierPaymentsService = {
     invoice_number?: string | null;
   }) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const body = {
-        user_id: userId,
+        user_id: tenantId,
         supplier_id: payload.supplier_id,
         payment_date: payload.payment_date,
         reference: payload.reference,
@@ -7398,7 +7619,7 @@ export const supplierPaymentsService = {
       // Best-effort: crear solicitud de autorización para pago a proveedor
       try {
         await supabase.from('approval_requests').insert({
-          user_id: userId,
+          user_id: tenantId,
           entity_type: 'supplier_payment',
           entity_id: data.id,
           status: 'pending',
@@ -7552,7 +7773,8 @@ export const supplierPaymentsService = {
 export const customerPaymentsService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('customer_payments')
         .select(`
@@ -7561,7 +7783,7 @@ export const customerPaymentsService = {
           invoices (invoice_number),
           bank_accounts (chart_account_id, bank_name, account_number)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('payment_date', { ascending: false })
         .order('created_at', { ascending: false });
       if (error) return handleDatabaseError(error, []);
@@ -7573,9 +7795,11 @@ export const customerPaymentsService = {
 
   async create(userId: string, payload: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const body = {
         ...payload,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('customer_payments')
@@ -7591,7 +7815,7 @@ export const customerPaymentsService = {
       // Best-effort: crear solicitud de autorización para pago de cliente
       try {
         await supabase.from('approval_requests').insert({
-          user_id: userId,
+          user_id: tenantId,
           entity_type: 'customer_payment',
           entity_id: data.id,
           status: 'pending',
@@ -7909,11 +8133,12 @@ export const salesRepsService = {
 export const storesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('stores')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name', { ascending: true });
 
       if (error) return handleDatabaseError(error, []);
@@ -7925,10 +8150,11 @@ export const storesService = {
 
   async create(userId: string, payload: { name: string; code?: string; address?: string; city?: string; phone?: string; email?: string; manager_name?: string }) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const now = new Date().toISOString();
       const body = {
-        user_id: userId,
+        user_id: tenantId,
         name: payload.name,
         code: payload.code || null,
         address: payload.address || null,
@@ -7984,10 +8210,12 @@ export const storesService = {
 export const bankAccountsService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('bank_accounts')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('is_deleted', false)
         .order('bank_name', { ascending: true });
       if (error) return handleDatabaseError(error, []);
@@ -7999,7 +8227,11 @@ export const bankAccountsService = {
 
   async create(userId: string, payload: any) {
     try {
-      const body = { ...payload, user_id: userId, is_deleted: false };
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+      // Evitar enviar campos que no existan en la tabla (como use_payment_requests si aún no existe)
+      const { use_payment_requests, ...rest } = payload || {};
+      const body = { ...rest, user_id: tenantId, is_deleted: false };
       const { data, error } = await supabase
         .from('bank_accounts')
         .insert(body)
@@ -8016,9 +8248,11 @@ export const bankAccountsService = {
 
   async update(id: string, payload: any) {
     try {
+      // Evitar enviar campos que no existan en la tabla (como use_payment_requests si aún no existe)
+      const { use_payment_requests, ...rest } = payload || {};
       const { data, error } = await supabase
         .from('bank_accounts')
-        .update(payload)
+        .update(rest)
         .eq('id', id)
         .select('*')
         .single();
@@ -8053,10 +8287,12 @@ export const bankAccountsService = {
 export const taxReturnsService = {
   async getAll(userId: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('tax_returns')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('due_date', { ascending: false });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -8067,9 +8303,11 @@ export const taxReturnsService = {
 
   async create(userId: string, taxReturn: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const { data, error } = await supabase
         .from('tax_returns')
-        .insert({ ...taxReturn, user_id: userId })
+        .insert({ ...taxReturn, user_id: tenantId })
         .select()
         .single();
       if (error) throw error;
@@ -10074,10 +10312,13 @@ export const settingsService = {
 
       if (!user?.id) return [];
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return [];
+
       const { data, error } = await supabase
         .from('warehouses')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('name');
 
       if (error) throw error;
@@ -10097,13 +10338,16 @@ export const settingsService = {
         throw new Error('No authenticated user for warehouse creation');
       }
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) throw new Error('userId required');
+
       const generatedCode = (warehouseData.code || warehouseData.name || 'ALM')
         .toString()
         .trim()
         .substring(0, 8)
         .toUpperCase();
       const payload = {
-        user_id: user.id,
+        user_id: tenantId,
         name: warehouseData.name,
         code: generatedCode,
         location: warehouseData.location ?? null,
@@ -10180,11 +10424,13 @@ export const settingsService = {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user?.id) return null;
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return null;
 
       const { data, error } = await supabase
         .from('payroll_settings')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .limit(1)
         .maybeSingle();
 
@@ -10203,9 +10449,12 @@ export const settingsService = {
       } = await supabase.auth.getUser();
       if (!user?.id) throw new Error('Usuario no autenticado');
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) throw new Error('userId required');
+
       const payload: any = {
         ...settings,
-        user_id: user.id,
+        user_id: tenantId,
       };
 
       // Evitar conflicto con la PK de payroll_settings
@@ -10231,11 +10480,13 @@ export const settingsService = {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user?.id) return [];
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return [];
 
       const { data, error } = await supabase
         .from('payroll_concepts')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('name');
 
       if (error) throw error;
@@ -10253,6 +10504,9 @@ export const settingsService = {
       } = await supabase.auth.getUser();
       if (!user?.id) throw new Error('Usuario no autenticado');
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) throw new Error('userId required');
+
       const safeName = (conceptData.name || 'CONCEPTO')
         .toString()
         .trim()
@@ -10263,7 +10517,7 @@ export const settingsService = {
       const payload = {
         ...conceptData,
         code: conceptData.code || generatedCode,
-        user_id: user.id,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('payroll_concepts')
@@ -10350,11 +10604,12 @@ export const settingsService = {
 export const assetTypesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('fixed_asset_types')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('name');
 
       if (error) throw error;
@@ -10367,9 +10622,11 @@ export const assetTypesService = {
 
   async create(userId: string, payload: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const insertPayload = {
         ...payload,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('fixed_asset_types')
@@ -10424,11 +10681,12 @@ export const assetTypesService = {
 export const fixedAssetsService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('fixed_assets')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('code');
 
       if (error) throw error;
@@ -10441,9 +10699,11 @@ export const fixedAssetsService = {
 
   async create(userId: string, payload: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const insertPayload = {
         ...payload,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('fixed_assets')
@@ -10498,11 +10758,12 @@ export const fixedAssetsService = {
 export const assetDisposalService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('fixed_asset_disposals')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('disposal_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -10516,9 +10777,11 @@ export const assetDisposalService = {
 
   async create(userId: string, payload: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const insertPayload = {
         ...payload,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('fixed_asset_disposals')
@@ -10572,10 +10835,11 @@ export const assetDisposalService = {
 export const openingBalancesService = {
   async getAll(userId: string, fiscalYear?: number) {
     try {
+      const tenantId = await resolveTenantId(userId);
       let query = supabase
         .from('opening_balances')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('account_number', { ascending: true });
 
       if (fiscalYear) {
@@ -10593,9 +10857,10 @@ export const openingBalancesService = {
 
   async create(userId: string, balance: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
       const { data, error } = await supabase
         .from('opening_balances')
-        .insert({ ...balance, user_id: userId })
+        .insert({ ...balance, user_id: tenantId })
         .select()
         .single();
 
@@ -10641,18 +10906,19 @@ export const openingBalancesService = {
 
   async importFromAccounts(userId: string, fiscalYear: number, openingDate: string) {
     try {
+      const tenantId = await resolveTenantId(userId);
       // Obtener todas las cuentas del catálogo
       const { data: accounts, error: accountsError } = await supabase
         .from('chart_accounts')
         .select('id, code, name, normal_balance')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('code', { ascending: true });
 
       if (accountsError) throw accountsError;
 
       // Crear balances iniciales para cada cuenta (con saldo 0)
       const balances = accounts.map(account => ({
-        user_id: userId,
+        user_id: tenantId,
         account_id: account.id,
         account_number: account.code,
         account_name: account.name,
@@ -10680,11 +10946,12 @@ export const openingBalancesService = {
 
   async postToJournal(userId: string, fiscalYear: number) {
     try {
+      const tenantId = await resolveTenantId(userId);
       // Obtener balances no contabilizados
       const { data: balances, error: balancesError } = await supabase
         .from('opening_balances')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('fiscal_year', fiscalYear)
         .eq('is_posted', false);
 
@@ -10802,11 +11069,12 @@ export const openingBalancesService = {
 export const assetDepreciationTypesService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('fixed_asset_depreciation_types')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('code');
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -10817,10 +11085,11 @@ export const assetDepreciationTypesService = {
 
   async create(userId: string, payload: any) {
     try {
-      if (!userId) throw new Error('userId required');
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const insertPayload = {
         ...payload,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('fixed_asset_depreciation_types')
@@ -10872,11 +11141,12 @@ export const assetDepreciationTypesService = {
 export const assetDepreciationService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('fixed_asset_depreciations')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('depreciation_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -10890,10 +11160,11 @@ export const assetDepreciationService = {
 
   async createMany(userId: string, records: any[]) {
     try {
-      if (!userId || !Array.isArray(records) || records.length === 0) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId || !Array.isArray(records) || records.length === 0) return [];
       const payload = records.map((r) => ({
         ...r,
-        user_id: userId,
+        user_id: tenantId,
       }));
 
       const { data, error } = await supabase
@@ -10934,11 +11205,12 @@ export const assetDepreciationService = {
 export const revaluationService = {
   async getAll(userId: string) {
     try {
-      if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('fixed_asset_revaluations')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('revaluation_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -10952,9 +11224,11 @@ export const revaluationService = {
 
   async create(userId: string, payload: any) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const insertPayload = {
         ...payload,
-        user_id: userId,
+        user_id: tenantId,
       };
       const { data, error } = await supabase
         .from('fixed_asset_revaluations')
