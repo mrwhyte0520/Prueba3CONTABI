@@ -3,7 +3,23 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { financialReportsService } from '../../../services/database';
-import { exportToExcelStyled } from '../../../utils/exportImportUtils';
+import * as XLSX from 'xlsx';
+
+// Estilos CSS para impresión
+const printStyles = `
+  @media print {
+    @page { size: landscape; margin: 0.5cm; }
+    body * { visibility: hidden; }
+    #printable-trial-balance, #printable-trial-balance * { visibility: visible; }
+    #printable-trial-balance { position: absolute; left: 0; top: 0; width: 100%; }
+    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .print-title { text-align: center; font-size: 18pt; font-weight: bold; margin-bottom: 10px; }
+    .print-period { text-align: center; font-size: 12pt; margin-bottom: 20px; }
+    table { page-break-inside: avoid; font-size: 9pt; }
+    thead { display: table-header-group; }
+    tr { page-break-inside: avoid; }
+  }
+`;
 
 interface AccountingPeriod {
   id: string;
@@ -134,7 +150,18 @@ const TrialBalancePage: React.FC = () => {
 
       const { fromDate, toDate, prevToDate } = computeDateRanges();
 
-      const [prevTrial, periodTrial] = await Promise.all([
+      // Obtener transacciones ED para excluirlas de los movimientos
+      const { data: edEntries } = await supabase
+        .from('journal_entries')
+        .select('id')
+        .eq('user_id', user.id)
+        .like('entry_number', 'ED-%')
+        .gte('entry_date', fromDate)
+        .lte('entry_date', toDate);
+
+      const edEntryIds = new Set((edEntries || []).map(e => e.id));
+
+      const [prevTrial, periodTrial, periodMovements] = await Promise.all([
         prevToDate
           ? financialReportsService.getTrialBalance(
               user.id,
@@ -143,6 +170,19 @@ const TrialBalancePage: React.FC = () => {
             )
           : Promise.resolve([]),
         financialReportsService.getTrialBalance(user.id, fromDate, toDate),
+        // Obtener movimientos del período excluyendo ED
+        supabase
+          .from('journal_entry_lines')
+          .select(`
+            account_id,
+            debit_amount,
+            credit_amount,
+            journal_entries!inner(id, user_id, entry_number)
+          `)
+          .eq('journal_entries.user_id', user.id)
+          .gte('journal_entries.entry_date', fromDate)
+          .lte('journal_entries.entry_date', toDate)
+          .then(({ data }) => data || [])
       ]);
 
       type InternalRow = TrialBalanceRow & {
@@ -204,18 +244,36 @@ const TrialBalancePage: React.FC = () => {
         row.prevCredit += creditPrev;
       });
 
+      // Procesar movimientos del período excluyendo transacciones ED
+      const movByAccount: Record<string, { debit: number; credit: number }> = {};
+      
+      periodMovements.forEach((line: any) => {
+        const entryId = line.journal_entries?.id;
+        // Excluir transacciones ED
+        if (edEntryIds.has(entryId)) return;
+        
+        const accountId = line.account_id;
+        if (!movByAccount[accountId]) {
+          movByAccount[accountId] = { debit: 0, credit: 0 };
+        }
+        movByAccount[accountId].debit += Number(line.debit_amount) || 0;
+        movByAccount[accountId].credit += Number(line.credit_amount) || 0;
+      });
+
+      // Aplicar los movimientos (sin ED) a las filas
       (periodTrial || []).forEach((acc: any) => {
         const row = ensureRow(acc);
         const normal = acc.normal_balance || row.normalBalance || 'debit';
         row.normalBalance = normal;
 
-        const movDebit = Number(acc.total_debit) || 0;
-        const movCredit = Number(acc.total_credit) || 0;
-        row.movDebit += movDebit;
-        row.movCredit += movCredit;
+        // Usar solo los movimientos sin ED
+        const accountId = acc.account_id;
+        const movements = movByAccount[accountId] || { debit: 0, credit: 0 };
+        row.movDebit = movements.debit;
+        row.movCredit = movements.credit;
 
         const balancePeriod = Number(acc.balance) || 0;
-        row.periodBalance += balancePeriod;
+        row.periodBalance = balancePeriod;
       });
 
       let result: InternalRow[] = Object.values(byAccount);
@@ -266,7 +324,7 @@ const TrialBalancePage: React.FC = () => {
 
   const formatAmount = (value: number) => {
     if (!value) return '-';
-    return `RD$${value.toLocaleString()}`;
+    return `RD$${value.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
   };
 
   const totalPrevDebit = rows.reduce((sum, r) => sum + r.prevDebit, 0);
@@ -276,7 +334,7 @@ const TrialBalancePage: React.FC = () => {
   const totalFinalDebit = rows.reduce((sum, r) => sum + r.finalDebit, 0);
   const totalFinalCredit = rows.reduce((sum, r) => sum + r.finalCredit, 0);
 
-  const handleExportExcel = async () => {
+  const handleExportExcel = () => {
     try {
       if (!user) {
         alert('Debes iniciar sesión para exportar la balanza.');
@@ -289,45 +347,50 @@ const TrialBalancePage: React.FC = () => {
       }
 
       const excelRows = rows.map((row) => ({
-        number: row.code,
-        name: row.name,
-        prev_debit: row.prevDebit || 0,
-        prev_credit: row.prevCredit || 0,
-        mov_debit: row.movDebit || 0,
-        mov_credit: row.movCredit || 0,
-        final_debit: row.finalDebit || 0,
-        final_credit: row.finalCredit || 0,
+        'Número': row.code,
+        'Cuenta Contable': row.name,
+        'Saldo Ant. Débito': row.prevDebit || 0,
+        'Saldo Ant. Crédito': row.prevCredit || 0,
+        'Mov. Débito': row.movDebit || 0,
+        'Mov. Crédito': row.movCredit || 0,
+        'Saldo Final Débito': row.finalDebit || 0,
+        'Saldo Final Crédito': row.finalCredit || 0,
       }));
 
       excelRows.push({
-        number: '',
-        name: 'TOTALES',
-        prev_debit: totalPrevDebit,
-        prev_credit: totalPrevCredit,
-        mov_debit: totalMovDebit,
-        mov_credit: totalMovCredit,
-        final_debit: totalFinalDebit,
-        final_credit: totalFinalCredit,
+        'Número': '',
+        'Cuenta Contable': 'TOTALES',
+        'Saldo Ant. Débito': totalPrevDebit,
+        'Saldo Ant. Crédito': totalPrevCredit,
+        'Mov. Débito': totalMovDebit,
+        'Mov. Crédito': totalMovCredit,
+        'Saldo Final Débito': totalFinalDebit,
+        'Saldo Final Crédito': totalFinalCredit,
       });
 
-      const baseDate = cutoffDate || new Date().toISOString().slice(0, 10);
-      const fileBaseName = `balanza_comprobacion_${baseDate}`;
+      // Crear libro de trabajo
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(excelRows);
 
-      await exportToExcelStyled(
-        excelRows,
-        [
-          { key: 'number', title: 'Número de cuenta', width: 16 },
-          { key: 'name', title: 'Cuenta contable', width: 40 },
-          { key: 'prev_debit', title: 'Saldo anterior Débito', width: 18, numFmt: '#,##0.00' },
-          { key: 'prev_credit', title: 'Saldo anterior Crédito', width: 18, numFmt: '#,##0.00' },
-          { key: 'mov_debit', title: 'Movimientos Débito', width: 18, numFmt: '#,##0.00' },
-          { key: 'mov_credit', title: 'Movimientos Crédito', width: 18, numFmt: '#,##0.00' },
-          { key: 'final_debit', title: 'Saldo final Débito', width: 18, numFmt: '#,##0.00' },
-          { key: 'final_credit', title: 'Saldo final Crédito', width: 18, numFmt: '#,##0.00' },
-        ],
-        fileBaseName,
-        'Balanza de Comprobación'
-      );
+      // Ajustar anchos de columnas
+      ws['!cols'] = [
+        { wch: 15 }, // Número
+        { wch: 40 }, // Cuenta
+        { wch: 18 }, // Saldo Ant. Débito
+        { wch: 18 }, // Saldo Ant. Crédito
+        { wch: 18 }, // Mov. Débito
+        { wch: 18 }, // Mov. Crédito
+        { wch: 18 }, // Saldo Final Débito
+        { wch: 18 }  // Saldo Final Crédito
+      ];
+
+      // Agregar hoja al libro
+      XLSX.utils.book_append_sheet(wb, ws, 'Balanza de Comprobación');
+
+      // Generar archivo
+      const baseDate = cutoffDate || new Date().toISOString().slice(0, 10);
+      const fileName = `balanza_comprobacion_${baseDate}.xlsx`;
+      XLSX.writeFile(wb, fileName);
     } catch (error) {
       console.error('Error al exportar la Balanza de Comprobación:', error);
       alert('Error al generar el archivo Excel de la Balanza de Comprobación.');
@@ -344,8 +407,11 @@ const TrialBalancePage: React.FC = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* Estilos de impresión */}
+      <style dangerouslySetInnerHTML={{ __html: printStyles }} />
+
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 print:hidden">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate('/accounting')}
@@ -361,19 +427,26 @@ const TrialBalancePage: React.FC = () => {
             </p>
           </div>
         </div>
-        <div>
+        <div className="flex items-center gap-2">
           <button
             onClick={handleExportExcel}
             className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
             <i className="ri-file-excel-2-line"></i>
-            Exportar Excel
+            Excel
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            <i className="ri-file-pdf-line"></i>
+            PDF
           </button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-lg shadow mb-6">
+      <div className="bg-white rounded-lg shadow mb-6 print:hidden">
         <div className="p-6 border-b border-gray-200 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
@@ -453,6 +526,12 @@ const TrialBalancePage: React.FC = () => {
       </div>
 
       {/* Table */}
+      <div id="printable-trial-balance">
+        {/* Título para impresión */}
+        <div className="hidden print:block print-title">BALANZA DE COMPROBACIÓN</div>
+        <div className="hidden print:block print-period">
+          Período: {fromDateLabel && new Date(fromDateLabel).toLocaleDateString('es-DO')} al {toDateLabel && new Date(toDateLabel).toLocaleDateString('es-DO')}
+        </div>
       <div className="bg-white rounded-lg shadow overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -553,6 +632,7 @@ const TrialBalancePage: React.FC = () => {
           )}
         </table>
       </div>
+      </div> {/* Cierre de printable-trial-balance */}
     </div>
   );
 };

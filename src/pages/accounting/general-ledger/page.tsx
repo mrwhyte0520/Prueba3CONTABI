@@ -2,8 +2,24 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { resolveTenantId } from '../../../services/database';
+import * as XLSX from 'xlsx';
+
+// Estilos CSS para impresión
+const printStyles = `
+  @media print {
+    @page { size: landscape; margin: 0.5cm; }
+    body * { visibility: hidden; }
+    #printable-ledger, #printable-ledger * { visibility: visible; }
+    #printable-ledger { position: absolute; left: 0; top: 0; width: 100%; }
+    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .print-title { text-align: center; font-size: 18pt; font-weight: bold; margin-bottom: 10px; }
+    .print-account { text-align: center; font-size: 14pt; margin-bottom: 20px; }
+    table { page-break-inside: avoid; font-size: 10pt; }
+    thead { display: table-header-group; }
+    tr { page-break-inside: avoid; }
+  }
+`;
 
 interface Account {
   id: string;
@@ -128,9 +144,6 @@ const GeneralLedgerPage: React.FC = () => {
     }
   };
 
-  const loadMockAccounts = () => {
-    setAccounts([]);
-  };
 
   const loadLedgerEntries = async (accountId: string) => {
     if (!user) return;
@@ -181,40 +194,65 @@ const GeneralLedgerPage: React.FC = () => {
     }
   };
 
-  const downloadExcel = async () => {
+  const downloadExcel = () => {
     try {
       if (!selectedAccount) {
         alert('Por favor seleccione una cuenta primero');
         return;
       }
-      if (ledgerEntries.length === 0) {
+      if (filteredLedgerEntries.length === 0) {
         alert('No hay movimientos para exportar');
         return;
       }
 
-      const rows = ledgerEntries.map(e => ({
-        date: new Date(e.date).toLocaleDateString(),
-        entry: e.entryNumber,
-        description: e.description || '',
-        debit: e.debit > 0 ? e.debit : 0,
-        credit: e.credit > 0 ? e.credit : 0,
-        balance: e.balance || 0,
-      }));
+      // Crear datos con balance inicial
+      const dataToExport = [
+        {
+          'Asiento': '',
+          'Tipo Doc.': 'Balance inicial',
+          'Fecha': dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio',
+          'Descripción': `Balance inicial - ${selectedAccount.code} ${selectedAccount.name}`,
+          'Referencia': '',
+          'Débito': '',
+          'Crédito': '',
+          'Balance': openingBalance
+        },
+        ...filteredLedgerEntries.map(e => ({
+          'Asiento': e.entryNumber,
+          'Tipo Doc.': getEntryDocumentType(e),
+          'Fecha': new Date(e.date).toLocaleDateString('es-DO'),
+          'Descripción': e.description || '',
+          'Referencia': e.reference || '',
+          'Débito': e.debit > 0 ? e.debit : '',
+          'Crédito': e.credit > 0 ? e.credit : '',
+          'Balance': e.balance
+        }))
+      ];
 
-      const fileBase = `mayor_${selectedAccount.code}_${new Date().toISOString().split('T')[0]}`;
-      await exportToExcelStyled(
-        rows,
-        [
-          { key: 'date', title: 'Fecha', width: 12 },
-          { key: 'entry', title: 'Asiento', width: 12 },
-          { key: 'description', title: 'Descripción', width: 40 },
-          { key: 'debit', title: 'Débito', width: 14, numFmt: '#,##0.00' },
-          { key: 'credit', title: 'Crédito', width: 14, numFmt: '#,##0.00' },
-          { key: 'balance', title: 'Balance', width: 14, numFmt: '#,##0.00' },
-        ],
-        fileBase,
-        'Mayor General'
-      );
+      // Crear libro de trabajo
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(dataToExport);
+
+      // Ajustar anchos de columnas
+      const colWidths = [
+        { wch: 15 }, // Asiento
+        { wch: 20 }, // Tipo Doc
+        { wch: 12 }, // Fecha  
+        { wch: 40 }, // Descripción
+        { wch: 15 }, // Referencia
+        { wch: 15 }, // Débito
+        { wch: 15 }, // Crédito
+        { wch: 15 }  // Balance
+      ];
+      ws['!cols'] = colWidths;
+
+      // Agregar hoja al libro
+      XLSX.utils.book_append_sheet(wb, ws, 'Mayor General');
+
+      // Generar archivo
+      const fileName = `mayor_general_${selectedAccount.code}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(wb, fileName);
+      
     } catch (error) {
       console.error('Error al exportar a Excel:', error);
       alert('Error al generar el archivo Excel. Por favor, intente nuevamente.');
@@ -327,8 +365,11 @@ const GeneralLedgerPage: React.FC = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* Estilos de impresión */}
+      <style dangerouslySetInnerHTML={{ __html: printStyles }} />
+
       {/* Header con botón de regreso */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 print:hidden">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate('/accounting')}
@@ -342,17 +383,26 @@ const GeneralLedgerPage: React.FC = () => {
             <p className="text-gray-600">Movimientos por cuenta contable</p>
           </div>
         </div>
-        <button
-          onClick={downloadExcel}
-          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-        >
-          <i className="ri-file-excel-2-line"></i>
-          Exportar Excel
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={downloadExcel}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <i className="ri-file-excel-2-line"></i>
+            Excel
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            <i className="ri-file-pdf-line"></i>
+            PDF
+          </button>
+        </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8 print:hidden">
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center">
             <div className="p-2 bg-blue-100 rounded-lg">
@@ -426,7 +476,7 @@ const GeneralLedgerPage: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Accounts List */}
-        <div className="lg:col-span-1">
+        <div className="lg:col-span-1 print:hidden">
           <div className="bg-white rounded-lg shadow">
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Catálogo de Cuentas</h2>
@@ -495,10 +545,10 @@ const GeneralLedgerPage: React.FC = () => {
         </div>
 
         {/* Ledger Details */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 print:col-span-3">
           {selectedAccount ? (
             <div className="bg-white rounded-lg shadow">
-              <div className="p-6 border-b border-gray-200">
+              <div className="p-6 border-b border-gray-200 print:hidden">
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h2 className="text-lg font-semibold text-gray-900">
@@ -622,6 +672,20 @@ const GeneralLedgerPage: React.FC = () => {
               </div>
 
               {/* Ledger Entries Table */}
+              {/* Contenido para impresión */}
+              <div id="printable-ledger">
+                {/* Título para impresión */}
+                <div className="hidden print:block print-title">MAYOR GENERAL</div>
+                {selectedAccount && (
+                  <div className="hidden print:block print-account">
+                    Cuenta: {selectedAccount.code} - {selectedAccount.name}
+                    {(dateFrom || dateTo) && (
+                      <div className="text-xs mt-2">
+                        Período: {dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} - {dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'}
+                      </div>
+                    )}
+                  </div>
+                )}
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
@@ -675,14 +739,23 @@ const GeneralLedgerPage: React.FC = () => {
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            RD${Math.abs(openingBalance).toLocaleString()}
+                            RD${Math.abs(openingBalance).toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                           </td>
                         </tr>
                         {filteredLedgerEntries.length > 0 ? (
                           filteredLedgerEntries.map((entry) => (
                             <tr key={entry.id} className="hover:bg-gray-50">
-                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
-                                {entry.entryNumber}
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                <button
+                                  onClick={() => {
+                                    // Navegar al diario general con el asiento seleccionado
+                                    navigate(`/accounting/general-journal?entry=${entry.entryNumber}`);
+                                  }}
+                                  className="text-blue-600 hover:text-blue-900 hover:underline"
+                                  title="Ver/Editar asiento"
+                                >
+                                  {entry.entryNumber}
+                                </button>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {getEntryDocumentType(entry)}
@@ -697,13 +770,13 @@ const GeneralLedgerPage: React.FC = () => {
                                 {entry.reference}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                {entry.debit > 0 ? `RD$${entry.debit.toLocaleString()}` : '-'}
+                                {entry.debit > 0 ? `RD$${entry.debit.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '-'}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                {entry.credit > 0 ? `RD$${entry.credit.toLocaleString()}` : '-'}
+                                {entry.credit > 0 ? `RD$${entry.credit.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '-'}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                RD${Math.abs(entry.balance).toLocaleString()}
+                                RD${Math.abs(entry.balance).toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                               </td>
                             </tr>
                           ))
@@ -727,23 +800,24 @@ const GeneralLedgerPage: React.FC = () => {
                           Totales:
                         </td>
                         <td className="px-6 py-3 font-bold text-gray-900">
-                          RD${totalDebits.toLocaleString()}
+                          RD${totalDebits.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                         </td>
                         <td className="px-6 py-3 font-bold text-gray-900">
-                          RD${totalCredits.toLocaleString()}
+                          RD${totalCredits.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                         </td>
                         <td className="px-6 py-3 font-bold text-gray-900">
-                          RD${Math.abs(finalBalance).toLocaleString()}
+                          RD${Math.abs(finalBalance).toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                         </td>
                       </tr>
                     </tfoot>
                   )}
                 </table>
               </div>
+              </div> {/* Cierre de printable-ledger */}
 
               {/* Summary Stats */}
               {ledgerEntries.length > 0 && (
-                <div className="p-6 border-t border-gray-200 bg-gray-50">
+                <div className="p-6 border-t border-gray-200 bg-gray-50 print:hidden">
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Movimientos</div>
@@ -752,19 +826,19 @@ const GeneralLedgerPage: React.FC = () => {
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Débitos</div>
                       <div className="text-lg font-bold text-green-600">
-                        RD${totalDebits.toLocaleString()}
+                        RD${totalDebits.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Créditos</div>
                       <div className="text-lg font-bold text-red-600">
-                        RD${totalCredits.toLocaleString()}
+                        RD${totalCredits.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Balance Final</div>
                       <div className={`text-lg font-bold ${getBalanceColor(finalBalance, selectedAccount.normalBalance)}`}>
-                        RD${Math.abs(finalBalance).toLocaleString()}
+                        RD${Math.abs(finalBalance).toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                       </div>
                     </div>
                   </div>
