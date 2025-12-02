@@ -149,10 +149,10 @@ export default function DepartmentsPage() {
     if (!dept) return;
     const newStatus = dept.status === 'active' ? 'inactive' : 'active';
     try {
-      await departmentsService.setStatus(id, newStatus);
+      await departmentsService.update(id, { status: newStatus });
       await loadDepartments();
     } catch (error) {
-      console.error('Error updating department status:', error);
+      console.error('Error actualizando estado del departamento:', error);
       alert('Error al actualizar el estado');
     }
   };
@@ -493,10 +493,9 @@ export default function DepartmentsPage() {
                       Presupuesto Anual
                     </label>
                     <input
-                      type="number" min="0"
+                      type="number"
                       value={formData.budget}
                       onChange={(e) => setFormData({...formData, budget: parseFloat(e.target.value) || 0})}
-                      min="0"
                       step="1000"
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />

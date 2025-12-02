@@ -645,7 +645,7 @@ export default function PositionsPage() {
                       Salario Mínimo
                     </label>
                     <input
-                      type="number" min="0"
+                      type="number"
                       value={formData.salaryMin}
                       onChange={(e) => setFormData({...formData, salaryMin: parseFloat(e.target.value) || 0})}
                       min="0"
@@ -658,7 +658,7 @@ export default function PositionsPage() {
                       Salario Máximo
                     </label>
                     <input
-                      type="number" min="0"
+                      type="number"
                       value={formData.salaryMax}
                       onChange={(e) => setFormData({...formData, salaryMax: parseFloat(e.target.value) || 0})}
                       min="0"
