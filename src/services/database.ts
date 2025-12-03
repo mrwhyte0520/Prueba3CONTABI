@@ -1030,17 +1030,32 @@ export const bankChecksService = {
 
       if (error) throw error;
 
-      // Asiento contable automático: Debe gasto/proveedor / Haber banco
+      // Asiento contable automático: Debe gasto/CxP / Haber banco
       try {
         const amount = Number(check.amount) || 0;
         if (amount > 0 && check.expense_account_code) {
-          // Buscar cuenta de gasto/proveedor por código
-          const { data: expenseAccount, error: expenseError } = await supabase
-            .from('chart_accounts')
-            .select('id')
-            .eq('user_id', tenantId)
-            .eq('code', check.expense_account_code)
-            .maybeSingle();
+          // Si el cheque está vinculado a una factura de CxP, usar Cuentas por Pagar
+          // Si no, usar la cuenta de gasto especificada
+          let debitAccountId: string | null = null;
+          let debitDescription = check.description || 'Pago mediante cheque';
+
+          if (check.ap_invoice_id) {
+            // Cheque vinculado a CxP: usar cuenta de Cuentas por Pagar
+            const settings = await accountingSettingsService.get(tenantId);
+            debitAccountId = settings?.ap_account_id || null;
+            debitDescription = 'Pago a proveedor mediante cheque - Cuentas por Pagar';
+          } else {
+            // Cheque no vinculado: usar cuenta de gasto
+            const { data: expenseAccount, error: expenseError } = await supabase
+              .from('chart_accounts')
+              .select('id')
+              .eq('user_id', tenantId)
+              .eq('code', check.expense_account_code)
+              .maybeSingle();
+            if (!expenseError && expenseAccount?.id) {
+              debitAccountId = expenseAccount.id as string;
+            }
+          }
 
           // Buscar banco y su cuenta contable
           const { data: bank, error: bankError } = await supabase
@@ -1049,7 +1064,7 @@ export const bankChecksService = {
             .eq('id', check.bank_id)
             .maybeSingle();
 
-          if (!expenseError && !bankError && expenseAccount?.id && bank?.chart_account_id) {
+          if (debitAccountId && !bankError && bank?.chart_account_id) {
             const entryPayload = {
               entry_number: `CHK-${new Date(check.check_date).toISOString().slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
               entry_date: String(check.check_date),
@@ -1060,8 +1075,8 @@ export const bankChecksService = {
 
             const lines = [
               {
-                account_id: expenseAccount.id as string,
-                description: check.description || 'Pago mediante cheque',
+                account_id: debitAccountId,
+                description: debitDescription,
                 debit_amount: amount,
                 credit_amount: 0,
               },
@@ -3796,6 +3811,59 @@ export const inventoryService = {
       throw error;
     }
   },
+
+  /**
+   * Valida si hay suficiente stock disponible para una lista de productos
+   * @param userId - ID del usuario
+   * @param items - Array de { item_id: string, quantity: number, name?: string }
+   * @returns { valid: boolean, errors: string[] }
+   */
+  async validateStock(userId: string, items: Array<{ item_id: string | null; quantity: number; name?: string }>) {
+    try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return { valid: false, errors: ['Usuario no autenticado'] };
+
+      const errors: string[] = [];
+
+      for (const item of items) {
+        if (!item.item_id) continue;
+
+        const { data: invItem, error } = await supabase
+          .from('inventory_items')
+          .select('name, current_stock')
+          .eq('id', item.item_id)
+          .eq('user_id', tenantId)
+          .maybeSingle();
+
+        if (error || !invItem) {
+          errors.push(`Producto no encontrado: ${item.name || item.item_id}`);
+          continue;
+        }
+
+        const currentStock = Number(invItem.current_stock) || 0;
+        const requestedQty = Number(item.quantity) || 0;
+
+        if (currentStock < requestedQty) {
+          errors.push(
+            `Stock insuficiente: ${invItem.name}\n` +
+            `  Disponible: ${currentStock}\n` +
+            `  Solicitado: ${requestedQty}`
+          );
+        }
+      }
+
+      return {
+        valid: errors.length === 0,
+        errors,
+      };
+    } catch (error) {
+      console.error('inventoryService.validateStock error', error);
+      return {
+        valid: false,
+        errors: ['Error al validar inventario'],
+      };
+    }
+  },
 };
 
 /* ==========================================================
@@ -5919,6 +5987,26 @@ export const invoicesService = {
     try {
       const tenantId = await resolveTenantId(userId);
       if (!tenantId) throw new Error('userId required');
+
+      // Validar stock disponible antes de crear la factura
+      const itemsToValidate = lines
+        .filter((line: any) => line.item_id)
+        .map((line: any) => ({
+          item_id: line.item_id,
+          quantity: Number(line.quantity) || 0,
+          name: line.description || '',
+        }));
+
+      if (itemsToValidate.length > 0) {
+        const stockValidation = await inventoryService.validateStock(userId, itemsToValidate);
+        if (!stockValidation.valid) {
+          throw new Error(
+            '❌ Stock insuficiente para completar la venta:\n\n' +
+            stockValidation.errors.join('\n\n')
+          );
+        }
+      }
+
       const { data: invoiceData, error: invoiceError } = await supabase
         .from('invoices')
         .insert({ ...invoice, user_id: tenantId })
@@ -6568,6 +6656,81 @@ export const creditDebitNotesService = {
         .select('*')
         .single();
       if (error) throw error;
+
+      // Crear asiento contable automático
+      try {
+        const settings = await accountingSettingsService.get(tenantId);
+        const arAccountId = settings?.ar_account_id; // Cuentas por Cobrar
+        const salesReturnsAccountId = settings?.sales_returns_account_id; // Devoluciones en Ventas
+        const salesAccountId = settings?.sales_account_id; // Ventas (para notas de débito)
+
+        const amount = Number(data.total_amount) || 0;
+
+        if (arAccountId && amount > 0) {
+          let entryLines: any[] = [];
+          
+          if (payload.note_type === 'credit') {
+            // Nota de Crédito: Reversa una venta
+            // Débito: Devoluciones en Ventas (o Ventas con signo contrario)
+            // Crédito: Cuentas por Cobrar
+            const debitAccountId = salesReturnsAccountId || salesAccountId;
+            
+            entryLines = [
+              {
+                account_id: debitAccountId,
+                description: 'Nota de Crédito - Devolución en Ventas',
+                debit_amount: amount,
+                credit_amount: 0,
+                line_number: 1,
+              },
+              {
+                account_id: arAccountId,
+                description: 'Nota de Crédito - Reducción CxC',
+                debit_amount: 0,
+                credit_amount: amount,
+                line_number: 2,
+              },
+            ];
+          } else if (payload.note_type === 'debit') {
+            // Nota de Débito: Aumenta la deuda del cliente
+            // Débito: Cuentas por Cobrar
+            // Crédito: Ventas (o cuenta de ajuste)
+            const creditAccountId = salesAccountId;
+            
+            entryLines = [
+              {
+                account_id: arAccountId,
+                description: 'Nota de Débito - Aumento CxC',
+                debit_amount: amount,
+                credit_amount: 0,
+                line_number: 1,
+              },
+              {
+                account_id: creditAccountId,
+                description: 'Nota de Débito - Ajuste en Ventas',
+                debit_amount: 0,
+                credit_amount: amount,
+                line_number: 2,
+              },
+            ];
+          }
+
+          if (entryLines.length > 0) {
+            const entryPayload = {
+              entry_number: String(data.note_number || `${payload.note_type.toUpperCase()}-${data.id?.slice(0, 8)}`),
+              entry_date: String(data.note_date),
+              description: `Nota de ${payload.note_type === 'credit' ? 'Crédito' : 'Débito'} ${data.note_number || ''} - ${payload.reason || ''}`.trim(),
+              reference: data.id ? String(data.id) : null,
+              status: 'posted' as const,
+            };
+
+            await journalEntriesService.createWithLines(tenantId, entryPayload, entryLines);
+          }
+        }
+      } catch (jeError) {
+        console.error('Error creating journal entry for credit/debit note:', jeError);
+      }
+
       return data;
     } catch (error) {
       console.error('creditDebitNotesService.create error', error);
@@ -7246,6 +7409,63 @@ export const apInvoicesService = {
         .select('*')
         .single();
       if (error) throw error;
+
+      // Crear asiento contable automático para factura de compra
+      try {
+        const settings = await accountingSettingsService.get(tenantId);
+        const apAccountId = settings?.ap_account_id; // Cuentas por Pagar
+        const purchaseAccountId = settings?.purchase_account_id; // Cuenta de Compras o Inventario
+        const purchaseTaxAccountId = settings?.purchase_tax_account_id; // ITBIS Pagado
+
+        if (apAccountId && purchaseAccountId) {
+          const subtotal = Number(data.subtotal) || 0;
+          const taxAmount = Number(data.tax_amount) || 0;
+          const totalAmount = Number(data.total_to_pay) || subtotal + taxAmount;
+
+          const entryLines: any[] = [
+            {
+              account_id: purchaseAccountId,
+              description: 'Compras / Inventario',
+              debit_amount: subtotal,
+              credit_amount: 0,
+              line_number: 1,
+            },
+          ];
+
+          // Agregar línea de impuesto si existe
+          if (taxAmount > 0 && purchaseTaxAccountId) {
+            entryLines.push({
+              account_id: purchaseTaxAccountId,
+              description: 'ITBIS Pagado (Crédito Fiscal)',
+              debit_amount: taxAmount,
+              credit_amount: 0,
+              line_number: 2,
+            });
+          }
+
+          // Línea de Cuentas por Pagar (crédito)
+          entryLines.push({
+            account_id: apAccountId,
+            description: 'Cuentas por Pagar Proveedores',
+            debit_amount: 0,
+            credit_amount: totalAmount,
+            line_number: entryLines.length + 1,
+          });
+
+          const entryPayload = {
+            entry_number: String(data.invoice_number || `AP-${data.id?.slice(0, 8)}`),
+            entry_date: String(data.invoice_date),
+            description: `Factura de compra ${data.invoice_number || ''} - ${data.supplier_name || ''}`.trim(),
+            reference: data.id ? String(data.id) : null,
+            status: 'posted' as const,
+          };
+
+          await journalEntriesService.createWithLines(tenantId, entryPayload, entryLines);
+        }
+      } catch (jeError) {
+        console.error('Error creating journal entry for AP invoice:', jeError);
+      }
+
       return data;
     } catch (error) {
       console.error('apInvoicesService.create error', error);
@@ -7792,6 +8012,8 @@ export const supplierPaymentsService = {
       if (error) throw error;
 
       // Best-effort: registrar asiento contable y actualizar CxP solo cuando el pago se completa
+      // IMPORTANTE: Solo crear asiento si el método de pago NO es "Cheque"
+      // Los cheques crean su propio asiento en bankChecksService
       if (data && status === 'Completado') {
         try {
           // Obtener configuración contable global
@@ -7800,6 +8022,16 @@ export const supplierPaymentsService = {
           const defaultApBankAccountId = settings?.ap_bank_account_id;
 
           const amount = Number(data.amount) || 0;
+          const paymentMethod = String(data.method || '').toLowerCase();
+
+          // Si el método de pago es "cheque", NO crear asiento aquí
+          // porque el cheque ya creó su propio asiento en bankChecksService
+          const isCheckPayment = paymentMethod.includes('cheque') || paymentMethod.includes('check');
+
+          if (isCheckPayment) {
+            console.log('Pago mediante cheque detectado - asiento ya creado en bankChecksService');
+            // Continuar con actualización de factura pero NO crear asiento
+          }
 
           // Intentar usar la cuenta contable del banco específico del pago
           let bankChartAccountId: string | null = null;
@@ -7819,7 +8051,7 @@ export const supplierPaymentsService = {
             bankChartAccountId = defaultApBankAccountId as string;
           }
 
-          if (apAccountId && bankChartAccountId && amount > 0) {
+          if (apAccountId && bankChartAccountId && amount > 0 && !isCheckPayment) {
             // Validar saldo disponible en cuenta bancaria antes de completar el pago
             const saldoDisponible = await financialReportsService.getAccountBalance(data.user_id, bankChartAccountId);
             
@@ -11461,6 +11693,165 @@ export const assetDepreciationService = {
       return data;
     } catch (error) {
       console.error('assetDepreciationService.update error', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Calcula y registra automáticamente la depreciación mensual para todos los activos fijos activos
+   * @param userId - ID del usuario
+   * @param depreciationDate - Fecha de la depreciación (default: último día del mes anterior)
+   * @returns Registros de depreciación creados y asiento contable
+   */
+  async calculateMonthlyDepreciation(userId: string, depreciationDate?: string) {
+    try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
+      // Fecha de depreciación: último día del mes anterior
+      const targetDate = depreciationDate || new Date(new Date().getFullYear(), new Date().getMonth(), 0).toISOString().slice(0, 10);
+      const targetMonth = targetDate.slice(0, 7); // YYYY-MM
+
+      // Obtener todos los activos fijos activos
+      const { data: assets, error: assetsError } = await supabase
+        .from('fixed_assets')
+        .select('*')
+        .eq('user_id', tenantId)
+        .eq('status', 'active')
+        .not('depreciation_rate', 'is', null);
+
+      if (assetsError) throw assetsError;
+      if (!assets || assets.length === 0) {
+        return { depreciations: [], journalEntry: null, message: 'No hay activos para depreciar' };
+      }
+
+      // Verificar si ya existe depreciación para este mes
+      const { data: existing, error: existingError } = await supabase
+        .from('fixed_asset_depreciations')
+        .select('id')
+        .eq('user_id', tenantId)
+        .gte('depreciation_date', `${targetMonth}-01`)
+        .lte('depreciation_date', `${targetMonth}-31`)
+        .limit(1);
+
+      if (existingError) throw existingError;
+      if (existing && existing.length > 0) {
+        throw new Error(`Ya existe depreciación registrada para el mes ${targetMonth}`);
+      }
+
+      const depreciationRecords: any[] = [];
+      let totalDepreciation = 0;
+      const accountTotals: Record<string, { depreciation: number; accumulated: number }> = {};
+
+      // Calcular depreciación para cada activo
+      for (const asset of assets) {
+        const purchaseValue = Number(asset.purchase_value) || 0;
+        const salvageValue = Number(asset.salvage_value) || 0;
+        const depreciableAmount = purchaseValue - salvageValue;
+        const depreciationRate = Number(asset.depreciation_rate) || 0;
+        const accumulatedDepreciation = Number(asset.accumulated_depreciation) || 0;
+
+        if (depreciableAmount <= 0 || depreciationRate <= 0) continue;
+
+        // Calcular meses de vida útil
+        const usefulLifeMonths = Math.round(100 / depreciationRate * 12);
+        const monthlyDepreciation = depreciableAmount / usefulLifeMonths;
+
+        // Verificar que no exceda el valor depreciable
+        const remainingValue = depreciableAmount - accumulatedDepreciation;
+        const finalDepreciation = Math.min(monthlyDepreciation, remainingValue);
+
+        if (finalDepreciation <= 0) continue;
+
+        const newAccumulated = accumulatedDepreciation + finalDepreciation;
+
+        depreciationRecords.push({
+          fixed_asset_id: asset.id,
+          depreciation_date: targetDate,
+          depreciation_amount: finalDepreciation,
+          accumulated_depreciation: newAccumulated,
+          book_value: purchaseValue - newAccumulated,
+          notes: `Depreciación automática mes ${targetMonth}`,
+        });
+
+        // Actualizar activo con nueva depreciación acumulada
+        await supabase
+          .from('fixed_assets')
+          .update({ accumulated_depreciation: newAccumulated })
+          .eq('id', asset.id);
+
+        totalDepreciation += finalDepreciation;
+
+        // Agrupar por cuenta contable
+        const depreciationAccountId = asset.depreciation_account_id;
+        const accumulatedAccountId = asset.accumulated_depreciation_account_id;
+
+        if (depreciationAccountId && accumulatedAccountId) {
+          const key = `${depreciationAccountId}|${accumulatedAccountId}`;
+          if (!accountTotals[key]) {
+            accountTotals[key] = { depreciation: 0, accumulated: 0 };
+          }
+          accountTotals[key].depreciation += finalDepreciation;
+          accountTotals[key].accumulated += finalDepreciation;
+        }
+      }
+
+      if (depreciationRecords.length === 0) {
+        return { depreciations: [], journalEntry: null, message: 'No hay activos que requieran depreciación este mes' };
+      }
+
+      // Crear registros de depreciación
+      const createdDepreciations = await this.createMany(userId, depreciationRecords);
+
+      // Crear asiento contable automático
+      let journalEntry = null;
+      if (totalDepreciation > 0 && Object.keys(accountTotals).length > 0) {
+        try {
+          const entryLines: any[] = [];
+          let lineNumber = 1;
+
+          // Líneas de débito: Gasto por Depreciación
+          Object.entries(accountTotals).forEach(([key, totals]) => {
+            const [depreciationAccountId, accumulatedAccountId] = key.split('|');
+            
+            entryLines.push({
+              account_id: depreciationAccountId,
+              description: `Depreciación del mes ${targetMonth}`,
+              debit_amount: totals.depreciation,
+              credit_amount: 0,
+              line_number: lineNumber++,
+            });
+
+            entryLines.push({
+              account_id: accumulatedAccountId,
+              description: `Depreciación Acumulada ${targetMonth}`,
+              debit_amount: 0,
+              credit_amount: totals.accumulated,
+              line_number: lineNumber++,
+            });
+          });
+
+          const entryPayload = {
+            entry_number: `DEP-${targetMonth}`,
+            entry_date: targetDate,
+            description: `Depreciación automática de activos fijos - ${targetMonth}`,
+            reference: null,
+            status: 'posted' as const,
+          };
+
+          journalEntry = await journalEntriesService.createWithLines(tenantId, entryPayload, entryLines);
+        } catch (jeError) {
+          console.error('Error creating depreciation journal entry:', jeError);
+        }
+      }
+
+      return {
+        depreciations: createdDepreciations,
+        journalEntry,
+        message: `Depreciación calculada correctamente: ${depreciationRecords.length} activos, Total: RD$${totalDepreciation.toFixed(2)}`,
+      };
+    } catch (error) {
+      console.error('assetDepreciationService.calculateMonthlyDepreciation error', error);
       throw error;
     }
   },

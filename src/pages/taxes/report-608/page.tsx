@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
 import * as XLSX from 'xlsx';
+import { exportToPdf } from '../../../utils/exportImportUtils';
 
 interface Report608Data {
   ncf: string;
@@ -141,6 +142,43 @@ export default function Report608Page() {
     document.body.removeChild(link);
   };
 
+  const handleExportPdf = async () => {
+    if (cancelledDocuments.length === 0) return;
+
+    try {
+      const data = cancelledDocuments.map(doc => ({
+        ncf: doc.ncf,
+        tipo: doc.document_type,
+        fecha_emision: new Date(doc.issue_date).toLocaleDateString('es-DO'),
+        fecha_cancelacion: new Date(doc.cancellation_date).toLocaleDateString('es-DO'),
+        rnc_cliente: doc.customer_rnc,
+        monto: doc.amount,
+        itbis: doc.tax_amount,
+      }));
+
+      const columns = [
+        { key: 'ncf', label: 'NCF' },
+        { key: 'tipo', label: 'Tipo' },
+        { key: 'fecha_emision', label: 'Fecha Emisión' },
+        { key: 'fecha_cancelacion', label: 'Fecha Cancelación' },
+        { key: 'rnc_cliente', label: 'RNC Cliente' },
+        { key: 'monto', label: 'Monto' },
+        { key: 'itbis', label: 'ITBIS' },
+      ];
+
+      await exportToPdf(
+        data,
+        columns,
+        `reporte_608_${selectedPeriod}`,
+        'Reporte 608 - Documentos Cancelados',
+        'p',
+      );
+    } catch (error) {
+      console.error('Error exporting Reporte 608 to PDF:', error);
+      alert('Error al exportar a PDF. Revisa la consola para más detalles.');
+    }
+  };
+
   const exportToTXT = () => {
     if (cancelledDocuments.length === 0) return;
 
@@ -255,6 +293,13 @@ export default function Report608Page() {
                 >
                   <i className="ri-file-text-line mr-2"></i>
                   Exportar TXT
+                </button>
+                <button
+                  onClick={handleExportPdf}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-pdf-line mr-2"></i>
+                  Exportar PDF
                 </button>
               </div>
             )}

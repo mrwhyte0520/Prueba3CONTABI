@@ -223,13 +223,26 @@ export default function CashClosingPage() {
       doc.setFontSize(14);
       doc.text('Resumen de Ventas', 20, 80);
       
+      // Calcular cantidades reales de transacciones por método a partir de los recibos del día
+      const receiptsCount = dailyReceipts.length;
+      const countByMethod = (method: string) =>
+        dailyReceipts.filter((r: any) => (r.payment_method || '').toLowerCase() === method).length;
+
+      const cashCount = countByMethod('cash');
+      const cardCount = countByMethod('card');
+      const transferCount = countByMethod('transfer');
+      const otherCount = Math.max(receiptsCount - cashCount - cardCount - transferCount, 0);
+
+      const formatAmount = (value: number) =>
+        `RD$ ${Number(value || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
       const salesData = [
-        ['Concepto', 'Cantidad', 'Monto'],
-        ['Ventas en Efectivo', '45', `RD$ ${currentShift.cashSales.toLocaleString()}.00`],
-        ['Ventas con Tarjeta', '32', `RD$ ${currentShift.cardSales.toLocaleString()}.00`],
-        ['Ventas por Transferencia', '18', `RD$ ${currentShift.transferSales.toLocaleString()}.00`],
-        ['Otros Métodos', '8', `RD$ ${currentShift.otherSales.toLocaleString()}.00`],
-        ['Total Ventas', '103', `RD$ ${currentShift.currentSales.toLocaleString()}.00`]
+        ['Concepto', 'Transacciones', 'Monto'],
+        ['Ventas en Efectivo', String(cashCount), formatAmount(currentShift.cashSales)],
+        ['Ventas con Tarjeta', String(cardCount), formatAmount(currentShift.cardSales)],
+        ['Ventas por Transferencia', String(transferCount), formatAmount(currentShift.transferSales)],
+        ['Otros Métodos', String(otherCount), formatAmount(currentShift.otherSales)],
+        ['Total Ventas', String(receiptsCount), formatAmount(currentShift.currentSales)]
       ];
 
       (doc as any).autoTable({
@@ -257,7 +270,7 @@ export default function CashClosingPage() {
         ['RD$ 10', '30', 'RD$ 300.00'],
         ['RD$ 5', '20', 'RD$ 100.00'],
         ['RD$ 1', '50', 'RD$ 50.00'],
-        ['Total Efectivo', '', `RD$ ${expectedCashBalance.toLocaleString()}.00`]
+        ['Total Efectivo', '', formatAmount(expectedCashBalance)]
       ];
 
       (doc as any).autoTable({

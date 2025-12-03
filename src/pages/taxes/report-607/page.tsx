@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
 import * as XLSX from 'xlsx';
+import { exportToPdf } from '../../../utils/exportImportUtils';
 
 interface Report607Data {
   rnc_cedula: string;
@@ -152,6 +153,43 @@ export default function Report607Page() {
     XLSX.writeFile(wb, `reporte_607_${selectedPeriod}.xlsx`);
   };
 
+  const handleExportPdf = async () => {
+    if (reportData.length === 0) return;
+
+    try {
+      const data = reportData.map(row => ({
+        rnc_cedula: row.rnc_cedula,
+        ncf: row.numero_comprobante_fiscal,
+        fecha: new Date(row.fecha_comprobante).toLocaleDateString('es-DO'),
+        monto_facturado: row.monto_facturado,
+        itbis_facturado: row.itbis_facturado,
+        itbis_retenido: row.itbis_retenido,
+        isr_retenido: row.retencion_renta_terceros,
+      }));
+
+      const columns = [
+        { key: 'rnc_cedula', label: 'RNC/Cédula' },
+        { key: 'ncf', label: 'NCF' },
+        { key: 'fecha', label: 'Fecha' },
+        { key: 'monto_facturado', label: 'Monto Facturado' },
+        { key: 'itbis_facturado', label: 'ITBIS Facturado' },
+        { key: 'itbis_retenido', label: 'ITBIS Retenido' },
+        { key: 'isr_retenido', label: 'ISR Retenido' },
+      ];
+
+      await exportToPdf(
+        data,
+        columns,
+        `reporte_607_${selectedPeriod}`,
+        'Reporte 607 - Ventas y Servicios',
+        'p',
+      );
+    } catch (error) {
+      console.error('Error exporting Reporte 607 to PDF:', error);
+      alert('Error al exportar a PDF. Revisa la consola para más detalles.');
+    }
+  };
+
   const getTotals = () => {
     return reportData.reduce((totals, row) => ({
       monto_facturado: totals.monto_facturado + row.monto_facturado,
@@ -236,6 +274,13 @@ export default function Report607Page() {
                 >
                   <i className="ri-file-excel-line mr-2"></i>
                   Exportar Excel
+                </button>
+                <button
+                  onClick={handleExportPdf}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-pdf-line mr-2"></i>
+                  Exportar PDF
                 </button>
               </div>
             )}

@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 interface IT1Data {
   id?: string;
@@ -151,6 +153,81 @@ export default function ReportIT1Page() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const exportToPDF = () => {
+    if (!reportData) return;
+
+    const doc = new jsPDF();
+
+    // Encabezado
+    doc.setFontSize(18);
+    doc.text('Declaración Jurada del ITBIS (IT-1)', 14, 20);
+
+    doc.setFontSize(12);
+    doc.text(
+      `Período: ${new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}`,
+      14,
+      30,
+    );
+    doc.text(
+      `Generado el: ${new Date(reportData.generated_date).toLocaleDateString('es-DO')}`,
+      14,
+      38,
+    );
+
+    // Sección I - Ventas
+    doc.setFontSize(14);
+    doc.text('I. Ventas y Servicios Gravados', 14, 50);
+
+    (doc as any).autoTable({
+      startY: 55,
+      head: [['Concepto', 'Valor']],
+      body: [
+        ['Total de Ventas y Servicios Gravados', `RD$ ${reportData.total_sales.toLocaleString('es-DO')}`],
+        ['ITBIS Cobrado en Ventas', `RD$ ${reportData.itbis_collected.toLocaleString('es-DO')}`],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [59, 130, 246] },
+    });
+
+    // Sección II - Compras
+    const afterSalesY = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(14);
+    doc.text('II. Compras y Gastos Gravados', 14, afterSalesY);
+
+    (doc as any).autoTable({
+      startY: afterSalesY + 5,
+      head: [['Concepto', 'Valor']],
+      body: [
+        ['Total de Compras y Gastos Gravados', `RD$ ${reportData.total_purchases.toLocaleString('es-DO')}`],
+        ['ITBIS Pagado en Compras', `RD$ ${reportData.itbis_paid.toLocaleString('es-DO')}`],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [59, 130, 246] },
+    });
+
+    // Sección III - Liquidación
+    const afterPurchasesY = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(14);
+    doc.text('III. Liquidación del Impuesto', 14, afterPurchasesY);
+
+    const netLabel = reportData.net_itbis_due >= 0 ? 'ITBIS Neto a Pagar' : 'Saldo a Favor';
+    const netValue = `RD$ ${Math.abs(reportData.net_itbis_due).toLocaleString('es-DO')}`;
+
+    (doc as any).autoTable({
+      startY: afterPurchasesY + 5,
+      head: [['Concepto', 'Valor']],
+      body: [
+        ['ITBIS Cobrado en Ventas', `RD$ ${reportData.itbis_collected.toLocaleString('es-DO')}`],
+        ['(-) ITBIS Pagado en Compras', `RD$ ${reportData.itbis_paid.toLocaleString('es-DO')}`],
+        [netLabel, netValue],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [34, 197, 94] },
+    });
+
+    doc.save(`declaracion_it1_${reportData.period}.pdf`);
   };
 
   const exportToTXT = () => {
@@ -474,6 +551,13 @@ Cumple con las normativas de la DGII
                       >
                         <i className="ri-file-text-line mr-2"></i>
                         Exportar TXT
+                      </button>
+                      <button
+                        onClick={exportToPDF}
+                        className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
+                      >
+                        <i className="ri-file-pdf-line mr-2"></i>
+                        Exportar PDF
                       </button>
                     </div>
                   )}

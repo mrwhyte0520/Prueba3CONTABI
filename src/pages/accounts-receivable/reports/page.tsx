@@ -591,6 +591,9 @@ export default function ReportsPage() {
     const totalCreditLimit = customers.reduce((sum, c) => sum + c.creditLimit, 0);
     const activeCustomers = customers.filter(c => c.status === 'Activo').length;
     const customersWithBalance = customers.filter(c => c.currentBalance > 0).length;
+    const creditUtilizationPercent = totalCreditLimit > 0
+      ? (totalBalance / totalCreditLimit) * 100
+      : 0;
     
     doc.setFontSize(14);
     doc.text('Resumen General', 20, 60);
@@ -600,7 +603,7 @@ export default function ReportsPage() {
       ['Total Límites de Crédito', `RD$ ${totalCreditLimit.toLocaleString()}`],
       ['Clientes Activos', activeCustomers.toString()],
       ['Clientes con Saldo', customersWithBalance.toString()],
-      ['Utilización de Crédito', `${((totalBalance / totalCreditLimit) * 100).toFixed(1)}%`]
+      ['Utilización de Crédito', `${creditUtilizationPercent.toFixed(1)}%`]
     ];
     
     (doc as any).autoTable({

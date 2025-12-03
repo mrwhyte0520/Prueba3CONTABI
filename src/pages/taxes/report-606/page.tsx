@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
 import * as XLSX from 'xlsx';
+import { exportToPdf } from '../../../utils/exportImportUtils';
 
 interface Report606Data {
   id: string;
@@ -260,6 +261,61 @@ export default function Report606Page() {
     link.click();
   };
 
+  const handleExportPdf = async () => {
+    if (reportData.length === 0) return;
+
+    try {
+      const data = reportData.map(row => ({
+        rnc_cedula: row.rnc_cedula,
+        tipo_id: row.tipo_identificacion,
+        tipo_bien_servicio: row.tipo_bienes_servicios,
+        ncf: row.ncf,
+        ncf_modificado: row.ncf_modificado || '',
+        fecha_comprobante: row.fecha_comprobante,
+        fecha_pago: row.fecha_pago,
+        monto_facturado: row.monto_facturado,
+        itbis_facturado: row.itbis_facturado,
+        itbis_retenido: row.itbis_retenido,
+        retencion_renta: row.retencion_renta,
+        isr_percibido: row.isr_percibido,
+        imp_selectivo: row.impuesto_selectivo_consumo,
+        otros_impuestos: row.otros_impuestos,
+        propina_legal: row.monto_propina_legal,
+        forma_pago: row.forma_pago,
+      }));
+
+      const columns = [
+        { key: 'rnc_cedula', label: 'RNC/Cédula' },
+        { key: 'tipo_id', label: 'Tipo ID' },
+        { key: 'tipo_bien_servicio', label: 'Tipo Bien/Serv.' },
+        { key: 'ncf', label: 'NCF' },
+        { key: 'ncf_modificado', label: 'NCF Modificado' },
+        { key: 'fecha_comprobante', label: 'Fecha Comp.' },
+        { key: 'fecha_pago', label: 'Fecha Pago' },
+        { key: 'monto_facturado', label: 'Monto Facturado' },
+        { key: 'itbis_facturado', label: 'ITBIS Facturado' },
+        { key: 'itbis_retenido', label: 'ITBIS Retenido' },
+        { key: 'retencion_renta', label: 'Retención Renta' },
+        { key: 'isr_percibido', label: 'ISR Percibido' },
+        { key: 'imp_selectivo', label: 'Imp. Selectivo' },
+        { key: 'otros_impuestos', label: 'Otros Impuestos' },
+        { key: 'propina_legal', label: 'Propina Legal' },
+        { key: 'forma_pago', label: 'Forma Pago' },
+      ];
+
+      await exportToPdf(
+        data,
+        columns,
+        `reporte_606_${selectedPeriod}`,
+        'Reporte 606 - Compras y Servicios',
+        'l',
+      );
+    } catch (error) {
+      console.error('Error exporting Reporte 606 to PDF:', error);
+      alert('Error al exportar a PDF. Revisa la consola para más detalles.');
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="p-6">
@@ -382,6 +438,14 @@ export default function Report606Page() {
                 >
                   <i className="ri-file-text-line"></i>
                   Exportar TXT
+                </button>
+                
+                <button
+                  onClick={handleExportPdf}
+                  className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 flex items-center gap-2 whitespace-nowrap"
+                >
+                  <i className="ri-file-pdf-line"></i>
+                  Exportar PDF
                 </button>
               </div>
             </div>

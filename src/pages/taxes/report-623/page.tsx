@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
 import * as XLSX from 'xlsx';
+import { exportToPdf } from '../../../utils/exportImportUtils';
 
 interface Report623Data {
   beneficiary_name: string;
@@ -119,6 +120,45 @@ export default function Report623Page() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleExportPdf = async () => {
+    if (foreignPayments.length === 0) return;
+
+    try {
+      const data = foreignPayments.map(payment => ({
+        beneficiario: payment.beneficiary_name,
+        pais: payment.beneficiary_country,
+        concepto: payment.payment_concept,
+        fecha: new Date(payment.payment_date).toLocaleDateString('es-DO'),
+        monto_usd: payment.amount_usd,
+        monto_dop: payment.amount_dop,
+        tasa: payment.exchange_rate,
+        impuesto: payment.tax_withheld,
+      }));
+
+      const columns = [
+        { key: 'beneficiario', label: 'Beneficiario' },
+        { key: 'pais', label: 'País' },
+        { key: 'concepto', label: 'Concepto' },
+        { key: 'fecha', label: 'Fecha' },
+        { key: 'monto_usd', label: 'Monto USD' },
+        { key: 'monto_dop', label: 'Monto RD$' },
+        { key: 'tasa', label: 'Tasa' },
+        { key: 'impuesto', label: 'Impuesto' },
+      ];
+
+      await exportToPdf(
+        data,
+        columns,
+        `reporte_623_${selectedPeriod}`,
+        'Reporte 623 - Pagos al Exterior',
+        'l',
+      );
+    } catch (error) {
+      console.error('Error exporting Reporte 623 to PDF:', error);
+      alert('Error al exportar a PDF. Revisa la consola para más detalles.');
+    }
   };
 
   const exportToTXT = () => {
@@ -238,6 +278,13 @@ export default function Report623Page() {
                 >
                   <i className="ri-file-text-line mr-2"></i>
                   Exportar TXT
+                </button>
+                <button
+                  onClick={handleExportPdf}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-pdf-line mr-2"></i>
+                  Exportar PDF
                 </button>
               </div>
             )}

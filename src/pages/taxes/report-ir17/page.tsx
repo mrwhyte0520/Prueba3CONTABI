@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService } from '../../../services/database';
 import * as XLSX from 'xlsx';
+import { exportToPdf } from '../../../utils/exportImportUtils';
 
 export default function ReportIR17Page() {
   const navigate = useNavigate();
@@ -133,6 +134,47 @@ export default function ReportIR17Page() {
     document.body.removeChild(link);
   };
 
+  const handleExportPdf = async () => {
+    if (withholdingData.length === 0) return;
+
+    try {
+      const data = withholdingData.map(item => ({
+        rnc_proveedor: item.supplier_rnc,
+        nombre: item.supplier_name,
+        fecha_pago: new Date(item.payment_date).toLocaleDateString('es-DO'),
+        tipo_servicio: item.service_type,
+        numero_factura: item.invoice_number,
+        monto_bruto: item.gross_amount,
+        tasa: item.withholding_rate,
+        monto_retenido: item.withheld_amount,
+        monto_neto: item.net_amount,
+      }));
+
+      const columns = [
+        { key: 'rnc_proveedor', label: 'RNC Proveedor' },
+        { key: 'nombre', label: 'Nombre' },
+        { key: 'fecha_pago', label: 'Fecha Pago' },
+        { key: 'tipo_servicio', label: 'Tipo Servicio' },
+        { key: 'numero_factura', label: 'Número Factura' },
+        { key: 'monto_bruto', label: 'Monto Bruto' },
+        { key: 'tasa', label: 'Tasa %' },
+        { key: 'monto_retenido', label: 'Retenido' },
+        { key: 'monto_neto', label: 'Monto Neto' },
+      ];
+
+      await exportToPdf(
+        data,
+        columns,
+        `reporte_ir17_${selectedPeriod}`,
+        'Reporte IR-17 - Retenciones ISR',
+        'l',
+      );
+    } catch (error) {
+      console.error('Error exporting Reporte IR-17 to PDF:', error);
+      alert('Error al exportar a PDF. Revisa la consola para más detalles.');
+    }
+  };
+
   const getTotals = () => {
     return withholdingData.reduce((totals, item) => ({
       total_gross: totals.total_gross + item.gross_amount,
@@ -217,6 +259,13 @@ export default function ReportIR17Page() {
                 >
                   <i className="ri-download-line mr-2"></i>
                   Exportar CSV
+                </button>
+                <button
+                  onClick={handleExportPdf}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-pdf-line mr-2"></i>
+                  Exportar PDF
                 </button>
               </div>
             )}
