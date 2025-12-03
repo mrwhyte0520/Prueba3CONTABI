@@ -206,6 +206,11 @@ const GeneralJournalPage: React.FC = () => {
         line.account_id && (line.debit_amount > 0 || line.credit_amount > 0)
       );
 
+      console.log('=== DEBUG JOURNAL ENTRY ==');
+      console.log('All lines:', formData.lines);
+      console.log('Valid lines to save:', validLines);
+      console.log('Total Debit:', totalDebit, 'Total Credit:', totalCredit);
+
       const tenantId = await resolveTenantId(user.id);
       if (!tenantId) {
         alert('Error: No se pudo resolver el tenant');
@@ -242,11 +247,13 @@ const GeneralJournalPage: React.FC = () => {
           const linesData = validLines.map((line, index) => ({
             journal_entry_id: updatedEntry.id,
             account_id: line.account_id,
-            debit_amount: line.debit_amount || 0,
-            credit_amount: line.credit_amount || 0,
+            debit_amount: Number(line.debit_amount) || 0,
+            credit_amount: Number(line.credit_amount) || 0,
             description: line.description,
             line_number: index + 1,
           }));
+
+          console.log('Lines data to update:', linesData);
 
           const { error: linesError } = await supabase
             .from('journal_entry_lines')
@@ -279,11 +286,13 @@ const GeneralJournalPage: React.FC = () => {
           const linesData = validLines.map((line, index) => ({
             journal_entry_id: entry.id,
             account_id: line.account_id,
-            debit_amount: line.debit_amount || 0,
-            credit_amount: line.credit_amount || 0,
+            debit_amount: Number(line.debit_amount) || 0,
+            credit_amount: Number(line.credit_amount) || 0,
             description: line.description,
             line_number: index + 1,
           }));
+
+          console.log('Lines data to insert:', linesData);
 
           const { error: linesError } = await supabase
             .from('journal_entry_lines')

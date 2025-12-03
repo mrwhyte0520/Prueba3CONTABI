@@ -874,13 +874,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
           <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
             <div className="relative flex flex-1 items-center">
-              <div className="flex items-center space-x-2 text-sm text-gray-600">
-                <i className="ri-home-line"></i>
-                <span>/</span>
-                <span className="font-medium text-gray-900 capitalize">
-                  {location.pathname.split('/').filter(Boolean).join(' / ') || 'Dashboard'}
-                </span>
-              </div>
             </div>
             <div className="flex items-center gap-x-4 lg:gap-x-6">
               {/* Notifications button */}

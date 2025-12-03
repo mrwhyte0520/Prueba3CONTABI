@@ -8,7 +8,12 @@ import * as XLSX from 'xlsx';
 // Estilos CSS para impresión
 const printStyles = `
   @media print {
-    @page { size: portrait; margin: 1cm; }
+    @page { 
+      size: portrait; 
+      margin: 1cm;
+      margin-top: 0;
+      margin-bottom: 0;
+    }
     body * { visibility: hidden; }
     #printable-statement, #printable-statement * { visibility: visible; }
     #printable-statement { position: absolute; left: 0; top: 0; width: 100%; }
@@ -17,7 +22,9 @@ const printStyles = `
     thead { display: table-header-group; }
     tr { page-break-inside: avoid; }
     .print-hidden { display: none !important; }
+    .hide-zero-on-print { display: none !important; }
   }
+  @page { margin: 0; }
 `;
 
 interface FinancialStatement {
@@ -110,7 +117,9 @@ export default function FinancialStatementsPage() {
 
     const loadFinancialData = async () => {
       try {
-        const trialBalance = await financialReportsService.getTrialBalance(user.id, fromDate, toDate);
+        const isBalanceTab = activeTab === 'balance';
+        const tbFromDate = isBalanceTab ? '1900-01-01' : fromDate;
+        const trialBalance = await financialReportsService.getTrialBalance(user.id, tbFromDate, toDate);
 
         const nextData: FinancialData = {
           assets: { current: [], nonCurrent: [] },
@@ -165,12 +174,16 @@ export default function FinancialStatementsPage() {
             balance = -balance; // Invertir el signo
           }
 
+          // Normalizar código (remover puntos para comparación)
+          const normalizedCode = code.replace(/\./g, '');
+          
           switch (acc.type) {
             case 'asset':
             case 'activo': {
               const item = { code, name: label, amount: balance };
-              // Activos corrientes: 10,11,12,13
-              if (code.startsWith('10') || code.startsWith('11') || code.startsWith('12') || code.startsWith('13')) {
+              // Activos corrientes: 10,11,12,13 (ej: 1.1.02 → 1102 → empieza con 11)
+              if (normalizedCode.startsWith('10') || normalizedCode.startsWith('11') || 
+                  normalizedCode.startsWith('12') || normalizedCode.startsWith('13')) {
                 nextData.assets.current.push(item);
               } else {
                 nextData.assets.nonCurrent.push(item);
@@ -180,8 +193,8 @@ export default function FinancialStatementsPage() {
             case 'liability':
             case 'pasivo': {
               const item = { code, name: label, amount: balance };
-              // Pasivos corrientes: 20,21
-              if (code.startsWith('20') || code.startsWith('21')) {
+              // Pasivos corrientes: 20,21 (ej: 2.1.01 → 2101 → empieza con 21)
+              if (normalizedCode.startsWith('20') || normalizedCode.startsWith('21')) {
                 nextData.liabilities.current.push(item);
               } else {
                 nextData.liabilities.nonCurrent.push(item);
@@ -602,6 +615,24 @@ export default function FinancialStatementsPage() {
   const incomeTax = 0;
   const legalReserve = 0;
 
+  // Helper para renderizar líneas - oculta en PDF si saldo es 0, pero muestra en pantalla
+  const renderBalanceLineIfNotZero = (label: string, amount: number) => {
+    const isZero = Math.abs(amount) < 0.01;
+    return (
+      <div className={`flex justify-between py-0.5 pl-4 ${isZero ? 'hide-zero-on-print' : ''}`}>
+        <span className="text-sm text-gray-700">{label}</span>
+        <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(amount)}</span>
+      </div>
+    );
+  };
+
+  // Helper para agregar filas a Excel solo si tienen saldo diferente de 0
+  const addRowIfNotZero = (rows: any[], label: string, amount: number, indent: string = '  ') => {
+    if (Math.abs(amount) >= 0.01) {
+      rows.push([indent + label, '', '', amount]);
+    }
+  };
+
   // =========================
   // Estado de Costos de Ventas
   // =========================
@@ -671,55 +702,73 @@ export default function FinancialStatementsPage() {
       // ACTIVOS
       rows.push(['ACTIVOS', '', '', null]);
       rows.push(['ACTIVOS CORRIENTES', '', '', null]);
-      rows.push(['  Efectivo en Caja y Bancos', '', '', efectivoCajaBancos]);
-      rows.push(['  Cuentas por Cobrar Clientes', '', '', cxcClientes]);
-      rows.push(['  Otras Cuentas por Cobrar', '', '', otrasCxc]);
-      rows.push(['  Inventarios', '', '', inventarios]);
-      rows.push(['  Gastos Pagados por Anticipado', '', '', gastosPagadosAnticipado]);
-      rows.push(['  Anticipos sobre la Renta Pagados', '', '', anticiposISR]);
+      addRowIfNotZero(rows, 'Efectivo en Caja y Bancos', efectivoCajaBancos);
+      addRowIfNotZero(rows, 'Cuentas por Cobrar Clientes', cxcClientes);
+      addRowIfNotZero(rows, 'Otras Cuentas por Cobrar', otrasCxc);
+      addRowIfNotZero(rows, 'Inventarios', inventarios);
+      addRowIfNotZero(rows, 'Gastos Pagados por Anticipado', gastosPagadosAnticipado);
+      addRowIfNotZero(rows, 'Anticipos sobre la Renta Pagados', anticiposISR);
       rows.push(['  Total Activos Corrientes', '', '', totals.totalCurrentAssets]);
       rows.push(['', '', '', null]);
 
-      rows.push(['ACTIVOS FIJOS', '', '', null]);
-      rows.push(['  Activos Fijos', '', '', activosFijos]);
-      rows.push(['', '', '', null]);
+      // ACTIVOS FIJOS - solo agregar si tiene saldo
+      if (Math.abs(activosFijos) >= 0.01) {
+        rows.push(['ACTIVOS FIJOS', '', '', null]);
+        addRowIfNotZero(rows, 'Activos Fijos', activosFijos);
+        rows.push(['', '', '', null]);
+      }
 
-      rows.push(['OTROS ACTIVOS', '', '', null]);
-      rows.push(['  Inversiones en Otras Compañías', '', '', invAcciones]);
-      rows.push(['  Certificados Bancarios y Títulos Financieros', '', '', invCertificados]);
-      rows.push(['  Fianzas y Depósitos', '', '', fianzasDepositos]);
-      rows.push(['  Licencias y Softwares', '', '', licenciasSoftware]);
-      rows.push(['  Otros Activos', '', '', otrosActivos]);
-      rows.push(['  Total Otros Activos', '', '', totals.totalNonCurrentAssets]);
-      rows.push(['', '', '', null]);
+      // OTROS ACTIVOS - solo agregar si tiene saldo
+      if (Math.abs(totals.totalNonCurrentAssets) >= 0.01) {
+        rows.push(['OTROS ACTIVOS', '', '', null]);
+        addRowIfNotZero(rows, 'Inversiones en Otras Compañías', invAcciones);
+        addRowIfNotZero(rows, 'Certificados Bancarios y Títulos Financieros', invCertificados);
+        addRowIfNotZero(rows, 'Fianzas y Depósitos', fianzasDepositos);
+        addRowIfNotZero(rows, 'Licencias y Softwares', licenciasSoftware);
+        addRowIfNotZero(rows, 'Otros Activos', otrosActivos);
+        rows.push(['  Total Otros Activos', '', '', totals.totalNonCurrentAssets]);
+        rows.push(['', '', '', null]);
+      }
 
       rows.push(['TOTAL ACTIVOS', '', '', totals.totalAssets]);
       rows.push(['', '', '', null]);
 
       // PASIVOS Y PATRIMONIO
       rows.push(['PASIVO Y PATRIMONIO DE LOS SOCIOS', '', '', null]);
-      rows.push(['PASIVOS CIRCULANTES', '', '', null]);
-      rows.push(['  Cuentas por Pagar Proveedores', '', '', cppProveedores]);
-      rows.push(['  Acumulaciones y Provisiones por Pagar', '', '', acumulacionesPorPagar]);
-      rows.push(['  Préstamos por Pagar a Corto Plazo', '', '', prestamosCortoPlazo]);
-      rows.push(['  Otras Cuentas por Pagar', '', '', otrasCxPCorrientes]);
-      rows.push(['  Total Pasivos Corrientes', '', '', pasivosCorrientes]);
-      rows.push(['', '', '', null]);
+      // PASIVOS CIRCULANTES - solo agregar si tiene saldo
+      if (Math.abs(pasivosCorrientes) >= 0.01) {
+        rows.push(['PASIVOS CIRCULANTES', '', '', null]);
+        addRowIfNotZero(rows, 'Cuentas por Pagar Proveedores', cppProveedores);
+        addRowIfNotZero(rows, 'Acumulaciones y Provisiones por Pagar', acumulacionesPorPagar);
+        addRowIfNotZero(rows, 'Préstamos por Pagar a Corto Plazo', prestamosCortoPlazo);
+        addRowIfNotZero(rows, 'Otras Cuentas por Pagar', otrasCxPCorrientes);
+        rows.push(['  Total Pasivos Corrientes', '', '', pasivosCorrientes]);
+        rows.push(['', '', '', null]);
+      }
 
-      rows.push(['PASIVOS A LARGO PLAZO', '', '', null]);
-      rows.push(['  Pasivos a Largo Plazo', '', '', pasivosLargoPlazo]);
-      rows.push(['  Total Pasivos a Largo Plazo', '', '', pasivosLargoPlazo]);
-      rows.push(['', '', '', null]);
+      // PASIVOS A LARGO PLAZO - solo agregar si tiene saldo
+      if (Math.abs(pasivosLargoPlazo) >= 0.01) {
+        rows.push(['PASIVOS A LARGO PLAZO', '', '', null]);
+        addRowIfNotZero(rows, 'Pasivos a Largo Plazo', pasivosLargoPlazo);
+        rows.push(['  Total Pasivos a Largo Plazo', '', '', pasivosLargoPlazo]);
+        rows.push(['', '', '', null]);
+      }
 
-      rows.push(['TOTAL PASIVOS', '', '', totals.totalLiabilities]);
-      rows.push(['', '', '', null]);
+      // TOTAL PASIVOS - solo agregar si tiene saldo
+      if (Math.abs(totals.totalLiabilities) >= 0.01) {
+        rows.push(['TOTAL PASIVOS', '', '', totals.totalLiabilities]);
+        rows.push(['', '', '', null]);
+      }
 
-      rows.push(['PATRIMONIO', '', '', null]);
-      rows.push(['  Capital Suscrito y Pagado', '', '', capitalSuscrito]);
-      rows.push(['  Reservas (incluye Reserva Legal)', '', '', reservas]);
-      rows.push(['  Beneficios o Pérdidas Acumuladas', '', '', resultadosAcumulados]);
-      rows.push(['  Total Patrimonio', '', '', patrimonioTotal]);
-      rows.push(['', '', '', null]);
+      // PATRIMONIO - solo agregar si tiene saldo
+      if (Math.abs(patrimonioTotal) >= 0.01) {
+        rows.push(['PATRIMONIO', '', '', null]);
+        addRowIfNotZero(rows, 'Capital Suscrito y Pagado', capitalSuscrito);
+        addRowIfNotZero(rows, 'Reservas (incluye Reserva Legal)', reservas);
+        addRowIfNotZero(rows, 'Beneficios o Pérdidas Acumuladas', resultadosAcumulados);
+        rows.push(['  Total Patrimonio', '', '', patrimonioTotal]);
+        rows.push(['', '', '', null]);
+      }
 
       rows.push(['TOTAL PASIVOS Y PATRIMONIO', '', '', totals.totalLiabilities + totals.totalEquity]);
 
@@ -744,12 +793,25 @@ export default function FinancialStatementsPage() {
   const downloadIncomeStatementExcel = () => {
     try {
       const rows: any[] = [];
-      financialData.revenue.forEach(i => rows.push(['INGRESOS', i.name, i.amount]));
-      rows.push(['', 'Total Ingresos', totals.totalRevenue]);
-      financialData.costs.forEach(i => rows.push(['COSTOS', i.name, i.amount]));
-      rows.push(['', 'Total Costos', totals.totalCosts]);
-      financialData.expenses.forEach(i => rows.push(['GASTOS', i.name, i.amount]));
-      rows.push(['', 'Total Gastos', totals.totalExpenses]);
+      
+      // INGRESOS - solo agregar si tiene saldo
+      if (Math.abs(totals.totalRevenue) >= 0.01) {
+        financialData.revenue.filter(i => Math.abs(i.amount) >= 0.01).forEach(i => rows.push(['INGRESOS', i.name, i.amount]));
+        rows.push(['', 'Total Ingresos', totals.totalRevenue]);
+      }
+      
+      // COSTOS - solo agregar si tiene saldo
+      if (Math.abs(totals.totalCosts) >= 0.01) {
+        financialData.costs.filter(i => Math.abs(i.amount) >= 0.01).forEach(i => rows.push(['COSTOS', i.name, i.amount]));
+        rows.push(['', 'Total Costos', totals.totalCosts]);
+      }
+      
+      // GASTOS - solo agregar si tiene saldo
+      if (Math.abs(totals.totalExpenses) >= 0.01) {
+        financialData.expenses.filter(i => Math.abs(i.amount) >= 0.01).forEach(i => rows.push(['GASTOS', i.name, i.amount]));
+        rows.push(['', 'Total Gastos', totals.totalExpenses]);
+      }
+      
       rows.push(['', 'UTILIDAD NETA', totals.netIncome]);
 
       exportToExcel({
@@ -777,11 +839,15 @@ export default function FinancialStatementsPage() {
         total: number,
         items: { name: string; amount: number }[],
       ) => {
-        rows.push([categoryName, '', total]);
-        items.forEach((item) => {
-          rows.push(['', item.name, item.amount]);
-        });
-        rows.push(['', '', null]);
+        // Solo agregar categoría si tiene saldo
+        if (Math.abs(total) >= 0.01) {
+          rows.push([categoryName, '', total]);
+          // Solo agregar items con saldo diferente de 0
+          items.filter(item => Math.abs(item.amount) >= 0.01).forEach((item) => {
+            rows.push(['', item.name, item.amount]);
+          });
+          rows.push(['', '', null]);
+        }
       };
 
       addCategory('Gastos de Personal', gastosPersonal, expenseItemsPersonal);
@@ -814,13 +880,28 @@ export default function FinancialStatementsPage() {
     try {
       const rows: any[] = [];
 
-      rows.push(['Inventario Inicial', costOfSalesData.openingInventory]);
-      rows.push(['Compras Proveedores Locales', costOfSalesData.purchasesLocal]);
-      rows.push(['Importaciones', costOfSalesData.purchasesImports]);
-      rows.push(['Total Compras del Periodo', costOfSalesData.totalPurchases]);
-      rows.push(['Costos Indirectos', costOfSalesData.indirectCosts]);
-      rows.push(['Mercancía Disponible para la venta', costOfSalesData.availableForSale]);
-      rows.push(['Inventario Final', costOfSalesData.closingInventory]);
+      // Solo agregar líneas con saldo diferente de 0
+      if (Math.abs(costOfSalesData.openingInventory) >= 0.01) {
+        rows.push(['Inventario Inicial', costOfSalesData.openingInventory]);
+      }
+      if (Math.abs(costOfSalesData.purchasesLocal) >= 0.01) {
+        rows.push(['Compras Proveedores Locales', costOfSalesData.purchasesLocal]);
+      }
+      if (Math.abs(costOfSalesData.purchasesImports) >= 0.01) {
+        rows.push(['Importaciones', costOfSalesData.purchasesImports]);
+      }
+      if (Math.abs(costOfSalesData.totalPurchases) >= 0.01) {
+        rows.push(['Total Compras del Periodo', costOfSalesData.totalPurchases]);
+      }
+      if (Math.abs(costOfSalesData.indirectCosts) >= 0.01) {
+        rows.push(['Costos Indirectos', costOfSalesData.indirectCosts]);
+      }
+      if (Math.abs(costOfSalesData.availableForSale) >= 0.01) {
+        rows.push(['Mercancía Disponible para la venta', costOfSalesData.availableForSale]);
+      }
+      if (Math.abs(costOfSalesData.closingInventory) >= 0.01) {
+        rows.push(['Inventario Final', costOfSalesData.closingInventory]);
+      }
       rows.push(['Costo de Venta del Periodo', totals.totalCosts]);
 
       exportToExcel({
@@ -846,9 +927,16 @@ export default function FinancialStatementsPage() {
       const closingCash = cashFlow.closingCash || 0;
       const netChange = closingCash - openingCash;
 
-      rows.push(['ACTIVIDADES DE OPERACIÓN', 'Efectivo de Actividades de Operación', cashFlow.operatingCashFlow]);
-      rows.push(['ACTIVIDADES DE INVERSIÓN', 'Efectivo de Actividades de Inversión', cashFlow.investingCashFlow]);
-      rows.push(['ACTIVIDADES DE FINANCIAMIENTO', 'Efectivo de Actividades de Financiamiento', cashFlow.financingCashFlow]);
+      // Solo agregar actividades con saldo diferente de 0
+      if (Math.abs(cashFlow.operatingCashFlow || 0) >= 0.01) {
+        rows.push(['ACTIVIDADES DE OPERACIÓN', 'Efectivo de Actividades de Operación', cashFlow.operatingCashFlow]);
+      }
+      if (Math.abs(cashFlow.investingCashFlow || 0) >= 0.01) {
+        rows.push(['ACTIVIDADES DE INVERSIÓN', 'Efectivo de Actividades de Inversión', cashFlow.investingCashFlow]);
+      }
+      if (Math.abs(cashFlow.financingCashFlow || 0) >= 0.01) {
+        rows.push(['ACTIVIDADES DE FINANCIAMIENTO', 'Efectivo de Actividades de Financiamiento', cashFlow.financingCashFlow]);
+      }
       rows.push(['RESUMEN', 'Aumento Neto en Efectivo', netChange]);
 
       exportToExcel({
@@ -1114,7 +1202,7 @@ export default function FinancialStatementsPage() {
 
                 {/* Categorías de gastos */}
                 <div className="space-y-1">
-                  <div className="py-0.5 pl-4">
+                  <div className={`py-0.5 pl-4 ${Math.abs(gastosPersonal) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-700">Gastos de Personal</span>
                       <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosPersonal)}</span>
@@ -1122,7 +1210,7 @@ export default function FinancialStatementsPage() {
                     {showExpensesDetail && expenseItemsPersonal.length > 0 && (
                       <div className="mt-1 space-y-0.5 pl-4">
                         {expenseItemsPersonal.map((item) => (
-                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                          <div key={item.code} className={`flex justify-between text-xs text-gray-600 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                             <span>{item.name}</span>
                             <span className="tabular-nums">{formatCurrency(item.amount)}</span>
                           </div>
@@ -1130,7 +1218,7 @@ export default function FinancialStatementsPage() {
                       </div>
                     )}
                   </div>
-                  <div className="py-0.5 pl-4">
+                  <div className={`py-0.5 pl-4 ${Math.abs(gastosGeneralesAdm) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-700">Gastos Generales y Administrativos</span>
                       <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosGeneralesAdm)}</span>
@@ -1138,7 +1226,7 @@ export default function FinancialStatementsPage() {
                     {showExpensesDetail && expenseItemsGeneralesAdm.length > 0 && (
                       <div className="mt-1 space-y-0.5 pl-4">
                         {expenseItemsGeneralesAdm.map((item) => (
-                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                          <div key={item.code} className={`flex justify-between text-xs text-gray-600 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                             <span>{item.name}</span>
                             <span className="tabular-nums">{formatCurrency(item.amount)}</span>
                           </div>
@@ -1146,7 +1234,7 @@ export default function FinancialStatementsPage() {
                       </div>
                     )}
                   </div>
-                  <div className="py-0.5 pl-4">
+                  <div className={`py-0.5 pl-4 ${Math.abs(gastosMantenimientoAF) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-700">Gastos de Mantenimiento de Activos Fijos</span>
                       <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosMantenimientoAF)}</span>
@@ -1154,7 +1242,7 @@ export default function FinancialStatementsPage() {
                     {showExpensesDetail && expenseItemsMantenimientoAF.length > 0 && (
                       <div className="mt-1 space-y-0.5 pl-4">
                         {expenseItemsMantenimientoAF.map((item) => (
-                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                          <div key={item.code} className={`flex justify-between text-xs text-gray-600 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                             <span>{item.name}</span>
                             <span className="tabular-nums">{formatCurrency(item.amount)}</span>
                           </div>
@@ -1162,7 +1250,7 @@ export default function FinancialStatementsPage() {
                       </div>
                     )}
                   </div>
-                  <div className="py-0.5 pl-4">
+                  <div className={`py-0.5 pl-4 ${Math.abs(gastosDepreciacion) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-700">Gastos de Depreciación</span>
                       <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosDepreciacion)}</span>
@@ -1170,7 +1258,7 @@ export default function FinancialStatementsPage() {
                     {showExpensesDetail && expenseItemsDepreciacion.length > 0 && (
                       <div className="mt-1 space-y-0.5 pl-4">
                         {expenseItemsDepreciacion.map((item) => (
-                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                          <div key={item.code} className={`flex justify-between text-xs text-gray-600 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                             <span>{item.name}</span>
                             <span className="tabular-nums">{formatCurrency(item.amount)}</span>
                           </div>
@@ -1178,7 +1266,7 @@ export default function FinancialStatementsPage() {
                       </div>
                     )}
                   </div>
-                  <div className="py-0.5 pl-4">
+                  <div className={`py-0.5 pl-4 ${Math.abs(gastosImpuestosNoDeducibles) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-700">Gastos de Impuestos No Deducibles</span>
                       <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosImpuestosNoDeducibles)}</span>
@@ -1186,7 +1274,7 @@ export default function FinancialStatementsPage() {
                     {showExpensesDetail && expenseItemsImpuestosNoDeducibles.length > 0 && (
                       <div className="mt-1 space-y-0.5 pl-4">
                         {expenseItemsImpuestosNoDeducibles.map((item) => (
-                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                          <div key={item.code} className={`flex justify-between text-xs text-gray-600 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                             <span>{item.name}</span>
                             <span className="tabular-nums">{formatCurrency(item.amount)}</span>
                           </div>
@@ -1194,7 +1282,7 @@ export default function FinancialStatementsPage() {
                       </div>
                     )}
                   </div>
-                  <div className="py-0.5 pl-4">
+                  <div className={`py-0.5 pl-4 ${Math.abs(gastosFinancieros) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between">
                       <span className="text-sm text-gray-700">Gastos Financieros</span>
                       <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(gastosFinancieros)}</span>
@@ -1202,7 +1290,7 @@ export default function FinancialStatementsPage() {
                     {showExpensesDetail && expenseItemsFinancieros.length > 0 && (
                       <div className="mt-1 space-y-0.5 pl-4">
                         {expenseItemsFinancieros.map((item) => (
-                          <div key={item.code} className="flex justify-between text-xs text-gray-600">
+                          <div key={item.code} className={`flex justify-between text-xs text-gray-600 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                             <span>{item.name}</span>
                             <span className="tabular-nums">{formatCurrency(item.amount)}</span>
                           </div>
@@ -1265,22 +1353,15 @@ export default function FinancialStatementsPage() {
 
                 {/* Inventario inicial */}
                 <div className="space-y-1">
-                  <div className="flex justify-between py-0.5 pl-4">
-                    <span className="text-sm text-gray-700">Inventario Inicial</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(costOfSalesData.openingInventory)}</span>
-                  </div>
+                  {renderBalanceLineIfNotZero('Inventario Inicial', costOfSalesData.openingInventory)}
                 </div>
 
                 {/* Compras del periodo */}
                 <div className="space-y-1 pt-2">
                   <div className="text-sm font-semibold text-gray-800 pl-2">Más:</div>
-                  <div className="flex justify-between py-0.5 pl-6">
-                    <span className="text-sm text-gray-700">Compras Proveedores Locales</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(costOfSalesData.purchasesLocal)}</span>
-                  </div>
-                  <div className="flex justify-between py-0.5 pl-6">
-                    <span className="text-sm text-gray-700">Importaciones</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(costOfSalesData.purchasesImports)}</span>
+                  <div className="pl-2">
+                    {renderBalanceLineIfNotZero('Compras Proveedores Locales', costOfSalesData.purchasesLocal)}
+                    {renderBalanceLineIfNotZero('Importaciones', costOfSalesData.purchasesImports)}
                   </div>
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-6">
                     <div className="flex justify-between font-semibold">
@@ -1293,9 +1374,8 @@ export default function FinancialStatementsPage() {
                 {/* Costos indirectos */}
                 <div className="space-y-1 pt-4">
                   <div className="text-sm font-semibold text-gray-800 pl-2">Más:</div>
-                  <div className="flex justify-between py-0.5 pl-6">
-                    <span className="text-sm text-gray-700">Costos Indirectos</span>
-                    <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(costOfSalesData.indirectCosts)}</span>
+                  <div className="pl-2">
+                    {renderBalanceLineIfNotZero('Costos Indirectos', costOfSalesData.indirectCosts)}
                   </div>
                 </div>
 
@@ -1368,30 +1448,12 @@ export default function FinancialStatementsPage() {
                   <div className="mb-4">
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">ACTIVOS CORRIENTES</h3>
 
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Efectivo en Caja y Bancos</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(efectivoCajaBancos)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Cuentas por Cobrar Clientes</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(cxcClientes)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Otras Cuentas por Cobrar</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(otrasCxc)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Inventarios</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(inventarios)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Gastos Pagados por Anticipado</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosPagadosAnticipado)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Anticipos sobre la Renta Pagados</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(anticiposISR)}</span>
-                    </div>
+                    {renderBalanceLineIfNotZero('Efectivo en Caja y Bancos', efectivoCajaBancos)}
+                    {renderBalanceLineIfNotZero('Cuentas por Cobrar Clientes', cxcClientes)}
+                    {renderBalanceLineIfNotZero('Otras Cuentas por Cobrar', otrasCxc)}
+                    {renderBalanceLineIfNotZero('Inventarios', inventarios)}
+                    {renderBalanceLineIfNotZero('Gastos Pagados por Anticipado', gastosPagadosAnticipado)}
+                    {renderBalanceLineIfNotZero('Anticipos sobre la Renta Pagados', anticiposISR)}
 
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
@@ -1402,37 +1464,19 @@ export default function FinancialStatementsPage() {
                   </div>
 
                   {/* ACTIVOS FIJOS */}
-                  <div className="mb-4">
+                  <div className={`mb-4 ${Math.abs(activosFijos) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">ACTIVOS FIJOS</h3>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Activos Fijos</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(activosFijos)}</span>
-                    </div>
+                    {renderBalanceLineIfNotZero('Activos Fijos', activosFijos)}
                   </div>
 
                   {/* OTROS ACTIVOS */}
-                  <div className="mb-4">
+                  <div className={`mb-4 ${Math.abs(totals.totalNonCurrentAssets) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">OTROS ACTIVOS</h3>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Inversiones en Otras Compañías</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(invAcciones)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Certificados Bancarios y Títulos Financieros</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(invCertificados)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Fianzas y Depósitos</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(fianzasDepositos)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Licencias y Softwares</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(licenciasSoftware)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Otros Activos</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(otrosActivos)}</span>
-                    </div>
+                    {renderBalanceLineIfNotZero('Inversiones en Otras Compañías', invAcciones)}
+                    {renderBalanceLineIfNotZero('Certificados Bancarios y Títulos Financieros', invCertificados)}
+                    {renderBalanceLineIfNotZero('Fianzas y Depósitos', fianzasDepositos)}
+                    {renderBalanceLineIfNotZero('Licencias y Softwares', licenciasSoftware)}
+                    {renderBalanceLineIfNotZero('Otros Activos', otrosActivos)}
 
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
@@ -1456,24 +1500,12 @@ export default function FinancialStatementsPage() {
                   <h2 className="text-base font-bold text-gray-900 mb-3 pb-1 border-b-2 border-gray-300">PASIVO Y PATRIMONIO DE LOS SOCIOS</h2>
 
                   {/* PASIVOS CIRCULANTES */}
-                  <div className="mb-4">
+                  <div className={`mb-4 ${Math.abs(pasivosCorrientes) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">PASIVOS CIRCULANTES</h3>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Cuentas por Pagar Proveedores</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(cppProveedores)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Acumulaciones y Provisiones por Pagar</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(acumulacionesPorPagar)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Préstamos por Pagar a Corto Plazo</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(prestamosCortoPlazo)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Otras Cuentas por Pagar</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(otrasCxPCorrientes)}</span>
-                    </div>
+                    {renderBalanceLineIfNotZero('Cuentas por Pagar Proveedores', cppProveedores)}
+                    {renderBalanceLineIfNotZero('Acumulaciones y Provisiones por Pagar', acumulacionesPorPagar)}
+                    {renderBalanceLineIfNotZero('Préstamos por Pagar a Corto Plazo', prestamosCortoPlazo)}
+                    {renderBalanceLineIfNotZero('Otras Cuentas por Pagar', otrasCxPCorrientes)}
 
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
@@ -1484,12 +1516,9 @@ export default function FinancialStatementsPage() {
                   </div>
 
                   {/* PASIVOS A LARGO PLAZO */}
-                  <div className="mb-4">
+                  <div className={`mb-4 ${Math.abs(pasivosLargoPlazo) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">PASIVOS A LARGO PLAZO</h3>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Pasivos a Largo Plazo</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(pasivosLargoPlazo)}</span>
-                    </div>
+                    {renderBalanceLineIfNotZero('Pasivos a Largo Plazo', pasivosLargoPlazo)}
                     {nonCurrentLiabilities.length > 0 && (
                       <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                         <div className="flex justify-between font-semibold">
@@ -1501,7 +1530,7 @@ export default function FinancialStatementsPage() {
                   </div>
 
                   {/* TOTAL PASIVOS */}
-                  <div className="border-t border-gray-400 pt-2 mb-4">
+                  <div className={`border-t border-gray-400 pt-2 mb-4 ${Math.abs(totals.totalLiabilities) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between font-bold">
                       <span className="text-sm">TOTAL PASIVOS</span>
                       <span className="text-sm tabular-nums">{formatCurrency(totals.totalLiabilities)}</span>
@@ -1509,20 +1538,11 @@ export default function FinancialStatementsPage() {
                   </div>
 
                   {/* PATRIMONIO */}
-                  <div className="mb-4">
+                  <div className={`mb-4 ${Math.abs(patrimonioTotal) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">PATRIMONIO</h3>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Capital Suscrito y Pagado</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(capitalSuscrito)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Reservas (incluye Reserva Legal)</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(reservas)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Beneficios o Pérdidas Acumuladas</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(resultadosAcumulados)}</span>
-                    </div>
+                    {renderBalanceLineIfNotZero('Capital Suscrito y Pagado', capitalSuscrito)}
+                    {renderBalanceLineIfNotZero('Reservas (incluye Reserva Legal)', reservas)}
+                    {renderBalanceLineIfNotZero('Beneficios o Pérdidas Acumuladas', resultadosAcumulados)}
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Patrimonio</span>
@@ -1577,10 +1597,10 @@ export default function FinancialStatementsPage() {
 
               <div className="max-w-3xl mx-auto space-y-6">
                 {/* INGRESOS */}
-                <div>
+                <div className={`${Math.abs(totals.totalRevenue) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                   <h2 className="text-base font-bold text-gray-900 mb-3 pb-1 border-b-2 border-gray-300">INGRESOS</h2>
                   {financialData.revenue.map((item, index) => (
-                    <div key={index} className="flex justify-between py-0.5 pl-4">
+                    <div key={index} className={`flex justify-between py-0.5 pl-4 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                       <span className="text-sm text-gray-700">{item.name}</span>
                       <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(item.amount)}</span>
                     </div>
@@ -1594,10 +1614,10 @@ export default function FinancialStatementsPage() {
                 </div>
 
                 {/* COSTO DE VENTAS Y BENEFICIO BRUTO */}
-                <div>
+                <div className={`${Math.abs(totals.totalCosts) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                   <h2 className="text-sm font-bold text-gray-900 mb-2 underline">COSTO DE VENTAS</h2>
                   {financialData.costs.map((item, index) => (
-                    <div key={index} className="flex justify-between py-0.5 pl-4">
+                    <div key={index} className={`flex justify-between py-0.5 pl-4 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                       <span className="text-sm text-gray-700">{item.name}</span>
                       <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(item.amount)}</span>
                     </div>
@@ -1619,29 +1639,14 @@ export default function FinancialStatementsPage() {
                 </div>
 
                 {/* GASTOS DE OPERACIONES */}
-                <div className="pt-4">
+                <div className={`pt-4 ${Math.abs(operatingExpenses) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                   <h2 className="text-sm font-bold text-gray-900 mb-2 underline">GASTOS DE OPERACIONES</h2>
                   <div className="space-y-0.5 pl-4">
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-sm text-gray-700">Gastos de Personal</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosPersonal)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-sm text-gray-700">Gastos Generales y Administrativos</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosGeneralesAdm)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-sm text-gray-700">Gastos de Mantenimiento de Activos Fijos</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosMantenimientoAF)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-sm text-gray-700">Gastos de Depreciación</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosDepreciacion)}</span>
-                    </div>
-                    <div className="flex justify-between py-0.5">
-                      <span className="text-sm text-gray-700">Gastos de Impuestos No Deducibles</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(gastosImpuestosNoDeducibles)}</span>
-                    </div>
+                    {renderBalanceLineIfNotZero('Gastos de Personal', gastosPersonal)}
+                    {renderBalanceLineIfNotZero('Gastos Generales y Administrativos', gastosGeneralesAdm)}
+                    {renderBalanceLineIfNotZero('Gastos de Mantenimiento de Activos Fijos', gastosMantenimientoAF)}
+                    {renderBalanceLineIfNotZero('Gastos de Depreciación', gastosDepreciacion)}
+                    {renderBalanceLineIfNotZero('Gastos de Impuestos No Deducibles', gastosImpuestosNoDeducibles)}
                   </div>
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                     <div className="flex justify-between font-semibold">
@@ -1660,12 +1665,9 @@ export default function FinancialStatementsPage() {
                 </div>
 
                 {/* GASTOS FINANCIEROS Y RESULTADO ANTES DE ISR Y RESERVAS */}
-                <div>
+                <div className={`${Math.abs(financialExpenses) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                   <div className="mb-2">
-                    <div className="flex justify-between py-0.5 pl-4">
-                      <span className="text-sm text-gray-700">Gastos financieros</span>
-                      <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(financialExpenses)}</span>
-                    </div>
+                    {renderBalanceLineIfNotZero('Gastos financieros', financialExpenses)}
                   </div>
 
                   <div className="border-t border-gray-300 pt-2 mt-2">
@@ -1764,19 +1766,19 @@ export default function FinancialStatementsPage() {
                           provisto por actividades operativas:
                         </h3>
                         <div className="space-y-1">
-                          <div className="flex justify-between py-0.5">
+                          <div className="flex justify-between py-0.5 hide-zero-on-print">
                             <span className="text-sm text-gray-700">Depreciación y Amortización</span>
                             <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                           </div>
-                          <div className="flex justify-between py-0.5">
+                          <div className="flex justify-between py-0.5 hide-zero-on-print">
                             <span className="text-sm text-gray-700">Incremento/Disminución en cuentas por cobrar</span>
                             <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                           </div>
-                          <div className="flex justify-between py-0.5">
+                          <div className="flex justify-between py-0.5 hide-zero-on-print">
                             <span className="text-sm text-gray-700">Incremento/Disminución en inventario</span>
                             <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                           </div>
-                          <div className="flex justify-between py-0.5">
+                          <div className="flex justify-between py-0.5 hide-zero-on-print">
                             <span className="text-sm text-gray-700">Disminución/Incremento en otras cuentas</span>
                             <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                           </div>
@@ -1784,7 +1786,7 @@ export default function FinancialStatementsPage() {
                       </div>
 
                       {/* Total ajustes - placeholder 0 */}
-                      <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
+                      <div className="border-t border-gray-300 mt-2 pt-1 pl-4 hide-zero-on-print">
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Total ajustes</span>
                           <span className="text-sm tabular-nums">{formatCurrency(0)}</span>
@@ -1810,21 +1812,21 @@ export default function FinancialStatementsPage() {
 
                       {/* Detalles de inversión (placeholders) */}
                       <div className="pl-4 space-y-1">
-                        <div className="flex justify-between py-0.5">
+                        <div className="flex justify-between py-0.5 hide-zero-on-print">
                           <span className="text-sm text-gray-700">Adquisición de Terrenos</span>
                           <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                         </div>
-                        <div className="flex justify-between py-0.5">
+                        <div className="flex justify-between py-0.5 hide-zero-on-print">
                           <span className="text-sm text-gray-700">Adquisición de Planta y Edificaciones</span>
                           <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                         </div>
-                        <div className="flex justify-between py-0.5">
+                        <div className="flex justify-between py-0.5 hide-zero-on-print">
                           <span className="text-sm text-gray-700">Adquisición de Maquinarias y Equipos</span>
                           <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                         </div>
                       </div>
 
-                      <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
+                      <div className={`border-t border-gray-300 mt-2 pt-1 pl-4 ${Math.abs(cashFlow.investingCashFlow || 0) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Efectivo neto (usado) por actividades de Inversión</span>
                           <span className="text-sm tabular-nums">{formatCurrency(cashFlow.investingCashFlow)}</span>
@@ -1840,17 +1842,17 @@ export default function FinancialStatementsPage() {
 
                       {/* Detalles financieros (placeholders) */}
                       <div className="pl-4 space-y-1">
-                        <div className="flex justify-between py-0.5">
+                        <div className="flex justify-between py-0.5 hide-zero-on-print">
                           <span className="text-sm text-gray-700">Disminución/Incremento en Doc. por Pagar</span>
                           <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                         </div>
-                        <div className="flex justify-between py-0.5">
+                        <div className="flex justify-between py-0.5 hide-zero-on-print">
                           <span className="text-sm text-gray-700">Incremento en otras cuentas de Capital</span>
                           <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(0)}</span>
                         </div>
                       </div>
 
-                      <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
+                      <div className={`border-t border-gray-300 mt-2 pt-1 pl-4 ${Math.abs(cashFlow.financingCashFlow || 0) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Efectivo neto usado por actividades de Financiamiento</span>
                           <span className="text-sm tabular-nums">{formatCurrency(cashFlow.financingCashFlow)}</span>
