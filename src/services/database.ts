@@ -5779,15 +5779,12 @@ export const invoicesService = {
     try {
       const tenantId = await resolveTenantId(userId);
       if (!tenantId) return [];
-      const { data, error } = await supabase
+      const { data, error} = await supabase
         .from('invoices')
         .select(`
           *,
           customers (id, name),
-          invoice_lines (
-            *,
-            inventory_items (name)
-          )
+          invoice_lines (*)
         `)
         .eq('user_id', tenantId)
         .order('invoice_date', { ascending: false });

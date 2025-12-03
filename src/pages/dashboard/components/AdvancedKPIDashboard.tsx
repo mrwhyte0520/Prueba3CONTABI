@@ -154,21 +154,6 @@ export default function AdvancedKPIDashboard() {
       const revenue = Math.abs(incomeStmt.totalIncome || 0);
       const costs = Math.abs(incomeStmt.totalCosts || 0);
       const expenses = Math.abs(incomeStmt.totalExpenses || 0);
-      // Recalcular utilidad correctamente: Ingresos - Costos - Gastos
-      const profit = revenue - costs - expenses;
-
-      console.log('📊 Estado de Resultados (corregido):', {
-        revenue,
-        costs,
-        expenses,
-        profit,
-        original: {
-          totalIncome: incomeStmt.totalIncome,
-          totalCosts: incomeStmt.totalCosts,
-          totalExpenses: incomeStmt.totalExpenses,
-          netIncome: incomeStmt.netIncome
-        }
-      });
 
       let bankTotal = 0;
       let arTotal = 0;
@@ -178,7 +163,6 @@ export default function AdvancedKPIDashboard() {
       // Cargar saldos bancarios reales desde la tabla bank_accounts
       try {
         const bankAccountsData = await bankAccountsService.getAll(uid);
-        console.log('🏦 Bank Accounts cargadas:', bankAccountsData?.length || 0);
         
         if (bankAccountsData && bankAccountsData.length > 0) {
           bankAccountsData.forEach((account: any) => {
@@ -195,7 +179,6 @@ export default function AdvancedKPIDashboard() {
             });
           });
         }
-        console.log('💰 Total en Bancos:', bankTotal);
       } catch (err) {
         console.error('Error cargando bank_accounts:', err);
       }
@@ -209,7 +192,7 @@ export default function AdvancedKPIDashboard() {
             const paid = Number(invoice.paid_amount || 0);
             const pending = total - paid;
             
-            // Solo sumar facturas pendientes (no canceladas ni completamente pagadas)
+            // Sumar cuentas por cobrar (facturas pendientes)
             if (invoice.status !== 'cancelled' && pending > 0) {
               arTotal += pending;
             }
@@ -222,20 +205,10 @@ export default function AdvancedKPIDashboard() {
       // Cargar cuentas por pagar desde facturas de proveedores (AP invoices)
       try {
         const apInvoices = await apInvoicesService.getAll(uid);
-        console.log('📊 AP Invoices cargadas:', apInvoices?.length || 0);
         if (apInvoices && apInvoices.length > 0) {
           apInvoices.forEach((invoice: any) => {
             // Usar balance_amount si existe, sino total_to_pay, sino total_gross
             const balance = Number(invoice.balance_amount ?? invoice.total_to_pay ?? invoice.total_gross ?? 0);
-            
-            console.log('Factura AP:', {
-              id: invoice.id,
-              balance_amount: invoice.balance_amount,
-              total_to_pay: invoice.total_to_pay,
-              total_gross: invoice.total_gross,
-              balance,
-              status: invoice.status
-            });
             
             // Solo sumar facturas pendientes con balance positivo
             if (invoice.status !== 'cancelled' && balance > 0) {
@@ -243,10 +216,12 @@ export default function AdvancedKPIDashboard() {
             }
           });
         }
-        console.log('💰 Total CxP calculado:', apTotal);
       } catch (err) {
         console.error('Error cargando cuentas por pagar:', err);
       }
+
+      // Recalcular utilidad
+      const finalProfit = revenue - costs - expenses;
 
       setKpi({
         bankBalance: bankTotal,
@@ -255,7 +230,7 @@ export default function AdvancedKPIDashboard() {
         revenue,
         costs,
         expenses,
-        profit,
+        profit: finalProfit,
       });
 
       setBankAccounts(bankList);
@@ -263,12 +238,17 @@ export default function AdvancedKPIDashboard() {
       const chartPoints: ChartData[] = [];
       for (const r of ranges) {
         const stmt = await chartAccountsService.generateIncomeStatement(uid, r.from, r.to);
+        
+        const rev = Math.abs(stmt.totalIncome || 0);
+        const cost = Math.abs(stmt.totalCosts || 0);
+        const exp = Math.abs(stmt.totalExpenses || 0);
+        
         chartPoints.push({
           label: r.label,
-          revenue: stmt.totalIncome || 0,
-          costs: stmt.totalCosts || 0,
-          expenses: stmt.totalExpenses || 0,
-          profit: stmt.netIncome || 0,
+          revenue: rev,
+          costs: cost,
+          expenses: exp,
+          profit: rev - cost - exp,
         });
       }
       setChartData(chartPoints);
@@ -316,7 +296,6 @@ export default function AdvancedKPIDashboard() {
     1,
     ...chartData.flatMap((d) => [
       Math.abs(d.revenue),
-      Math.abs(d.costs),
       Math.abs(d.expenses),
       Math.abs(d.profit),
     ]),
@@ -367,17 +346,13 @@ export default function AdvancedKPIDashboard() {
         </div>
       </div>
 
-      {/* Segunda línea: Ingresos, Costos, Gastos y Utilidad */}
+      {/* Segunda línea: Ingresos, Gastos y Utilidad */}
       <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold mb-4">Ingresos, Costos, Gastos y Utilidad</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <h3 className="text-lg font-semibold mb-4">Ingresos, Gastos y Utilidad</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-purple-50 p-4 rounded">
             <p className="text-sm text-gray-600">Ingresos</p>
             <p className="text-xl font-bold text-purple-600">{formatCurrency(Math.abs(kpi.revenue))}</p>
-          </div>
-          <div className="bg-orange-50 p-4 rounded">
-            <p className="text-sm text-gray-600">Costos</p>
-            <p className="text-xl font-bold text-orange-600">{formatCurrency(kpi.costs)}</p>
           </div>
           <div className="bg-red-50 p-4 rounded">
             <p className="text-sm text-gray-600">Gastos</p>
@@ -405,11 +380,6 @@ export default function AdvancedKPIDashboard() {
                       title={`Ingresos: ${formatCurrency(d.revenue)}`}
                     />
                     <div
-                      className="bg-orange-500 rounded-t flex-1"
-                      style={{ height: `${Math.max((Math.abs(d.costs) / maxValue) * 100, 2)}%` }}
-                      title={`Costos: ${formatCurrency(d.costs)}`}
-                    />
-                    <div
                       className="bg-red-500 rounded-t flex-1"
                       style={{ height: `${Math.max((Math.abs(d.expenses) / maxValue) * 100, 2)}%` }}
                       title={`Gastos: ${formatCurrency(d.expenses)}`}
@@ -433,10 +403,6 @@ export default function AdvancedKPIDashboard() {
                   <div className="flex justify-between">
                     <span className="text-purple-600 font-medium">Ingresos</span>
                     <span className="font-semibold">100%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-orange-600 font-medium">Costos</span>
-                    <span className="font-semibold">{formatPercentage(d.costs, d.revenue)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-red-600 font-medium">Gastos</span>
