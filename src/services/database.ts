@@ -422,6 +422,19 @@ export const bankChargesService = {
             .maybeSingle();
 
           if (!expenseError && !bankError && expenseAccount?.id && bank?.chart_account_id) {
+            // Validar saldo disponible en cuenta bancaria
+            const saldoDisponible = await financialReportsService.getAccountBalance(tenantId, bank.chart_account_id as string);
+            
+            if (saldoDisponible < amount) {
+              throw new Error(
+                `❌ Saldo insuficiente en cuenta bancaria\n\n` +
+                `Banco: ${bank.bank_name || 'N/A'}\n` +
+                `Saldo disponible: RD$${saldoDisponible.toFixed(2)}\n` +
+                `Monto del cargo: RD$${amount.toFixed(2)}\n\n` +
+                `No se puede registrar el cargo sin fondos suficientes.`
+              );
+            }
+
             const entryPayload = {
               entry_number: `BCG-${new Date(charge.charge_date).toISOString().slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
               entry_date: String(charge.charge_date),
@@ -1239,6 +1252,7 @@ export const bankDepositsService = {
     deposit_date: string;
     reference: string;
     description: string;
+    source_account_id?: string; // Cuenta de origen del depósito (opcional)
   }) {
     try {
       const tenantId = await resolveTenantId(userId);
@@ -1258,6 +1272,8 @@ export const bankDepositsService = {
         .single();
 
       if (error) throw error;
+      // Nota: El asiento contable se crea en el frontend (deposits.tsx) para tener mejor control
+      // sobre la cuenta de origen seleccionada por el usuario
       return data;
     } catch (error) {
       console.error('bankDepositsService.create error', error);
@@ -2427,8 +2443,12 @@ export const chartAccountsService = {
           const amount = (line.debit_amount || 0) - (line.credit_amount || 0);
 
           // Clasificar flujos de efectivo basado en códigos de cuenta
-          if (account?.code?.startsWith('111')) {
-            // Cuentas de efectivo (1111, 1112, 1113)
+          const accountCode = String(account?.code || '').replace(/\./g, '');
+          const isCashAccount = accountCode.startsWith('10') || accountCode.startsWith('110') || 
+                               accountCode.startsWith('111') || accountCode.startsWith('1102');
+          
+          if (isCashAccount) {
+            // Cuentas de efectivo y bancos (múltiples formatos)
             if (entry.description?.toLowerCase().includes('venta') || 
                 entry.description?.toLowerCase().includes('cobro') ||
                 entry.description?.toLowerCase().includes('ingreso') ||
@@ -3101,6 +3121,94 @@ export const financialReportsService = {
     } catch (error) {
       console.error('financialReportsService.getTrialBalance unexpected error', error);
       return [];
+    }
+  },
+
+  /**
+   * Obtiene el saldo actual de una cuenta específica
+   * @param userId - ID del usuario
+   * @param accountId - ID de la cuenta contable
+   * @param asOfDate - Fecha hasta la cual calcular (opcional, default: hoy)
+   * @returns Saldo de la cuenta (positivo = débito neto, negativo = crédito neto)
+   */
+  async getAccountBalance(userId: string, accountId: string, asOfDate?: string): Promise<number> {
+    try {
+      if (!userId || !accountId) return 0;
+      const tenantId = await resolveTenantId(userId);
+      const endDate = asOfDate || new Date().toISOString().slice(0, 10);
+
+      // Obtener información de la cuenta
+      const { data: account, error: accError } = await supabase
+        .from('chart_accounts')
+        .select('type')
+        .eq('id', accountId)
+        .eq('user_id', tenantId)
+        .maybeSingle();
+
+      if (accError || !account) {
+        console.error('Error fetching account:', accError);
+        return 0;
+      }
+
+      // Obtener todas las líneas de asientos para esta cuenta
+      const { data: lines, error: linesError } = await supabase
+        .from('journal_entry_lines')
+        .select('debit_amount, credit_amount, journal_entries!inner(entry_date, status, user_id)')
+        .eq('account_id', accountId)
+        .eq('journal_entries.user_id', tenantId)
+        .eq('journal_entries.status', 'posted')
+        .lte('journal_entries.entry_date', endDate);
+
+      if (linesError) {
+        console.error('Error fetching journal lines:', linesError);
+        return 0;
+      }
+
+      if (!lines || lines.length === 0) return 0;
+
+      // Calcular totales
+      let totalDebit = 0;
+      let totalCredit = 0;
+
+      lines.forEach((line: any) => {
+        totalDebit += Number(line.debit_amount) || 0;
+        totalCredit += Number(line.credit_amount) || 0;
+      });
+
+      // Calcular balance según tipo de cuenta
+      const accountType = String(account.type || '').toLowerCase();
+      let balance = 0;
+
+      switch (accountType) {
+        case 'asset':
+        case 'activo':
+        case 'expense':
+        case 'gasto':
+        case 'cost':
+        case 'costo':
+        case 'costos':
+          // Cuentas de naturaleza deudora: Débito - Crédito
+          balance = totalDebit - totalCredit;
+          break;
+        
+        case 'liability':
+        case 'pasivo':
+        case 'equity':
+        case 'patrimonio':
+        case 'income':
+        case 'ingreso':
+          // Cuentas de naturaleza acreedora: Crédito - Débito
+          balance = totalCredit - totalDebit;
+          break;
+        
+        default:
+          balance = totalDebit - totalCredit;
+      }
+
+      return balance;
+    } catch (error) {
+      console.error('financialReportsService.getAccountBalance error', error);
+      return 0;
     }
   },
 };
@@ -7712,17 +7820,29 @@ export const supplierPaymentsService = {
           }
 
           if (apAccountId && bankChartAccountId && amount > 0) {
+            // Validar saldo disponible en cuenta bancaria antes de completar el pago
+            const saldoDisponible = await financialReportsService.getAccountBalance(data.user_id, bankChartAccountId);
+            
+            if (saldoDisponible < amount) {
+              throw new Error(
+                `❌ Saldo insuficiente en cuenta bancaria\n\n` +
+                `Saldo disponible: RD$${saldoDisponible.toFixed(2)}\n` +
+                `Monto del pago: RD$${amount.toFixed(2)}\n\n` +
+                `No se puede completar el pago sin fondos suficientes.`
+              );
+            }
+
             const lines: any[] = [
               {
-                account_id: bankChartAccountId,
-                description: 'Pago a proveedor - Banco',
+                account_id: apAccountId,
+                description: 'Pago a proveedor - Cuentas por Pagar',
                 debit_amount: amount,
                 credit_amount: 0,
                 line_number: 1,
               },
               {
-                account_id: apAccountId,
-                description: 'Pago a proveedor - Cuentas por Pagar',
+                account_id: bankChartAccountId,
+                description: 'Pago a proveedor - Banco',
                 debit_amount: 0,
                 credit_amount: amount,
                 line_number: 2,
@@ -7845,6 +7965,58 @@ export const customerPaymentsService = {
         `)
         .single();
       if (error) throw error;
+      
+      // Best-effort: crear asiento contable automático
+      try {
+        const settings = await accountingSettingsService.get(data.user_id);
+        const arAccountId = settings?.ar_account_id;
+        const amount = Number(data.amount) || 0;
+
+        // Intentar usar la cuenta contable del banco específico del pago
+        let bankChartAccountId: string | null = null;
+        if (data.bank_account_id) {
+          const { data: bankAccount, error: bankError } = await supabase
+            .from('bank_accounts')
+            .select('chart_account_id')
+            .eq('id', data.bank_account_id)
+            .maybeSingle();
+          if (!bankError && bankAccount?.chart_account_id) {
+            bankChartAccountId = bankAccount.chart_account_id as string;
+          }
+        }
+
+        if (arAccountId && bankChartAccountId && amount > 0) {
+          const lines: any[] = [
+            {
+              account_id: bankChartAccountId,
+              description: 'Cobro de cliente - Banco',
+              debit_amount: amount,
+              credit_amount: 0,
+              line_number: 1,
+            },
+            {
+              account_id: arAccountId,
+              description: 'Cobro de cliente - Cuentas por Cobrar',
+              debit_amount: 0,
+              credit_amount: amount,
+              line_number: 2,
+            },
+          ];
+
+          const entryPayload = {
+            entry_number: String(data.invoice_id || `COBRO-${data.id}`),
+            entry_date: String(data.payment_date),
+            description: `Cobro de cliente ${data.invoice_id ? 'factura ' + data.invoice_id : ''}`.trim(),
+            reference: data.id ? String(data.id) : null,
+            status: 'posted' as const,
+          };
+
+          await journalEntriesService.createWithLines(data.user_id, entryPayload, lines);
+        }
+      } catch (jeError) {
+        console.error('Error creating journal entry for customer payment:', jeError);
+      }
+      
       // Best-effort: crear solicitud de autorización para pago de cliente
       try {
         await supabase.from('approval_requests').insert({

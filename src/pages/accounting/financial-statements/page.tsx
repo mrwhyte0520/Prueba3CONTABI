@@ -251,9 +251,14 @@ export default function FinancialStatementsPage() {
         const sumCash = (trial: any[]) => {
           return (trial || []).reduce((sum, acc: any) => {
             const code = String(acc.code || '');
+            const normalizedCode = code.replace(/\./g, '');
             const type = String(acc.type || '');
             if (!(type === 'asset' || type === 'activo')) return sum;
-            if (!code.startsWith('111')) return sum; // Caja y bancos
+            // Incluir múltiples formatos de códigos para Caja y Bancos
+            if (!normalizedCode.startsWith('10') && !normalizedCode.startsWith('110') && 
+                !normalizedCode.startsWith('111') && !normalizedCode.startsWith('1102')) {
+              return sum;
+            }
             const balance = Number(acc.balance) || 0;
             return sum + balance;
           }, 0);
@@ -537,7 +542,8 @@ export default function FinancialStatementsPage() {
   ) => {
     return items.reduce((sum, item) => {
       const code = item.code || '';
-      return prefixes.some((p) => code.startsWith(p)) ? sum + item.amount : sum;
+      const normalizedCode = code.replace(/\./g, ''); // Normalizar código (quitar puntos)
+      return prefixes.some((p) => normalizedCode.startsWith(p)) ? sum + item.amount : sum;
     }, 0);
   };
 
@@ -548,9 +554,9 @@ export default function FinancialStatementsPage() {
   const nonCurrentLiabilities = financialData.liabilities.nonCurrent;
   const equityItems = financialData.equity;
 
-  const efectivoCajaBancos = sumByPrefixes(currentAssets, ['10', '111']); // Caja (10) y Bancos (111)
+  const efectivoCajaBancos = sumByPrefixes(currentAssets, ['10', '1001', '1002', '110', '111', '1102']); // Caja y Bancos (múltiples formatos)
   const cxcClientes = sumByPrefixes(currentAssets, ['1101']); // CxC Clientes
-  const otrasCxc = sumByPrefixes(currentAssets, ['1102', '1199']); // Otras CxC
+  const otrasCxc = sumByPrefixes(currentAssets, ['1103', '1104', '1105', '1199']); // Otras CxC (excluye 1102 que es Bancos)
   const inventarios = sumByPrefixes(currentAssets, ['12']); // Inventarios
   const anticiposISR = sumByPrefixes(currentAssets, ['1301']); // Anticipos ISR
   const gastosPagadosAnticipado = sumByPrefixes(currentAssets, ['13']) - anticiposISR; // Gastos anticipados
@@ -563,17 +569,17 @@ export default function FinancialStatementsPage() {
   const otrosActivos = sumByPrefixes(nonCurrentAssets, ['1699']);
 
   // PASIVOS Y PATRIMONIO
-  const cppProveedores = sumByPrefixes(currentLiabilities, ['2001']);
-  const prestamosCortoPlazo = sumByPrefixes(currentLiabilities, ['2002']);
-  const otrasCxPCorrientes = sumByPrefixes(currentLiabilities, ['2003', '2004', '2099']);
-  const acumulacionesPorPagar = sumByPrefixes(currentLiabilities, ['21']);
+  const cppProveedores = sumByPrefixes(currentLiabilities, ['200', '2001']); // Cuentas por Pagar Proveedores
+  const prestamosCortoPlazo = sumByPrefixes(currentLiabilities, ['201', '2002']); // Préstamos Corto Plazo
+  const otrasCxPCorrientes = sumByPrefixes(currentLiabilities, ['202', '203', '204', '2003', '2004', '2099']); // Otras CxP
+  const acumulacionesPorPagar = sumByPrefixes(currentLiabilities, ['21']); // Acumulaciones
   const pasivosCorrientes = cppProveedores + prestamosCortoPlazo + otrasCxPCorrientes + acumulacionesPorPagar;
 
   const pasivosLargoPlazo = sumByPrefixes(nonCurrentLiabilities, ['22']);
 
-  const capitalSuscrito = sumByPrefixes(equityItems, ['3001']);
-  const reservas = sumByPrefixes(equityItems, ['3002']);
-  const resultadosAcumulados = sumByPrefixes(equityItems, ['3003']);
+  const capitalSuscrito = sumByPrefixes(equityItems, ['30', '31']); // Capital y Aportes
+  const reservas = sumByPrefixes(equityItems, ['32']); // Reservas
+  const resultadosAcumulados = sumByPrefixes(equityItems, ['33', '34', '35']); // Resultados y Utilidades
   const patrimonioTotal = capitalSuscrito + reservas + resultadosAcumulados;
 
   // GASTOS por grupo en Estado de Resultados
@@ -591,7 +597,8 @@ export default function FinancialStatementsPage() {
   ) => {
     return items.filter((item) => {
       const code = item.code || '';
-      return prefixes.some((p) => code.startsWith(p));
+      const normalizedCode = code.replace(/\./g, ''); // Normalizar código (quitar puntos)
+      return prefixes.some((p) => normalizedCode.startsWith(p));
     });
   };
 

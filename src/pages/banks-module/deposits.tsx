@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, bankDepositsService, chartAccountsService, journalEntriesService } from '../../services/database';
+import { bankAccountsService, bankDepositsService, chartAccountsService, journalEntriesService, financialReportsService } from '../../services/database';
 
 interface BankDeposit {
   id: string;
@@ -97,7 +97,16 @@ export default function BankDepositsPage() {
           };
           map[acc.id] = mapped;
 
-          if (acc.allowPosting && acc.isActive !== false && !acc.isBankAccount) {
+          // Para depósitos, solo mostrar activos líquidos como origen:
+          // - Caja (código empieza con 10)
+          // - Otros Bancos (código empieza con 11, pero excluir el banco destino)
+          // - Cuentas por Cobrar (código empieza con 110)
+          // - Debe ser cuenta activa y permitir posteo
+          const isAsset = acc.type === 'asset' || acc.type === 'activo';
+          const code = String(acc.code || '').replace(/\./g, '');
+          const isLiquidAsset = code.startsWith('10') || code.startsWith('11') || code.startsWith('110');
+          
+          if (acc.allowPosting && acc.isActive !== false && isAsset && isLiquidAsset) {
             origins.push(mapped);
           }
         });
@@ -133,6 +142,23 @@ export default function BankDepositsPage() {
     }
 
     try {
+      // Validar saldo disponible en cuenta de origen
+      const originAcct = originAccounts.find((acc) => acc.code === form.cuentaOrigen);
+      if (originAcct) {
+        const saldoDisponible = await financialReportsService.getAccountBalance(user.id, originAcct.id);
+        
+        if (saldoDisponible < montoNumber) {
+          alert(
+            `❌ Saldo insuficiente en cuenta de origen\n\n` +
+            `Cuenta: ${originAcct.code} - ${originAcct.name}\n` +
+            `Saldo disponible: RD$${saldoDisponible.toFixed(2)}\n` +
+            `Monto a depositar: RD$${montoNumber.toFixed(2)}\n\n` +
+            `No puede depositar más dinero del que tiene disponible.`
+          );
+          return;
+        }
+      }
+
       const created = await bankDepositsService.create(user.id, {
         bank_id: form.banco,
         bank_account_code: form.cuentaBanco,

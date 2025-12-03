@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { apInvoicesService, bankAccountsService, bankChecksService, chartAccountsService } from '../../services/database';
+import { apInvoicesService, bankAccountsService, bankChecksService, chartAccountsService, financialReportsService } from '../../services/database';
 
 interface BankCheck {
   id: string;
@@ -150,6 +150,27 @@ export default function BankChecksPage() {
     }
 
     try {
+      // Validar saldo disponible en cuenta bancaria
+      const selectedBank = (banks || []).find((b: any) => b.id === form.banco);
+      const bankAccountId = selectedBank?.chart_account_id;
+      
+      if (bankAccountId) {
+        const saldoDisponible = await financialReportsService.getAccountBalance(user.id, bankAccountId);
+        
+        if (saldoDisponible < montoNumber) {
+          const bankAccount = accountsById[bankAccountId];
+          alert(
+            `❌ Saldo insuficiente en cuenta bancaria\n\n` +
+            `Banco: ${selectedBank?.bank_name || 'N/A'}\n` +
+            `Cuenta: ${bankAccount?.code || 'N/A'} - ${bankAccount?.name || 'N/A'}\n` +
+            `Saldo disponible: RD$${saldoDisponible.toFixed(2)}\n` +
+            `Monto del cheque: RD$${montoNumber.toFixed(2)}\n\n` +
+            `No puede emitir un cheque sin fondos suficientes.`
+          );
+          return;
+        }
+      }
+
       const created = await bankChecksService.create(user.id, {
         bank_id: form.banco,
         bank_account_code: form.cuentaBanco,
