@@ -1769,6 +1769,18 @@ export const customersService = {
       throw error;
     }
   },
+  async delete(id: string) {
+    try {
+      const { error } = await supabase
+        .from('customers')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } catch (error) {
+      console.error('customersService.delete error', error);
+      throw error;
+    }
+  },
 };
 
 /* ==========================================================

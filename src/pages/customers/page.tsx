@@ -15,6 +15,24 @@ interface Customer {
   paymentTermId?: string | null;
 }
 
+const Modal = ({ children, onClose }: { children: ReactNode; onClose: () => void }) => {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative w-full max-w-xl bg-white rounded-lg shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="max-h-[80vh] overflow-y-auto p-6">{children}</div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
 export default function CustomersPage() {
   const { user } = useAuth();
 
@@ -53,24 +71,6 @@ export default function CustomersPage() {
     document.body.style.overflow = anyModalOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
   }, [anyModalOpen]);
-
-  const Modal = ({ children, onClose }: { children: ReactNode; onClose: () => void }) => {
-    useEffect(() => {
-      const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-      window.addEventListener('keydown', onKey);
-      return () => window.removeEventListener('keydown', onKey);
-    }, [onClose]);
-
-    return createPortal(
-      <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
-        <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-        <div className="relative w-full max-w-xl bg-white rounded-lg shadow-xl" onClick={(e) => e.stopPropagation()}>
-          <div className="max-h-[80vh] overflow-y-auto p-6">{children}</div>
-        </div>
-      </div>,
-      document.body
-    );
-  };
 
   const load = async () => {
     try {
