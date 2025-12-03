@@ -2,7 +2,7 @@
 import { useAuth } from '../../../hooks/useAuth';
 import { chartAccountsService, bankAccountsService, invoicesService, apInvoicesService } from '../../../services/database';
 
-type PeriodType = 'weekly' | 'monthly' | 'quarterly' | 'semiannual' | 'annual';
+type PeriodType = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'semiannual' | 'annual';
 
 interface KPIData {
   bankBalance: number;
@@ -64,6 +64,16 @@ export default function AdvancedKPIDashboard() {
     const today = now.getDate();
 
     switch (period) {
+      case 'daily': {
+        const todayDate = new Date(year, month, today);
+        return [
+          {
+            label: 'Hoy',
+            from: todayDate.toISOString().slice(0, 10),
+            to: todayDate.toISOString().slice(0, 10),
+          },
+        ];
+      }
       case 'weekly': {
         const ranges: PeriodRange[] = [];
         for (let i = 3; i >= 0; i--) {
@@ -183,18 +193,28 @@ export default function AdvancedKPIDashboard() {
         console.error('Error cargando bank_accounts:', err);
       }
 
-      // Cargar cuentas por cobrar desde facturas (invoices)
+      // Cargar cuentas por cobrar desde facturas (invoices) filtradas por período
       try {
         const invoices = await invoicesService.getAll(uid);
         if (invoices && invoices.length > 0) {
           invoices.forEach((invoice: any) => {
-            const total = Number(invoice.total_amount || 0);
-            const paid = Number(invoice.paid_amount || 0);
-            const pending = total - paid;
+            const invoiceDate = invoice.issue_date || invoice.created_at;
             
-            // Sumar cuentas por cobrar (facturas pendientes)
-            if (invoice.status !== 'cancelled' && pending > 0) {
-              arTotal += pending;
+            if (invoiceDate) {
+              // Normalizar la fecha de la factura a formato YYYY-MM-DD
+              const invoiceDateStr = invoiceDate.split('T')[0];
+              
+              // Filtrar por rango de fechas del período seleccionado
+              if (invoiceDateStr >= fromDate && invoiceDateStr <= toDate) {
+                const total = Number(invoice.total_amount || 0);
+                const paid = Number(invoice.paid_amount || 0);
+                const pending = total - paid;
+                
+                // Sumar cuentas por cobrar (facturas pendientes)
+                if (invoice.status !== 'cancelled' && pending > 0) {
+                  arTotal += pending;
+                }
+              }
             }
           });
         }
@@ -202,17 +222,27 @@ export default function AdvancedKPIDashboard() {
         console.error('Error cargando cuentas por cobrar:', err);
       }
 
-      // Cargar cuentas por pagar desde facturas de proveedores (AP invoices)
+      // Cargar cuentas por pagar desde facturas de proveedores (AP invoices) filtradas por período
       try {
         const apInvoices = await apInvoicesService.getAll(uid);
         if (apInvoices && apInvoices.length > 0) {
           apInvoices.forEach((invoice: any) => {
-            // Usar balance_amount si existe, sino total_to_pay, sino total_gross
-            const balance = Number(invoice.balance_amount ?? invoice.total_to_pay ?? invoice.total_gross ?? 0);
+            const invoiceDate = invoice.invoice_date || invoice.created_at;
             
-            // Solo sumar facturas pendientes con balance positivo
-            if (invoice.status !== 'cancelled' && balance > 0) {
-              apTotal += balance;
+            if (invoiceDate) {
+              // Normalizar la fecha de la factura a formato YYYY-MM-DD
+              const invoiceDateStr = invoiceDate.split('T')[0];
+              
+              // Filtrar por rango de fechas del período seleccionado
+              if (invoiceDateStr >= fromDate && invoiceDateStr <= toDate) {
+                // Usar balance_amount si existe, sino total_to_pay, sino total_gross
+                const balance = Number(invoice.balance_amount ?? invoice.total_to_pay ?? invoice.total_gross ?? 0);
+                
+                // Solo sumar facturas pendientes con balance positivo
+                if (invoice.status !== 'cancelled' && balance > 0) {
+                  apTotal += balance;
+                }
+              }
             }
           });
         }
@@ -306,6 +336,7 @@ export default function AdvancedKPIDashboard() {
       {/* Selector de período */}
       <div className="bg-white rounded-lg shadow p-4 flex flex-wrap gap-2">
         {([
+          { key: 'daily', label: 'Hoy' },
           { key: 'weekly', label: 'Semanal' },
           { key: 'monthly', label: 'Mensual' },
           { key: 'quarterly', label: 'Trimestral' },
