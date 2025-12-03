@@ -548,12 +548,12 @@ export default function FinancialStatementsPage() {
   const nonCurrentLiabilities = financialData.liabilities.nonCurrent;
   const equityItems = financialData.equity;
 
-  const efectivoCajaBancos = sumByPrefixes(currentAssets, ['1001']);
-  const cxcClientes = sumByPrefixes(currentAssets, ['110101', '110102', '110103']);
-  const otrasCxc = sumByPrefixes(currentAssets, ['110104', '110105', '110106', '110107', '1102', '1199']);
-  const inventarios = sumByPrefixes(currentAssets, ['12']);
-  const anticiposISR = sumByPrefixes(currentAssets, ['130101', '130102']);
-  const gastosPagadosAnticipado = sumByPrefixes(currentAssets, ['13']) - anticiposISR;
+  const efectivoCajaBancos = sumByPrefixes(currentAssets, ['10', '111']); // Caja (10) y Bancos (111)
+  const cxcClientes = sumByPrefixes(currentAssets, ['1101']); // CxC Clientes
+  const otrasCxc = sumByPrefixes(currentAssets, ['1102', '1199']); // Otras CxC
+  const inventarios = sumByPrefixes(currentAssets, ['12']); // Inventarios
+  const anticiposISR = sumByPrefixes(currentAssets, ['1301']); // Anticipos ISR
+  const gastosPagadosAnticipado = sumByPrefixes(currentAssets, ['13']) - anticiposISR; // Gastos anticipados
 
   const activosFijos = sumByPrefixes(nonCurrentAssets, ['15']);
   const invAcciones = sumByPrefixes(nonCurrentAssets, ['1401']);
