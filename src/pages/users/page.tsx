@@ -14,6 +14,24 @@ const APP_MODULES = [
   'dashboard','accounting','banks-module','pos','sales','products','inventory','fixed-assets','accounts-receivable','accounts-payable','billing','taxes','plans','customers','users'
 ];
 
+const MODULE_LABELS: Record<string, string> = {
+  dashboard: 'Panel',
+  accounting: 'Contabilidad',
+  'banks-module': 'Bancos',
+  pos: 'Punto de venta',
+  sales: 'Ventas',
+  products: 'Productos',
+  inventory: 'Inventario',
+  'fixed-assets': 'Activos fijos',
+  'accounts-receivable': 'Cuentas por cobrar',
+  'accounts-payable': 'Cuentas por pagar',
+  billing: 'Facturación',
+  taxes: 'Impuestos',
+  plans: 'Planes',
+  customers: 'Clientes',
+  users: 'Usuarios',
+};
+
 export default function UsersPage() {
   const { user } = useAuth();
 
@@ -395,7 +413,7 @@ export default function UsersPage() {
                               disabled={!isOwner}
                               className={!isOwner ? 'cursor-not-allowed opacity-50' : ''}
                             />
-                            <span className={!isOwner ? 'text-gray-400' : ''}>{perm.module}</span>
+                            <span className={!isOwner ? 'text-gray-400' : ''}>{MODULE_LABELS[perm.module] || perm.module}</span>
                           </label>
                         ))}
                       </div>
