@@ -167,12 +167,6 @@ export default function FinancialStatementsPage() {
           const code = String(acc.code || '');
           const baseName = String(acc.name || '');
           const label = `${code} - ${baseName}`;
-          
-          // Aplicar efecto contrario si corresponde
-          const isContra = isContraAccount(code, baseName, acc.type);
-          if (isContra) {
-            balance = -balance; // Invertir el signo
-          }
 
           // Normalizar código (remover puntos para comparación)
           const normalizedCode = code.replace(/\./g, '');
@@ -504,6 +498,11 @@ export default function FinancialStatementsPage() {
 
   const totals = calculateTotals();
 
+  // Para el Balance General, el total de Pasivos y Patrimonio debe incluir
+  // el resultado del período (utilidad o pérdida), de modo que se cumpla
+  // la ecuación contable: Activos = Pasivos + Patrimonio + Resultado.
+  const totalLiabilitiesAndEquity = totals.totalLiabilities + totals.totalEquity + totals.netIncome;
+
   // Función para obtener las fechas formateadas del período
   const getPeriodDates = () => {
     const period = selectedPeriod || new Date().toISOString().slice(0, 7); // YYYY-MM
@@ -777,7 +776,7 @@ export default function FinancialStatementsPage() {
         rows.push(['', '', '', null]);
       }
 
-      rows.push(['TOTAL PASIVOS Y PATRIMONIO', '', '', totals.totalLiabilities + totals.totalEquity]);
+      rows.push(['TOTAL PASIVOS Y PATRIMONIO', '', '', totalLiabilitiesAndEquity]);
 
       exportToExcel({
         sheetName: 'Balance',
@@ -1562,7 +1561,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-2 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">TOTAL PASIVOS Y PATRIMONIO</span>
-                      <span className="text-base tabular-nums">{formatCurrency(totals.totalLiabilities + totals.totalEquity)}</span>
+                      <span className="text-base tabular-nums">{formatCurrency(totalLiabilitiesAndEquity)}</span>
                     </div>
                   </div>
                 </div>
