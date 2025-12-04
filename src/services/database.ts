@@ -11712,13 +11712,12 @@ export const assetDepreciationService = {
       const targetDate = depreciationDate || new Date(new Date().getFullYear(), new Date().getMonth(), 0).toISOString().slice(0, 10);
       const targetMonth = targetDate.slice(0, 7); // YYYY-MM
 
-      // Obtener todos los activos fijos activos
+      // Obtener todos los activos fijos activos (tanto 'active' como 'Activo')
       const { data: assets, error: assetsError } = await supabase
         .from('fixed_assets')
         .select('*')
         .eq('user_id', tenantId)
-        .eq('status', 'active')
-        .not('depreciation_rate', 'is', null);
+        .in('status', ['active', 'Activo']);
 
       if (assetsError) throw assetsError;
       if (!assets || assets.length === 0) {
@@ -11743,19 +11742,59 @@ export const assetDepreciationService = {
       let totalDepreciation = 0;
       const accountTotals: Record<string, { depreciation: number; accumulated: number }> = {};
 
+      // Cargar tipos de activos y catálogo de cuentas para mapear las cuentas contables
+      const [assetTypes, chartAccounts] = await Promise.all([
+        assetTypesService.getAll(tenantId),
+        chartAccountsService.getAll(tenantId),
+      ]);
+
+      const accountsByCode = new Map<string, string>();
+      (chartAccounts || []).forEach((acc: any) => {
+        if (acc.code && acc.id) {
+          accountsByCode.set(String(acc.code), String(acc.id));
+        }
+      });
+
+      const extractCode = (value?: string | null) => {
+        if (!value) return null;
+        const [codePart] = String(value).split(' - ');
+        return codePart.trim();
+      };
+
+      const findAccountsForAsset = (asset: any) => {
+        const categoryName = String(asset.category || '');
+        const assetType = (assetTypes || []).find((t: any) => String(t.name || '') === categoryName);
+        if (!assetType) return { depreciationAccountId: undefined, accumulatedAccountId: undefined };
+
+        const depCode = extractCode(assetType.depreciation_account);
+        const accDepCode = extractCode(assetType.accumulated_depreciation_account);
+
+        const depreciationAccountId = depCode ? accountsByCode.get(depCode) : undefined;
+        const accumulatedAccountId = accDepCode ? accountsByCode.get(accDepCode) : undefined;
+
+        return { depreciationAccountId, accumulatedAccountId };
+      };
+
       // Calcular depreciación para cada activo
       for (const asset of assets) {
-        const purchaseValue = Number(asset.purchase_value) || 0;
-        const salvageValue = Number(asset.salvage_value) || 0;
+        const purchaseValue = Number((asset as any).purchase_value ?? (asset as any).purchase_cost ?? 0) || 0;
+        const salvageValue = Number((asset as any).salvage_value ?? 0) || 0;
         const depreciableAmount = purchaseValue - salvageValue;
-        const depreciationRate = Number(asset.depreciation_rate) || 0;
-        const accumulatedDepreciation = Number(asset.accumulated_depreciation) || 0;
+        const usefulLifeYears = Number((asset as any).useful_life ?? 0) || 0;
+        const accumulatedDepreciation = Number((asset as any).accumulated_depreciation) || 0;
 
-        if (depreciableAmount <= 0 || depreciationRate <= 0) continue;
+        if (depreciableAmount <= 0) continue;
 
-        // Calcular meses de vida útil
-        const usefulLifeMonths = Math.round(100 / depreciationRate * 12);
-        const monthlyDepreciation = depreciableAmount / usefulLifeMonths;
+        // Determinar depreciación mensual: preferir vida útil; si no, usar tasa de depreciación
+        let monthlyDepreciation = 0;
+        if (usefulLifeYears > 0) {
+          monthlyDepreciation = depreciableAmount / (usefulLifeYears * 12);
+        } else {
+          const depreciationRate = Number((asset as any).depreciation_rate) || 0;
+          if (depreciationRate <= 0) continue;
+          const usefulLifeMonths = Math.round(100 / depreciationRate * 12);
+          monthlyDepreciation = depreciableAmount / usefulLifeMonths;
+        }
 
         // Verificar que no exceda el valor depreciable
         const remainingValue = depreciableAmount - accumulatedDepreciation;
@@ -11764,27 +11803,37 @@ export const assetDepreciationService = {
         if (finalDepreciation <= 0) continue;
 
         const newAccumulated = accumulatedDepreciation + finalDepreciation;
+        const newBookValue = purchaseValue - newAccumulated;
 
+        // Usar las mismas columnas que la pantalla de depreciación ya utiliza
         depreciationRecords.push({
-          fixed_asset_id: asset.id,
-          depreciation_date: targetDate,
-          depreciation_amount: finalDepreciation,
+          asset_id: (asset as any).id,
+          asset_code: (asset as any).code,
+          asset_name: (asset as any).name,
+          category: (asset as any).category,
+          acquisition_cost: purchaseValue,
+          monthly_depreciation: finalDepreciation,
           accumulated_depreciation: newAccumulated,
-          book_value: purchaseValue - newAccumulated,
-          notes: `Depreciación automática mes ${targetMonth}`,
+          remaining_value: newBookValue,
+          depreciation_date: targetDate,
+          period: targetMonth,
+          method: (asset as any).depreciation_method || 'Línea Recta',
+          status: 'Calculado',
         });
 
-        // Actualizar activo con nueva depreciación acumulada
+        // Actualizar activo con nueva depreciación acumulada y valor actual (valor en libros)
         await supabase
           .from('fixed_assets')
-          .update({ accumulated_depreciation: newAccumulated })
+          .update({
+            accumulated_depreciation: newAccumulated,
+            current_value: newBookValue,
+          })
           .eq('id', asset.id);
 
         totalDepreciation += finalDepreciation;
 
-        // Agrupar por cuenta contable
-        const depreciationAccountId = asset.depreciation_account_id;
-        const accumulatedAccountId = asset.accumulated_depreciation_account_id;
+        // Agrupar por cuenta contable usando la configuración del tipo de activo
+        const { depreciationAccountId, accumulatedAccountId } = findAccountsForAsset(asset as any);
 
         if (depreciationAccountId && accumulatedAccountId) {
           const key = `${depreciationAccountId}|${accumulatedAccountId}`;

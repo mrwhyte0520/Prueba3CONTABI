@@ -101,52 +101,37 @@ export default function DepreciationPage() {
     }
 
     try {
-      const assets = await fixedAssetsService.getAll(user.id);
-      const assetsToDepreciate = (assets || []).filter((a: any) => selectedCategories.length === 0 || selectedCategories.includes(a.category));
+      // Usar la rutina centralizada que calcula la depreciación, actualiza los activos
+      // y genera el asiento contable automático en el Diario.
+      const result = await assetDepreciationService.calculateMonthlyDepreciation(user.id, processDate);
 
-      const records = assetsToDepreciate.map((a: any) => {
-        const cost = Number(a.purchase_cost) || 0;
-        const lifeYears = Number(a.useful_life) || 0;
-        const method = a.depreciation_method || 'Línea Recta';
-        const monthly = lifeYears > 0 ? cost / (lifeYears * 12) : 0;
-
-        return {
-          asset_id: a.id,
-          asset_code: a.code,
-          asset_name: a.name,
-          category: a.category,
-          acquisition_cost: cost,
-          monthly_depreciation: monthly,
-          accumulated_depreciation: monthly, // para demo simple; podría acumularse por período
-          remaining_value: cost - monthly,
-          depreciation_date: processDate,
-          period,
-          method,
-          status: 'Calculado',
-        };
-      });
-
-      const created = await assetDepreciationService.createMany(user.id, records);
+      const created = result?.depreciations || [];
       const mappedCreated: DepreciationEntry[] = (created || []).map((d: any) => ({
         id: d.id,
         assetCode: d.asset_code,
         assetName: d.asset_name,
         category: d.category,
-        acquisitionCost: Number(d.acquisition_cost) || 0,
+        acquisitionCost: Number(d.purchase_value ?? d.acquisition_cost ?? 0) || 0,
         accumulatedDepreciation: Number(d.accumulated_depreciation) || 0,
-        monthlyDepreciation: Number(d.monthly_depreciation) || 0,
-        remainingValue: Number(d.remaining_value) || 0,
+        monthlyDepreciation: Number(d.depreciation_amount ?? d.monthly_depreciation ?? 0) || 0,
+        remainingValue: Number(d.book_value ?? d.remaining_value ?? 0) || 0,
         depreciationDate: d.depreciation_date,
-        period: d.period,
-        status: d.status,
-        method: d.method,
+        period: d.depreciation_date ? String(d.depreciation_date).slice(0, 7) : period,
+        status: d.status || 'Calculado',
+        method: d.method || 'Línea Recta',
       }));
 
+      // Refrescar la lista mostrando primero las depreciaciones más recientes
       setDepreciations(prev => [...mappedCreated, ...prev]);
       setShowCalculateModal(false);
-    } catch (error) {
+
+      if (result?.message) {
+        alert(result.message);
+      }
+    } catch (error: any) {
       console.error('Error calculating depreciation:', error);
-      alert('Error al calcular y registrar la depreciación');
+      const msg = error?.message || String(error) || 'Error al calcular y registrar la depreciación';
+      alert(msg);
     }
   };
 

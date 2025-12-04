@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { assetTypesService } from '../../../services/database';
+import { assetTypesService, chartAccountsService } from '../../../services/database';
 
 interface AssetType {
   id: string;
@@ -14,8 +14,17 @@ interface AssetType {
   account: string;
   depreciationAccount: string;
   accumulatedDepreciationAccount: string;
+  revaluationGainAccount: string;
+  revaluationLossAccount: string;
   isActive: boolean;
   createdAt: string;
+}
+
+interface AccountOption {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
 }
 
 export default function AssetTypesPage() {
@@ -26,6 +35,30 @@ export default function AssetTypesPage() {
   const [searchTerm, setSearchTerm] = useState('');
 
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const parseCodeNumber = (code: string): number | null => {
+    const digits = String(code || '').replace(/[^0-9]/g, '');
+    if (!digits) return null;
+    const num = Number(digits);
+    if (Number.isNaN(num)) return null;
+    return num;
+  };
+
+  const isFixedAssetAccount = (acc: AccountOption): boolean => {
+    const num = parseCodeNumber(acc.code);
+    if (num == null) return false;
+    // Rango solicitado: de la 15 a la 150702
+    return num >= 15 && num <= 150702;
+  };
+
+  const assetAccounts = accounts.filter((acc) => acc.type === 'asset' && isFixedAssetAccount(acc));
+  const expenseAccounts = accounts.filter((acc) => acc.type === 'expense' || acc.type === 'other_expense');
+  const gainAccounts = accounts.filter((acc) => acc.type === 'equity' || acc.type === 'income' || acc.type === 'other_income');
+  const lossAccounts = expenseAccounts;
+
+  const getOptions = (filtered: AccountOption[]): AccountOption[] => {
+    return filtered.length > 0 ? filtered : accounts;
+  };
 
   useEffect(() => {
     const loadTypes = async () => {
@@ -42,6 +75,8 @@ export default function AssetTypesPage() {
           account: t.account || '',
           depreciationAccount: t.depreciation_account || '',
           accumulatedDepreciationAccount: t.accumulated_depreciation_account || '',
+          revaluationGainAccount: t.revaluation_gain_account || '',
+          revaluationLossAccount: t.revaluation_loss_account || '',
           isActive: !!t.is_active,
           createdAt: t.created_at || new Date().toISOString(),
         }));
@@ -52,6 +87,29 @@ export default function AssetTypesPage() {
     };
 
     loadTypes();
+  }, [user]);
+
+  useEffect(() => {
+    const loadAccounts = async () => {
+      if (!user) return;
+      try {
+        const data = await chartAccountsService.getAll(user.id);
+        const options: AccountOption[] = (data || [])
+          .filter((acc: any) => acc.allow_posting !== false)
+          .map((acc: any) => ({
+            id: acc.id,
+            code: acc.code,
+            name: acc.name,
+            type: acc.type || acc.account_type || 'asset',
+          }));
+        setAccounts(options);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading chart of accounts for asset types:', error);
+      }
+    };
+
+    loadAccounts();
   }, [user]);
 
   const handleAddType = () => {
@@ -90,6 +148,8 @@ export default function AssetTypesPage() {
         account: type.account,
         depreciation_account: type.depreciationAccount,
         accumulated_depreciation_account: type.accumulatedDepreciationAccount,
+        revaluation_gain_account: type.revaluationGainAccount,
+        revaluation_loss_account: type.revaluationLossAccount,
         is_active: !type.isActive,
       };
       const updated = await assetTypesService.update(typeId, payload);
@@ -118,6 +178,8 @@ export default function AssetTypesPage() {
       account: String(formData.get('account') || '').trim(),
       depreciation_account: String(formData.get('depreciationAccount') || '').trim(),
       accumulated_depreciation_account: String(formData.get('accumulatedDepreciationAccount') || '').trim(),
+      revaluation_gain_account: String(formData.get('revaluationGainAccount') || '').trim() || null,
+      revaluation_loss_account: String(formData.get('revaluationLossAccount') || '').trim() || null,
       is_active: editingType ? editingType.isActive : true,
     };
 
@@ -134,6 +196,8 @@ export default function AssetTypesPage() {
           account: updated.account || '',
           depreciationAccount: updated.depreciation_account || '',
           accumulatedDepreciationAccount: updated.accumulated_depreciation_account || '',
+          revaluationGainAccount: updated.revaluation_gain_account || '',
+          revaluationLossAccount: updated.revaluation_loss_account || '',
           isActive: !!updated.is_active,
           createdAt: updated.created_at || new Date().toISOString(),
         };
@@ -150,6 +214,8 @@ export default function AssetTypesPage() {
           account: created.account || '',
           depreciationAccount: created.depreciation_account || '',
           accumulatedDepreciationAccount: created.accumulated_depreciation_account || '',
+          revaluationGainAccount: created.revaluation_gain_account || '',
+          revaluationLossAccount: created.revaluation_loss_account || '',
           isActive: !!created.is_active,
           createdAt: created.created_at || new Date().toISOString(),
         };
@@ -312,6 +378,8 @@ export default function AssetTypesPage() {
       'Cuenta de Activo',
       'Cuenta de Depreciación',
       'Cuenta Depreciación Acumulada',
+      'Cuenta Ganancia Reval.',
+      'Cuenta Pérdida Reval.',
       'Estado',
       'Fecha Creación'
     ];
@@ -341,6 +409,8 @@ export default function AssetTypesPage() {
         type.account,
         type.depreciationAccount,
         type.accumulatedDepreciationAccount,
+        type.revaluationGainAccount,
+        type.revaluationLossAccount,
         type.isActive ? 'Activo' : 'Inactivo',
         new Date(type.createdAt).toLocaleDateString('es-DO')
       ])
@@ -592,40 +662,104 @@ export default function AssetTypesPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Cuenta de Activo *
                     </label>
-                    <input
-                      type="text"
+                    <select
                       required
                       name="account"
                       defaultValue={editingType?.account || ''}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="1220 - Maquinaria y Equipo"
-                    />
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Seleccionar cuenta...</option>
+                      {getOptions(assetAccounts).map((acc) => (
+                        <option
+                          key={acc.id}
+                          value={`${acc.code} - ${acc.name}`}
+                        >
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Cuenta de Depreciación *
                     </label>
-                    <input
-                      type="text"
+                    <select
                       required
                       name="depreciationAccount"
                       defaultValue={editingType?.depreciationAccount || ''}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="5121 - Depreciación Maquinaria"
-                    />
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Seleccionar cuenta...</option>
+                      {getOptions(expenseAccounts).map((acc) => (
+                        <option
+                          key={acc.id}
+                          value={`${acc.code} - ${acc.name}`}
+                        >
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Cuenta de Depreciación Acumulada *
                     </label>
-                    <input
-                      type="text"
+                    <select
                       required
                       name="accumulatedDepreciationAccount"
                       defaultValue={editingType?.accumulatedDepreciationAccount || ''}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="1221 - Depreciación Acumulada Maquinaria"
-                    />
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Seleccionar cuenta...</option>
+                      {getOptions(assetAccounts).map((acc) => (
+                        <option
+                          key={acc.id}
+                          value={`${acc.code} - ${acc.name}`}
+                        >
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Cuenta de Ganancia por Revalorización
+                    </label>
+                    <select
+                      name="revaluationGainAccount"
+                      defaultValue={editingType?.revaluationGainAccount || ''}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Seleccionar cuenta...</option>
+                      {getOptions(gainAccounts).map((acc) => (
+                        <option
+                          key={acc.id}
+                          value={`${acc.code} - ${acc.name}`}
+                        >
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Cuenta de Pérdida por Revalorización
+                    </label>
+                    <select
+                      name="revaluationLossAccount"
+                      defaultValue={editingType?.revaluationLossAccount || ''}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Seleccionar cuenta...</option>
+                      {getOptions(lossAccounts).map((acc) => (
+                        <option
+                          key={acc.id}
+                          value={`${acc.code} - ${acc.name}`}
+                        >
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 <div>

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { fixedAssetsService, revaluationService } from '../../../services/database';
+import { fixedAssetsService, revaluationService, assetTypesService, chartAccountsService, journalEntriesService } from '../../../services/database';
 
 interface Revaluation {
   id: string;
@@ -45,6 +45,143 @@ export default function RevaluationPage() {
   const [selectedAssetId, setSelectedAssetId] = useState<string>('');
   const [previousValueInput, setPreviousValueInput] = useState<string>('');
 
+  const createRevaluationJournalEntry = async (params: {
+    assetId: string;
+    assetCode: string;
+    assetName: string;
+    category: string;
+    previousValue: number;
+    newValue: number;
+    revaluationAmount: number;
+    revaluationDate: string;
+    reason: string;
+  }) => {
+    if (!user?.id) return;
+
+    const {
+      assetId,
+      assetCode,
+      assetName,
+      category,
+      previousValue,
+      newValue,
+      revaluationAmount,
+      revaluationDate,
+      reason,
+    } = params;
+
+    if (Math.abs(revaluationAmount) < 0.01) {
+      return;
+    }
+
+    try {
+      const [assetTypes, accounts] = await Promise.all([
+        assetTypesService.getAll(user.id),
+        chartAccountsService.getAll(user.id),
+      ]);
+
+      const assetType = (assetTypes || []).find((t: any) => String(t.name || '') === category);
+      if (!assetType) {
+        console.error('No se encontró el tipo de activo para la categoría', category);
+        return;
+      }
+
+      const extractCode = (value?: string | null) => {
+        if (!value) return null;
+        const [codePart] = String(value).split(' - ');
+        return codePart.trim();
+      };
+
+      const assetAccountCode = extractCode(assetType.account);
+      const gainAccountCode = extractCode(assetType.revaluation_gain_account);
+      const lossAccountCode = extractCode(assetType.revaluation_loss_account);
+
+      const accountsByCode = new Map<string, string>();
+      (accounts || []).forEach((acc: any) => {
+        if (acc.code && acc.id) {
+          accountsByCode.set(String(acc.code), String(acc.id));
+        }
+      });
+
+      const assetAccountId = assetAccountCode ? accountsByCode.get(assetAccountCode) : undefined;
+      const gainAccountId = gainAccountCode ? accountsByCode.get(gainAccountCode) : undefined;
+      const lossAccountId = lossAccountCode ? accountsByCode.get(lossAccountCode) : undefined;
+
+      if (!assetAccountId) {
+        console.error(`No se encontró en el catálogo la cuenta de activo para el tipo ${category}.`);
+        return;
+      }
+
+      const lines: any[] = [];
+      let lineNumber = 1;
+      const descriptionBase = `Revalorización activo ${assetCode} - ${assetName}`;
+      const absAmount = Math.abs(revaluationAmount);
+
+      if (revaluationAmount > 0) {
+        if (!gainAccountId) {
+          console.error('No se configuró la cuenta de ganancia por revalorización para este tipo de activo.');
+          return;
+        }
+
+        lines.push({
+          account_id: assetAccountId,
+          description: descriptionBase,
+          debit_amount: absAmount,
+          credit_amount: 0,
+          line_number: lineNumber++,
+        });
+
+        lines.push({
+          account_id: gainAccountId,
+          description: descriptionBase,
+          debit_amount: 0,
+          credit_amount: absAmount,
+          line_number: lineNumber++,
+        });
+      } else if (revaluationAmount < 0) {
+        if (!lossAccountId) {
+          console.error('No se configuró la cuenta de pérdida por revalorización para este tipo de activo.');
+          return;
+        }
+
+        lines.push({
+          account_id: lossAccountId,
+          description: descriptionBase,
+          debit_amount: absAmount,
+          credit_amount: 0,
+          line_number: lineNumber++,
+        });
+
+        lines.push({
+          account_id: assetAccountId,
+          description: descriptionBase,
+          debit_amount: 0,
+          credit_amount: absAmount,
+          line_number: lineNumber++,
+        });
+      } else {
+        return;
+      }
+
+      const entryDate = revaluationDate || new Date().toISOString().split('T')[0];
+      const period = entryDate.slice(0, 7).replace('-', '');
+      const sanitizedCode = assetCode.replace(/[^A-Za-z0-9]/g, '').slice(0, 6) || assetId.slice(0, 6);
+      const entryNumber = `RV-${period}-${sanitizedCode}`;
+
+      const entryPayload = {
+        entry_number: entryNumber,
+        entry_date: entryDate,
+        description: descriptionBase,
+        reference: `Revalorización - ${reason}`,
+        status: 'posted' as const,
+      };
+
+      await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+    } catch (error) {
+      console.error('Error creating revaluation journal entry:', error);
+    }
+  };
+
   useEffect(() => {
     const loadData = async () => {
       if (!user) return;
@@ -79,7 +216,6 @@ export default function RevaluationPage() {
           code: a.code,
           name: a.name,
           category: a.category || '',
-          // Valor anterior debe basarse SOLO en current_value (valor actual del activo)
           currentValue: Number(a.current_value) || 0,
         }));
         setAssets(mappedAssets);
@@ -189,6 +325,20 @@ export default function RevaluationPage() {
           });
           // Actualizar también el estado local de assets para futuras revalorizaciones
           setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, currentValue: newValue } : a));
+
+          if (editingRevaluation.status !== 'Aprobado') {
+            await createRevaluationJournalEntry({
+              assetId: asset.id,
+              assetCode: asset.code,
+              assetName: asset.name,
+              category: asset.category,
+              previousValue,
+              newValue,
+              revaluationAmount,
+              revaluationDate,
+              reason,
+            });
+          }
         }
 
         const mapped: Revaluation = {
@@ -220,6 +370,18 @@ export default function RevaluationPage() {
           });
           // Actualizar también el estado local de assets para futuras revalorizaciones
           setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, currentValue: newValue } : a));
+
+          await createRevaluationJournalEntry({
+            assetId: asset.id,
+            assetCode: asset.code,
+            assetName: asset.name,
+            category: asset.category,
+            previousValue,
+            newValue,
+            revaluationAmount,
+            revaluationDate,
+            reason,
+          });
         }
 
         const mapped: Revaluation = {
@@ -258,6 +420,7 @@ export default function RevaluationPage() {
     if (!user) return;
     const rev = revaluations.find(r => r.id === revaluationId);
     if (!rev) return;
+    if (rev.status === 'Aprobado') return;
     if (!confirm('¿Está seguro de que desea aprobar esta revalorización?')) return;
 
     try {
@@ -290,6 +453,18 @@ export default function RevaluationPage() {
       setAssets(prev => prev.map(a => a.id === rev.assetId ? { ...a, currentValue: rev.newValue } : a));
 
       setRevaluations(prev => prev.map(r => r.id === revaluationId ? { ...r, status: updated.status || 'Aprobado' } : r));
+
+      await createRevaluationJournalEntry({
+        assetId: rev.assetId,
+        assetCode: rev.assetCode,
+        assetName: rev.assetName,
+        category: rev.category,
+        previousValue: rev.previousValue,
+        newValue: rev.newValue,
+        revaluationAmount: rev.revaluationAmount,
+        revaluationDate: rev.revaluationDate,
+        reason: rev.reason,
+      });
     } catch (error) {
       console.error('Error approving revaluation:', error);
       alert('Error al aprobar la revalorización');

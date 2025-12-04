@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
+import { chartAccountsService, journalEntriesService } from '../../../services/database';
 
 interface PayrollPeriod {
   id: string;
@@ -15,12 +16,19 @@ interface PayrollPeriod {
   status: string;
 }
 
+interface PayrollJournalEntry {
+  account: string;
+  debit: number;
+  credit: number;
+  description: string;
+}
+
 export default function PayrollJournalEntryPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<string>('');
-  const [journalEntries, setJournalEntries] = useState<any[]>([]);
+  const [journalEntries, setJournalEntries] = useState<PayrollJournalEntry[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -94,52 +102,70 @@ export default function PayrollJournalEntryPage() {
       return;
     }
 
+    if (!user?.id) {
+      alert('Debes iniciar sesión para contabilizar la nómina');
+      return;
+    }
+
     if (!confirm('¿Desea contabilizar estos asientos en el libro mayor?')) return;
 
     setLoading(true);
     try {
       const period = periods.find(p => p.id === selectedPeriod);
-      
-      // Crear el asiento de diario
-      const { data: journalData, error: journalError } = await supabase
-        .from('journal_entries')
-        .insert([{
-          user_id: user?.id,
-          entry_date: new Date().toISOString().split('T')[0],
-          entry_type: 'nomina',
-          reference: `Nómina - ${period?.period_name}`,
-          description: `Asiento de nómina del período ${period?.period_name}`,
-          total_debit: journalEntries.reduce((sum, e) => sum + e.debit, 0),
-          total_credit: journalEntries.reduce((sum, e) => sum + e.credit, 0),
-          status: 'posted',
-          period_id: selectedPeriod
-        }])
-        .select();
-
-      if (journalError) throw journalError;
-
-      if (journalData && journalData[0]) {
-        // Crear las líneas del asiento
-        const lines = journalEntries.map(entry => ({
-          user_id: user?.id,
-          journal_entry_id: journalData[0].id,
-          account_number: entry.account.split(' - ')[0],
-          account_name: entry.account.split(' - ')[1],
-          description: entry.description,
-          debit: entry.debit,
-          credit: entry.credit
-        }));
-
-        const { error: linesError } = await supabase
-          .from('journal_entry_lines')
-          .insert(lines);
-
-        if (linesError) throw linesError;
-
-        alert('Asientos contabilizados correctamente en el libro mayor');
-        setJournalEntries([]);
-        setSelectedPeriod('');
+      if (!period) {
+        alert('No se encontró el período de nómina seleccionado');
+        return;
       }
+
+      const totalDebit = journalEntries.reduce((sum, e) => sum + e.debit, 0);
+      const totalCredit = journalEntries.reduce((sum, e) => sum + e.credit, 0);
+
+      if (Math.abs(totalDebit - totalCredit) >= 0.01) {
+        alert('El asiento de nómina no está balanceado. Verifique los montos.');
+        return;
+      }
+
+      // Mapear códigos de cuenta a IDs reales del catálogo de cuentas
+      const accounts = await chartAccountsService.getAll(user.id);
+      const accountsByCode = new Map<string, string>();
+      (accounts || []).forEach((acc: any) => {
+        if (acc.code && acc.id) {
+          accountsByCode.set(String(acc.code), String(acc.id));
+        }
+      });
+
+      const lines = journalEntries.map((entry, index) => {
+        const [codePart] = String(entry.account).split(' - ');
+        const code = codePart.trim();
+        const accountId = accountsByCode.get(code);
+
+        if (!accountId) {
+          throw new Error(`No se encontró en el catálogo la cuenta contable con código ${code} para la nómina.`);
+        }
+
+        return {
+          account_id: accountId,
+          description: entry.description,
+          debit_amount: entry.debit,
+          credit_amount: entry.credit,
+          line_number: index + 1,
+        };
+      });
+
+      const today = new Date().toISOString().split('T')[0];
+      const entryNumber = `NOM-${today}-${String(period.id).slice(0, 6)}`;
+
+      await journalEntriesService.createWithLines(user.id, {
+        entry_number: entryNumber,
+        entry_date: today,
+        description: `Asiento de nómina del período ${period.period_name}`,
+        reference: `Nómina - ${period.period_name}`,
+        status: 'posted',
+      }, lines);
+
+      alert('Asientos de nómina contabilizados correctamente en el libro mayor');
+      setJournalEntries([]);
+      setSelectedPeriod('');
     } catch (error) {
       console.error('Error posting to general ledger:', error);
       alert('Error al contabilizar los asientos');
