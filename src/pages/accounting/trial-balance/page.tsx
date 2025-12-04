@@ -150,16 +150,16 @@ const TrialBalancePage: React.FC = () => {
 
       const { fromDate, toDate, prevToDate } = computeDateRanges();
 
-      // Obtener transacciones ED para excluirlas de los movimientos
-      const { data: edEntries } = await supabase
+      // Obtener asientos de apertura para excluirlos de los movimientos
+      const { data: openingEntries } = await supabase
         .from('journal_entries')
         .select('id')
         .eq('user_id', user.id)
-        .like('entry_number', 'ED-%')
+        .like('entry_number', 'OPEN-%')
         .gte('entry_date', fromDate)
         .lte('entry_date', toDate);
 
-      const edEntryIds = new Set((edEntries || []).map(e => e.id));
+      const openingEntryIds = new Set((openingEntries || []).map(e => e.id));
 
       const [prevTrial, periodTrial, periodMovements] = await Promise.all([
         prevToDate
@@ -170,7 +170,7 @@ const TrialBalancePage: React.FC = () => {
             )
           : Promise.resolve([]),
         financialReportsService.getTrialBalance(user.id, fromDate, toDate),
-        // Obtener movimientos del período excluyendo ED
+        // Obtener movimientos del período excluyendo asientos de apertura
         supabase
           .from('journal_entry_lines')
           .select(`
@@ -244,13 +244,13 @@ const TrialBalancePage: React.FC = () => {
         row.prevCredit += creditPrev;
       });
 
-      // Procesar movimientos del período excluyendo transacciones ED
+      // Procesar movimientos del período excluyendo transacciones del asiento de apertura
       const movByAccount: Record<string, { debit: number; credit: number }> = {};
       
       periodMovements.forEach((line: any) => {
         const entryId = line.journal_entries?.id;
-        // Excluir transacciones ED
-        if (edEntryIds.has(entryId)) return;
+        // Excluir transacciones del asiento de apertura
+        if (openingEntryIds.has(entryId)) return;
         
         const accountId = line.account_id;
         if (!movByAccount[accountId]) {

@@ -54,7 +54,7 @@ const getEntryDocumentType = (entry: LedgerEntry): string => {
   const num = entry.entryNumber || '';
   const desc = (entry.description || '').toLowerCase();
 
-  if (num.startsWith('JE-')) return 'Asiento manual';
+  if (num.startsWith('ED-') || num.startsWith('JE-')) return 'Asiento manual';
   if (num.startsWith('BCG-')) return 'Cargo bancario';
   if (num.startsWith('DEP-')) return 'Depósito bancario';
   if (num.startsWith('CRD-')) return 'Crédito bancario';

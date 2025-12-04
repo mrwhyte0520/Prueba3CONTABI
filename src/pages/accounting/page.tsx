@@ -13,7 +13,7 @@ interface JournalEntry {
   reference: string;
   total_debit: number;
   total_credit: number;
-  status: string;
+  status: 'draft' | 'posted' | 'reversed';
   created_at: string;
   journal_entry_lines?: any[];
 }
@@ -145,9 +145,7 @@ export default function AccountingPage() {
         entry_date: journalForm.entry_date,
         description: journalForm.description,
         reference: journalForm.reference,
-        total_debit: totalDebit,
-        total_credit: totalCredit,
-        status: 'posted'
+        status: 'posted' as const
       };
 
       const lines = journalForm.lines

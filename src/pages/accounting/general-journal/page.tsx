@@ -61,7 +61,7 @@ const getEntryDocumentType = (entry: JournalEntry): string => {
   const num = entry.entry_number || '';
   const desc = (entry.description || '').toLowerCase();
 
-  if (num.startsWith('JE-')) return 'Asiento manual';
+  if (num.startsWith('ED-') || num.startsWith('JE-')) return 'Asiento manual';
   if (num.startsWith('BCG-')) return 'Cargo bancario';
   if (num.startsWith('DEP-')) return 'Depósito bancario';
   if (num.startsWith('CRD-')) return 'Crédito bancario';
@@ -262,7 +262,35 @@ const GeneralJournalPage: React.FC = () => {
           if (linesError) throw linesError;
         } else {
           // Crear nuevo asiento
-          const entryNumber = `JE-${Date.now().toString().slice(-6)}`;
+          const entryDate = formData.entry_date || new Date().toISOString().split('T')[0];
+          const [year, month] = entryDate.split('-');
+          const prefix = `ED-${year}${month}`;
+
+          const { data: existingEntries, error: existingEntriesError } = await supabase
+            .from('journal_entries')
+            .select('entry_number')
+            .eq('user_id', tenantId)
+            .like('entry_number', `${prefix}%`)
+            .order('entry_number', { ascending: false })
+            .limit(1);
+
+          if (existingEntriesError) {
+            console.error('Error generating journal entry number:', existingEntriesError);
+            alert('No se pudo generar el número de asiento. Intente nuevamente.');
+            return;
+          }
+
+          let nextSeq = 1;
+          if (existingEntries && existingEntries.length > 0) {
+            const lastNumber = existingEntries[0].entry_number || '';
+            const seqStr = lastNumber.slice(prefix.length);
+            const parsed = parseInt(seqStr, 10);
+            if (!Number.isNaN(parsed)) {
+              nextSeq = parsed + 1;
+            }
+          }
+
+          const entryNumber = `${prefix}${nextSeq.toString().padStart(2, '0')}`;
 
           const entryData = {
             user_id: tenantId,
