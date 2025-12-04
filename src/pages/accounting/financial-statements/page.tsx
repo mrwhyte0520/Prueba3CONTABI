@@ -498,9 +498,8 @@ export default function FinancialStatementsPage() {
 
   const totals = calculateTotals();
 
-  // Para el Balance General, el total de Pasivos y Patrimonio debe incluir
-  // el resultado del período (utilidad o pérdida), de modo que se cumpla
-  // la ecuación contable: Activos = Pasivos + Patrimonio + Resultado.
+  // Total Pasivos y Patrimonio incluyendo el resultado del período (utilidad o pérdida),
+  // de forma que se cumpla la ecuación: Activos = Pasivos + Patrimonio + Resultado.
   const totalLiabilitiesAndEquity = totals.totalLiabilities + totals.totalEquity + totals.netIncome;
 
   // Función para obtener las fechas formateadas del período
@@ -580,6 +579,8 @@ export default function FinancialStatementsPage() {
   const reservas = sumByPrefixes(equityItems, ['32']); // Reservas
   const resultadosAcumulados = sumByPrefixes(equityItems, ['33', '34', '35']); // Resultados y Utilidades
   const patrimonioTotal = capitalSuscrito + reservas + resultadosAcumulados;
+  const beneficiosPeriodoActual = totals.netIncome;
+  const patrimonioConResultado = patrimonioTotal + beneficiosPeriodoActual;
 
   // GASTOS por grupo en Estado de Resultados
   const expenseItems = financialData.expenses;
@@ -767,12 +768,16 @@ export default function FinancialStatementsPage() {
       }
 
       // PATRIMONIO - solo agregar si tiene saldo
-      if (Math.abs(patrimonioTotal) >= 0.01) {
+      if (
+        Math.abs(patrimonioTotal) >= 0.01 ||
+        Math.abs(beneficiosPeriodoActual) >= 0.01
+      ) {
         rows.push(['PATRIMONIO', '', '', null]);
         addRowIfNotZero(rows, 'Capital Suscrito y Pagado', capitalSuscrito);
         addRowIfNotZero(rows, 'Reservas (incluye Reserva Legal)', reservas);
         addRowIfNotZero(rows, 'Beneficios o Pérdidas Acumuladas', resultadosAcumulados);
-        rows.push(['  Total Patrimonio', '', '', patrimonioTotal]);
+        addRowIfNotZero(rows, 'Beneficios del período actual', beneficiosPeriodoActual);
+        rows.push(['  Total Patrimonio', '', '', patrimonioConResultado]);
         rows.push(['', '', '', null]);
       }
 
@@ -1544,15 +1549,23 @@ export default function FinancialStatementsPage() {
                   </div>
 
                   {/* PATRIMONIO */}
-                  <div className={`mb-4 ${Math.abs(patrimonioTotal) < 0.01 ? 'hide-zero-on-print' : ''}`}>
+                  <div
+                    className={`mb-4 ${
+                      Math.abs(patrimonioTotal) < 0.01 &&
+                      Math.abs(beneficiosPeriodoActual) < 0.01
+                        ? 'hide-zero-on-print'
+                        : ''
+                    }`}
+                  >
                     <h3 className="text-sm font-bold text-gray-800 mb-2 underline">PATRIMONIO</h3>
                     {renderBalanceLineIfNotZero('Capital Suscrito y Pagado', capitalSuscrito)}
                     {renderBalanceLineIfNotZero('Reservas (incluye Reserva Legal)', reservas)}
                     {renderBalanceLineIfNotZero('Beneficios o Pérdidas Acumuladas', resultadosAcumulados)}
+                    {renderBalanceLineIfNotZero('Beneficios del periodo actual', beneficiosPeriodoActual)}
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Patrimonio</span>
-                        <span className="text-sm tabular-nums">{formatCurrency(patrimonioTotal)}</span>
+                        <span className="text-sm tabular-nums">{formatCurrency(patrimonioConResultado)}</span>
                       </div>
                     </div>
                   </div>
