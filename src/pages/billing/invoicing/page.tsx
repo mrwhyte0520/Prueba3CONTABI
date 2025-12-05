@@ -16,6 +16,7 @@ import {
   taxService,
   inventoryService,
   storesService,
+  settingsService,
 } from '../../../services/database';
 
 interface UiInvoiceItem {
@@ -27,8 +28,12 @@ interface UiInvoiceItem {
 
 interface UiInvoice {
   id: string; // número visible
+  customerId?: string;
   customer: string;
   customerEmail: string;
+  customerDocument?: string;
+  customerPhone?: string;
+  customerAddress?: string;
   amount: number; // subtotal
   tax: number;
   total: number;
@@ -59,7 +64,20 @@ export default function InvoicingPage() {
     Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>
   >([]);
   const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
-  const [customers, setCustomers] = useState<Array<{ id: string; name: string; email: string; document: string; customerTypeId?: string | null; paymentTermId?: string | null; ncfType?: string | null; documentType?: string | null }>>([]);
+  const [customers, setCustomers] = useState<
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      document: string;
+      phone?: string;
+      address?: string;
+      customerTypeId?: string | null;
+      paymentTermId?: string | null;
+      ncfType?: string | null;
+      documentType?: string | null;
+    }>
+  >([]);
   const [customerTypes, setCustomerTypes] = useState<any[]>([]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [stores, setStores] = useState<Array<{ id: string; name: string; is_active?: boolean }>>([]);
@@ -151,10 +169,10 @@ export default function InvoicingPage() {
         symbol: c.symbol as string,
         is_base: !!c.is_base,
         is_active: c.is_active !== false,
-      })).filter((c) => c.is_active);
+      })).filter((c: { is_active?: boolean }) => c.is_active);
       setCurrencies(mappedCurrencies);
 
-      const baseCurrency = mappedCurrencies.find((c) => c.is_base) || mappedCurrencies[0];
+      const baseCurrency = mappedCurrencies.find((c: { is_base?: boolean }) => c.is_base) || mappedCurrencies[0];
       const baseCode = baseCurrency?.code || 'DOP';
       setBaseCurrencyCode(baseCode);
 
@@ -163,6 +181,8 @@ export default function InvoicingPage() {
         const tax = Number(inv.tax_amount) || 0;
         const total = Number(inv.total_amount) || subtotal + tax;
         const invCurrency = (inv.currency as string) || baseCode;
+
+        const customerData = (inv.customers as any) || {};
 
         const items: UiInvoiceItem[] = (inv.invoice_lines || []).map((line: any) => {
           const qty = Number(line.quantity) || 0;
@@ -215,8 +235,12 @@ export default function InvoicingPage() {
 
         return {
           id: (inv.invoice_number as string) || String(inv.id),
-          customer: (inv.customers as any)?.name || 'Cliente',
-          customerEmail: (inv.customers as any)?.email || '',
+          customerId: String((inv as any).customer_id || customerData.id || ''),
+          customer: customerData.name || 'Cliente',
+          customerEmail: customerData.email || '',
+          customerDocument: customerData.document || customerData.tax_id || '',
+          customerPhone: customerData.phone || customerData.contact_phone || '',
+          customerAddress: customerData.address || '',
           amount: subtotal,
           tax,
           total,
@@ -289,12 +313,14 @@ export default function InvoicingPage() {
         const mappedCustomers = (rows || []).map((c: any) => ({
           id: c.id as string,
           name: c.name || c.customer_name || 'Cliente',
-          email: c.email || c.contactEmail || '',
-          document: c.document || '',
-          customerTypeId: c.customerType || null,
-          paymentTermId: c.paymentTermId || null,
-          ncfType: c.ncfType || null,
-          documentType: c.documentType || null,
+          email: c.email || c.contact_email || '',
+          document: c.document || c.tax_id || '',
+          phone: c.phone || c.contact_phone || '',
+          address: c.address || '',
+          customerTypeId: c.customerType ?? c.customer_type ?? null,
+          paymentTermId: c.paymentTermId ?? c.payment_term_id ?? null,
+          ncfType: c.ncfType ?? c.ncf_type ?? null,
+          documentType: c.documentType ?? c.document_type ?? null,
         }));
         setCustomers(mappedCustomers);
         setCustomerTypes(types || []);
@@ -305,6 +331,16 @@ export default function InvoicingPage() {
       }
     };
     loadCustomersAndTypes();
+  }, [user?.id]);
+
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
+
+  useEffect(() => {
+    const loadCompanyInfo = async () => {
+      const info = await settingsService.getCompanyInfo();
+      setCompanyInfo(info);
+    };
+    loadCompanyInfo();
   }, [user?.id]);
 
   const getStatusColor = (status: string) => {
@@ -333,6 +369,8 @@ export default function InvoicingPage() {
     const matchesStatus = statusFilter === 'all' || invoice.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+
+  const selectedNewInvoiceCustomer = customers.find((c) => c.id === newInvoiceCustomerId);
 
   const handleCreateInvoice = () => {
     const today = new Date().toISOString().slice(0, 10);
@@ -443,7 +481,21 @@ export default function InvoicingPage() {
   const handlePrintInvoice = (invoiceId: string) => {
     const invoice = invoices.find((inv) => inv.id === invoiceId);
     if (!invoice) return;
+
+    const fullCustomer = invoice.customerId
+      ? customers.find((c) => c.id === invoice.customerId)
+      : undefined;
+
+    const printCustomerDocument = fullCustomer?.document || invoice.customerDocument || '';
+    const printCustomerPhone = fullCustomer?.phone || invoice.customerPhone || '';
+    const printCustomerEmail = fullCustomer?.email || invoice.customerEmail || '';
+    const printCustomerAddress = fullCustomer?.address || invoice.customerAddress || '';
+
+    const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
+    const companyRnc = (companyInfo as any)?.ruc || (companyInfo as any)?.tax_id || '';
+
     const itbisLabel = (taxConfig?.itbis_rate ?? 18).toFixed(2);
+
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       alert('No se pudo abrir la ventana de impresión.');
@@ -465,13 +517,21 @@ export default function InvoicingPage() {
         </head>
         <body>
           <div class="header">
+            <h1>${companyName}</h1>
+            ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
             <h2>Factura #${invoice.id}</h2>
             <p>Fecha: ${new Date(invoice.date).toLocaleDateString('es-DO')}</p>
           </div>
+
           <div class="details">
             <p><strong>Cliente:</strong> ${invoice.customer}</p>
+            ${printCustomerDocument ? `<p><strong>Documento:</strong> ${printCustomerDocument}</p>` : ''}
+            ${printCustomerPhone ? `<p><strong>Teléfono:</strong> ${printCustomerPhone}</p>` : ''}
+            ${printCustomerEmail ? `<p><strong>Email:</strong> ${printCustomerEmail}</p>` : ''}
+            ${printCustomerAddress ? `<p><strong>Dirección:</strong> ${printCustomerAddress}</p>` : ''}
             <p><strong>Vencimiento:</strong> ${new Date(invoice.dueDate).toLocaleDateString('es-DO')}</p>
           </div>
+
           <table>
             <thead>
               <tr>
@@ -1394,6 +1454,23 @@ export default function InvoicingPage() {
                           ))}
                       </select>
                     </div>
+                    {selectedNewInvoiceCustomer && (
+                      <div className="mt-2 p-3 bg-gray-50 rounded-lg text-xs md:text-sm text-gray-700">
+                        <p className="font-medium">{selectedNewInvoiceCustomer.name}</p>
+                        {selectedNewInvoiceCustomer.document && (
+                          <p>Documento: {selectedNewInvoiceCustomer.document}</p>
+                        )}
+                        {selectedNewInvoiceCustomer.email && (
+                          <p>Email: {selectedNewInvoiceCustomer.email}</p>
+                        )}
+                        {selectedNewInvoiceCustomer.phone && (
+                          <p>Teléfono: {selectedNewInvoiceCustomer.phone}</p>
+                        )}
+                        {selectedNewInvoiceCustomer.address && (
+                          <p>Dirección: {selectedNewInvoiceCustomer.address}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Vendedor (opcional)</label>
@@ -1493,7 +1570,14 @@ export default function InvoicingPage() {
                                     setNewInvoiceItems((prev) => {
                                       const next = [...prev];
                                       if (invItem) {
-                                        const price = Number(invItem.sale_price || invItem.price || 0) || 0;
+                                        // Priorizar precio de venta; si no existe, usar costo
+                                        const rawPrice =
+                                          invItem.selling_price ??
+                                          invItem.sale_price ??
+                                          invItem.price ??
+                                          invItem.cost_price ??
+                                          0;
+                                        const price = Number(rawPrice) || 0;
                                         const qty = next[index].quantity || 1;
                                         next[index] = {
                                           ...next[index],

@@ -15,6 +15,7 @@ import {
   purchaseOrderItemsService,
   storesService,
   taxService,
+  settingsService,
 } from '../../../services/database';
 
 interface APInvoice {
@@ -115,6 +116,7 @@ export default function APInvoicesPage() {
   ]);
 
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   const handleAddTax = () => {
     setOtherTaxes(prev => [...prev, { name: '', rate: '0' }]);
@@ -202,10 +204,10 @@ export default function APInvoicesPage() {
         symbol: c.symbol as string,
         is_base: !!c.is_base,
         is_active: c.is_active !== false,
-      })).filter((c) => c.is_active);
+      })).filter((c: { is_active?: boolean }) => c.is_active);
       setCurrencies(mappedCurrencies);
 
-      const baseCurrency = mappedCurrencies.find((c) => c.is_base) || mappedCurrencies[0];
+      const baseCurrency = mappedCurrencies.find((c: { is_base?: boolean }) => c.is_base) || mappedCurrencies[0];
       const baseCode = baseCurrency?.code || 'DOP';
       setBaseCurrencyCode(baseCode);
 
@@ -278,6 +280,14 @@ export default function APInvoicesPage() {
     loadInvoices();
     loadTaxConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadCompanyInfo = async () => {
+      const info = await settingsService.getCompanyInfo();
+      setCompanyInfo(info);
+    };
+    loadCompanyInfo();
   }, [user?.id]);
 
   const handleAddLine = () => {
@@ -533,6 +543,121 @@ export default function APInvoicesPage() {
     }
   };
 
+  const handlePrintInvoice = async (invoice: APInvoice) => {
+    try {
+      const dbLines = await apInvoiceLinesService.getByInvoice(invoice.id);
+      const items = (dbLines || []).map((l: any) => {
+        const qty = Number(l.quantity) || 0;
+        const price = Number(l.unit_price) || 0;
+        const total = Number(l.line_total) || qty * price;
+        return {
+          description: l.description || (l.inventory_items as any)?.name || 'Gasto / Servicio',
+          quantity: qty,
+          unitPrice: price,
+          total,
+        };
+      });
+
+      if (items.length === 0) {
+        items.push({
+          description: invoice.expenseType606 || 'Gasto / Servicio',
+          quantity: 1,
+          unitPrice: invoice.totalToPay,
+          total: invoice.totalToPay,
+        });
+      }
+
+      const supplierName = invoice.legalName || invoice.supplierName;
+      const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
+      const companyRnc = (companyInfo as any)?.ruc || (companyInfo as any)?.tax_id || '';
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        alert('No se pudo abrir la ventana de impresión.');
+        return;
+      }
+
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Factura de Suplidor ${invoice.invoiceNumber}</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 20px; }
+              .header { text-align: center; margin-bottom: 20px; }
+              .details { margin: 20px 0; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+              .total { font-weight: bold; text-align: right; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>${companyName}</h1>
+              ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
+              <h2>Factura de Suplidor #${invoice.invoiceNumber}</h2>
+              <p>Fecha: ${new Date(invoice.invoiceDate).toLocaleDateString('es-DO')}</p>
+            </div>
+            <div class="details">
+              <p><strong>Suplidor:</strong> ${supplierName}</p>
+              ${invoice.taxId ? `<p><strong>RNC / Tax ID:</strong> ${invoice.taxId}</p>` : ''}
+              ${invoice.storeName ? `<p><strong>Tienda:</strong> ${invoice.storeName}</p>` : ''}
+              <p><strong>Moneda:</strong> ${invoice.currency}</p>
+              <p><strong>Vencimiento:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('es-DO') : ''}</p>
+              ${invoice.notes ? `<p><strong>Notas:</strong> ${invoice.notes}</p>` : ''}
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Descripción</th>
+                  <th>Cantidad</th>
+                  <th>Precio</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${items
+                  .map(
+                    (item: any) => `
+                    <tr>
+                      <td>${item.description}</td>
+                      <td>${item.quantity}</td>
+                      <td>${invoice.currency} ${item.unitPrice.toLocaleString()}</td>
+                      <td>${invoice.currency} ${item.total.toLocaleString()}</td>
+                    </tr>`
+                  )
+                  .join('')}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="3" class="total">Bruto:</td>
+                  <td>${invoice.currency} ${invoice.totalGross.toLocaleString()}</td>
+                </tr>
+                <tr>
+                  <td colspan="3" class="total">ITBIS:</td>
+                  <td>${invoice.currency} ${invoice.totalItbis.toLocaleString()}</td>
+                </tr>
+                <tr>
+                  <td colspan="3" class="total">Total a pagar:</td>
+                  <td>${invoice.currency} ${invoice.totalToPay.toLocaleString()}</td>
+                </tr>
+              </tfoot>
+            </table>
+            <script>
+              window.onload = function() {
+                window.print();
+                setTimeout(function() { window.close(); }, 1000);
+              };
+            <\/script>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error al preparar impresión de factura de suplidor', error);
+      alert('No se pudo preparar la impresión de la factura.');
+    }
+  };
+
   const handleSaveInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -777,6 +902,13 @@ export default function APInvoicesPage() {
                             title="Editar"
                           >
                             <i className="ri-edit-line" />
+                          </button>
+                          <button
+                            onClick={() => handlePrintInvoice(inv)}
+                            className="text-purple-600 hover:text-purple-900"
+                            title="Imprimir"
+                          >
+                            <i className="ri-printer-line" />
                           </button>
                           <button
                             onClick={() => handleDeleteInvoice(inv.id)}
@@ -1142,10 +1274,19 @@ export default function APInvoicesPage() {
                                 <select
                                   value={line.inventoryItemId || ''}
                                   onChange={(e) => {
-                                    handleLineChange(index, 'inventoryItemId', e.target.value);
-                                    const item = inventoryItems.find(i => i.id === e.target.value);
-                                    if (item && !line.description) {
-                                      handleLineChange(index, 'description', item.name || '');
+                                    const selectedId = e.target.value;
+                                    handleLineChange(index, 'inventoryItemId', selectedId);
+                                    const item = inventoryItems.find((i: any) => String(i.id) === String(selectedId));
+                                    if (item) {
+                                      // Si no hay descripción, usar el nombre del ítem
+                                      if (!line.description) {
+                                        handleLineChange(index, 'description', item.name || '');
+                                      }
+                                      // Usar el costo de compra como precio por defecto
+                                      const cost = Number(item.cost_price ?? item.purchase_cost ?? 0) || 0;
+                                      if (cost > 0) {
+                                        handleLineChange(index, 'unitPrice', String(cost));
+                                      }
                                     }
                                   }}
                                   className="w-full border border-gray-300 rounded-md px-1 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 mb-1"

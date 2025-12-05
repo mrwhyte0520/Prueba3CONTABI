@@ -3,7 +3,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService } from '../../../services/database';
+import { customersService, invoicesService, settingsService } from '../../../services/database';
 
 interface Invoice {
   id: string;
@@ -40,6 +40,7 @@ interface Customer {
 
 export default function InvoicesPage() {
   const { user } = useAuth();
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -47,6 +48,8 @@ export default function InvoicesPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
+
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [loadingCustomers, setLoadingCustomers] = useState(false);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
@@ -138,6 +141,14 @@ export default function InvoicesPage() {
     loadCustomers();
     loadInvoices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadCompanyInfo = async () => {
+      const info = await settingsService.getCompanyInfo();
+      setCompanyInfo(info);
+    };
+    loadCompanyInfo();
   }, [user?.id]);
 
   const getStatusColor = (status: string) => {
@@ -297,6 +308,9 @@ export default function InvoicesPage() {
     const invoice = invoices.find(inv => inv.id === invoiceId);
     if (!invoice) return;
 
+    const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
+    const companyRnc = (companyInfo as any)?.ruc || (companyInfo as any)?.tax_id || '';
+
     const customer = customers.find((c) => c.id === invoice.customerId);
 
     const customerDetailsHtml = customer
@@ -332,6 +346,8 @@ export default function InvoicesPage() {
         </head>
         <body>
           <div class="header">
+            <h1>${companyName}</h1>
+            ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
             <h2>Factura #${invoice.invoiceNumber}</h2>
             <p>Fecha: ${new Date(invoice.date).toLocaleDateString('es-DO')}</p>
           </div>
@@ -488,19 +504,22 @@ export default function InvoicesPage() {
       return;
     }
 
-    if (amountToPay > currentInvoice.balance) {
-      alert('El monto a pagar no puede ser mayor que el saldo de la factura');
-      return;
-    }
+    // Si el monto es mayor que el saldo, se permite y se calcula devuelta
+    const effectivePayment = Math.min(amountToPay, currentInvoice.balance);
+    const change = amountToPay - effectivePayment;
 
-    const newPaid = currentInvoice.paidAmount + amountToPay;
+    const newPaid = currentInvoice.paidAmount + effectivePayment;
     const newBalance = currentInvoice.amount - newPaid;
     const newStatus: Invoice['status'] = newBalance > 0 ? 'partial' : 'paid';
 
     try {
       await invoicesService.updatePayment(invoiceId, newPaid, newStatus);
       await loadInvoices();
-      alert('Pago registrado exitosamente');
+      if (change > 0) {
+        alert(`Pago registrado correctamente. Devuelta: RD$ ${change.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+      } else {
+        alert('Pago registrado exitosamente');
+      }
       setShowPaymentModal(false);
       setSelectedInvoice(null);
     } catch (error: any) {
@@ -851,7 +870,6 @@ export default function InvoicesPage() {
                     name="amount_to_pay"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="0.00"
-                    max={selectedInvoice?.balance || undefined}
                   />
                 </div>
                 

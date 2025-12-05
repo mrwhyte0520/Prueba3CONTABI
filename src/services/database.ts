@@ -5971,7 +5971,18 @@ export const invoicesService = {
         .from('invoices')
         .select(`
           *,
-          customers (id, name),
+          customers (
+            id,
+            name,
+            document,
+            tax_id,
+            phone,
+            email,
+            address,
+            contact_phone,
+            contact_email,
+            document_type
+          ),
           invoice_lines (*)
         `)
         .eq('user_id', tenantId)
