@@ -17,6 +17,14 @@ interface Invoice {
   balance: number;
   status: 'pending' | 'partial' | 'paid' | 'overdue';
   daysOverdue: number;
+  subtotal: number;
+  tax: number;
+  items: {
+    description: string;
+    quantity: number;
+    price: number;
+    total: number;
+  }[];
 }
 
 export default function InvoicesPage() {
@@ -36,7 +44,9 @@ export default function InvoicesPage() {
     setLoadingCustomers(true);
     try {
       const list = await customersService.getAll(user.id);
-      setCustomers(list.map(c => ({ id: c.id, name: c.name })));
+      setCustomers(
+        list.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))
+      );
     } finally {
       setLoadingCustomers(false);
     }
@@ -50,6 +60,8 @@ export default function InvoicesPage() {
       const mapped: Invoice[] = (data as any[]).map((inv) => {
         const total = Number(inv.total_amount) || 0;
         const paid = Number(inv.paid_amount) || 0;
+        const subtotal = Number(inv.subtotal) || (total - (Number(inv.tax_amount) || 0));
+        const tax = Number(inv.tax_amount) || (total - subtotal);
         const balance = total - paid;
         const today = new Date();
         const due = inv.due_date ? new Date(inv.due_date) : null;
@@ -57,6 +69,27 @@ export default function InvoicesPage() {
         if (due && balance > 0) {
           const diff = Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
           daysOverdue = diff > 0 ? diff : 0;
+        }
+
+        const items = (inv.invoice_lines || []).map((line: any) => {
+          const qty = Number(line.quantity) || 0;
+          const price = Number(line.unit_price) || 0;
+          const lineTotal = Number(line.line_total) || qty * price;
+          return {
+            description: line.description || (line.inventory_items as any)?.name || 'Ítem',
+            quantity: qty,
+            price,
+            total: lineTotal,
+          };
+        });
+
+        if (items.length === 0) {
+          items.push({
+            description: inv.description || 'Servicio/Producto',
+            quantity: 1,
+            price: total,
+            total,
+          });
         }
         return {
           id: String(inv.id),
@@ -70,6 +103,9 @@ export default function InvoicesPage() {
           balance,
           status: (inv.status as Invoice['status']) || 'pending',
           daysOverdue,
+          subtotal,
+          tax,
+          items,
         };
       });
       setInvoices(mapped);
@@ -236,9 +272,91 @@ export default function InvoicesPage() {
 
   const handlePrintInvoice = (invoiceId: string) => {
     const invoice = invoices.find(inv => inv.id === invoiceId);
-    if (invoice) {
-      alert(`Imprimiendo factura ${invoice.invoiceNumber}...`);
+    if (!invoice) return;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('No se pudo abrir la ventana de impresión.');
+      return;
     }
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Factura ${invoice.invoiceNumber}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            .header { text-align: center; margin-bottom: 20px; }
+            .details { margin: 20px 0; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            .total { font-weight: bold; text-align: right; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h2>Factura #${invoice.invoiceNumber}</h2>
+            <p>Fecha: ${new Date(invoice.date).toLocaleDateString('es-DO')}</p>
+          </div>
+          <div class="details">
+            <p><strong>Cliente:</strong> ${invoice.customerName}</p>
+            <p><strong>Vencimiento:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('es-DO') : ''}</p>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Descripción</th>
+                <th>Cantidad</th>
+                <th>Precio</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${invoice.items
+                .map(
+                  (item) => `
+                  <tr>
+                    <td>${item.description}</td>
+                    <td>${item.quantity}</td>
+                    <td>RD$ ${item.price.toLocaleString()}</td>
+                    <td>RD$ ${item.total.toLocaleString()}</td>
+                  </tr>`
+                )
+                .join('')}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="3" class="total">Subtotal:</td>
+                <td>RD$ ${invoice.subtotal.toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td colspan="3" class="total">ITBIS:</td>
+                <td>RD$ ${invoice.tax.toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td colspan="3" class="total">Total:</td>
+                <td>RD$ ${invoice.amount.toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td colspan="3" class="total">Pagado:</td>
+                <td>RD$ ${invoice.paidAmount.toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td colspan="3" class="total">Saldo:</td>
+                <td>RD$ ${invoice.balance.toLocaleString()}</td>
+              </tr>
+            </tfoot>
+          </table>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(() => window.close(), 1000);
+            };
+          <\/script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const handleSaveInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
