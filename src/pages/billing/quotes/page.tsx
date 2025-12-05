@@ -387,6 +387,7 @@ function NewQuoteForm({ customers, paymentTerms, currencies, salesReps, stores, 
 
 interface Quote {
   id: string;
+  customerId?: string;
   customer: string;
   customerEmail: string;
   project: string;
@@ -400,6 +401,10 @@ interface Quote {
   items: QuoteItem[];
   created_at?: string;
   currency: string;
+  paymentTermId?: string | null;
+  storeName?: string | null;
+  salesRepId?: string | null;
+  notes?: string | null;
 }
 
 interface Customer {
@@ -456,31 +461,9 @@ export default function QuotesPage() {
   const [stores, setStores] = useState<Array<{ id: string; name: string; is_active?: boolean }>>([]);
 
   // Estado para las cotizaciones
-  const [quotes, setQuotes] = useState<Array<{
-    id: string;
-    customerId?: string;
-    customer: string;
-    customerEmail: string;
-    project: string;
-    amount: number;
-    tax: number;
-    total: number;
-    status: 'pending' | 'approved' | 'under_review' | 'rejected' | 'expired';
-    date: string;
-    validUntil: string;
-    probability: number;
-    items: Array<{
-      description: string;
-      quantity: number;
-      price: number;
-      total: number;
-    }>;
-    currency: string;
-    paymentTermId?: string | null;
-    storeName?: string | null;
-    salesRepId?: string | null;
-    notes?: string | null;
-  }>>([]);
+  const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [viewQuote, setViewQuote] = useState<Quote | null>(null);
+  const [editingQuote, setEditingQuote] = useState<Quote | null>(null);
 
   // Cargar datos iniciales
   useEffect(() => {
@@ -551,7 +534,7 @@ export default function QuotesPage() {
             storeName: (q.store_name as string) || null,
             salesRepId: (q.sales_rep_id as string) || null,
             notes: (q.notes as string) || null,
-          };
+          } as Quote;
         });
         setQuotes(mapped);
 
@@ -561,7 +544,7 @@ export default function QuotesPage() {
           symbol: c.symbol as string,
           is_base: !!c.is_base,
           is_active: c.is_active !== false,
-        })).filter(c => c.is_active);
+        })).filter((c: any) => c.is_active);
         setCurrencies(mappedCurrencies);
 
         const mappedTerms = (terms || []).map((t: any) => ({
@@ -677,27 +660,146 @@ export default function QuotesPage() {
     }
   };
 
-
   const handleViewQuote = (quoteId: string) => {
-    alert(`Visualizando cotización: ${quoteId}`);
+    const quote = quotes.find((q) => q.id === quoteId);
+    if (!quote) return;
+    setViewQuote(quote);
   };
 
   const handleEditQuote = (quoteId: string) => {
-    alert(`Editando cotización: ${quoteId}`);
+    const quote = quotes.find((q) => q.id === quoteId);
+    if (!quote) return;
+    setEditingQuote({ ...quote });
+  };
+
+  const handleApproveQuote = async (quoteId: string) => {
+    const quote = quotes.find((q) => q.id === quoteId);
+    if (!quote || quote.status === 'approved') return;
+
+    try {
+      await quotesService.update(quoteId, { status: 'approved' });
+      setQuotes((prev) => prev.map((q) => q.id === quoteId ? { ...q, status: 'approved' } : q));
+      toast.success(`Cotización ${quoteId} aprobada`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error al aprobar cotización', error);
+      toast.error('Error al aprobar la cotización');
+    }
   };
 
   const handlePrintQuote = (quoteId: string) => {
-    alert(`Imprimiendo cotización: ${quoteId}`);
+    const quote = quotes.find((q) => q.id === quoteId);
+    if (!quote) return;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('No se pudo abrir la ventana de impresión');
+      return;
+    }
+
+    const itemsHtml = (quote.items || [])
+      .map(
+        (item) => `
+          <tr>
+            <td>${item.description}</td>
+            <td>${item.quantity}</td>
+            <td>${quote.currency} ${item.price.toLocaleString('es-DO')}</td>
+            <td>${quote.currency} ${item.total.toLocaleString('es-DO')}</td>
+          </tr>`
+      )
+      .join('');
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Cotización ${quote.id}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            .header { text-align: center; margin-bottom: 20px; }
+            .details { margin: 20px 0; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            .total { font-weight: bold; text-align: right; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h2>Cotización ${quote.id}</h2>
+            <p>Fecha: ${new Date(quote.date).toLocaleDateString('es-DO')}</p>
+          </div>
+          <div class="details">
+            <p><strong>Cliente:</strong> ${quote.customer}</p>
+            ${quote.project ? `<p><strong>Proyecto:</strong> ${quote.project}</p>` : ''}
+            <p><strong>Válida hasta:</strong> ${new Date(quote.validUntil).toLocaleDateString('es-DO')}</p>
+            <p><strong>Probabilidad:</strong> ${quote.probability}%</p>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Descripción</th>
+                <th>Cantidad</th>
+                <th>Precio</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsHtml}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="3" class="total">Subtotal:</td>
+                <td>${quote.currency} ${quote.amount.toLocaleString('es-DO')}</td>
+              </tr>
+              <tr>
+                <td colspan="3" class="total">Impuestos:</td>
+                <td>${quote.currency} ${quote.tax.toLocaleString('es-DO')}</td>
+              </tr>
+              <tr>
+                <td colspan="3" class="total">Total:</td>
+                <td>${quote.currency} ${quote.total.toLocaleString('es-DO')}</td>
+              </tr>
+            </tfoot>
+          </table>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(() => window.close(), 1000);
+            };
+          <\/script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
-  const handleSendQuote = (quoteId: string, customerEmail: string) => {
-    alert(`Enviando cotización ${quoteId} a ${customerEmail}`);
+  const handleRejectQuote = async (quoteId: string) => {
+    const quote = quotes.find((q) => q.id === quoteId);
+    if (!quote || quote.status === 'rejected') return;
+
+    if (!confirm(`¿Rechazar la cotización ${quoteId}?`)) return;
+
+    try {
+      await quotesService.update(quoteId, { status: 'rejected' });
+      setQuotes((prev) => prev.map((q) => q.id === quoteId ? { ...q, status: 'rejected' } : q));
+      toast.success(`Cotización ${quoteId} rechazada`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error al rechazar cotización', error);
+      toast.error('Error al rechazar la cotización');
+    }
   };
 
-  const handleDeleteQuote = (quoteId: string) => {
-    if (confirm(`¿Está seguro de eliminar la cotización ${quoteId}?`)) {
-      alert(`Cotización ${quoteId} eliminada`);
-      // TODO: integrar quotesService.delete cuando se quiera borrar en BD
+  const handleDeleteQuote = async (quoteId: string) => {
+    if (!confirm(`¿Está seguro de eliminar la cotización ${quoteId}?`)) return;
+
+    try {
+      await quotesService.delete(quoteId);
+      setQuotes((prev) => prev.filter((q) => q.id !== quoteId));
+      toast.success(`Cotización ${quoteId} eliminada`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error al eliminar cotización', error);
+      toast.error('Error al eliminar la cotización');
     }
   };
 
@@ -789,12 +891,92 @@ export default function QuotesPage() {
     })();
   };
 
-  const handleDuplicateQuote = (quoteId: string) => {
-    alert(`Duplicando cotización: ${quoteId}`);
+  const handleDuplicateQuote = async (quoteId: string) => {
+    const source = quotes.find((q) => q.id === quoteId);
+    if (!source) return;
+
+    if (!user?.id) {
+      toast.error('Debes iniciar sesión para duplicar una cotización');
+      return;
+    }
+
+    try {
+      const quotePayload = {
+        customer_id: source.customerId,
+        customer_name: source.customer,
+        customer_email: source.customerEmail,
+        payment_term_id: source.paymentTermId || null,
+        project: source.project,
+        date: new Date().toISOString().slice(0, 10),
+        valid_until: source.validUntil,
+        probability: source.probability,
+        amount: source.amount,
+        tax: source.tax,
+        total: source.total,
+        status: 'pending' as StatusType,
+        currency: source.currency,
+        store_name: source.storeName || null,
+        sales_rep_id: source.salesRepId || null,
+        notes: source.notes && source.notes.trim().length > 0
+          ? `${source.notes} (duplicada de ${source.id})`
+          : `Duplicada desde cotización ${source.id}`,
+      };
+
+      const linePayloads = (source.items || []).map((item) => ({
+        description: item.description,
+        quantity: item.quantity,
+        price: item.price,
+        total: item.total,
+      }));
+
+      const created: any = await quotesService.create(user.id, quotePayload, linePayloads);
+
+      const subtotal = Number(created.subtotal) || source.amount;
+      const tax = Number(created.tax_amount) || source.tax;
+      const total = Number(created.total_amount) || source.total;
+      const items = (created.quote_lines || source.items || []).map((it: any) => ({
+        description: it.description || '',
+        quantity: Number(it.quantity) || 1,
+        price: Number(it.unit_price ?? it.price ?? 0) || 0,
+        total: Number(it.line_total ?? it.total ?? 0) || 0,
+      }));
+
+      const duplicated: Quote = {
+        id: created.id,
+        customerId: created.customer_id || source.customerId,
+        customer: created.customer_name || source.customer,
+        customerEmail: created.customer_email || source.customerEmail,
+        project: created.project || source.project,
+        amount: subtotal,
+        tax,
+        total,
+        status: (created.status || 'pending') as StatusType,
+        date: created.date || created.created_at || new Date().toISOString(),
+        validUntil: created.valid_until || source.validUntil,
+        probability: created.probability ?? source.probability,
+        items,
+        created_at: created.created_at,
+        currency: created.currency || source.currency,
+        paymentTermId: created.payment_term_id ?? source.paymentTermId ?? null,
+        storeName: created.store_name ?? source.storeName ?? null,
+        salesRepId: created.sales_rep_id ?? source.salesRepId ?? null,
+        notes: created.notes ?? quotePayload.notes,
+      };
+
+      setQuotes((prev) => [duplicated, ...prev]);
+      toast.success(`Cotización duplicada (${duplicated.id})`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error al duplicar cotización', error);
+      toast.error('Error al duplicar la cotización');
+    }
   };
 
   const handleFollowUp = (quoteId: string) => {
-    alert(`Programando seguimiento para cotización: ${quoteId}`);
+    const quote = quotes.find((q) => q.id === quoteId);
+    if (!quote) return;
+
+    toast.info(`Seguimiento programado para la cotización ${quote.id} del cliente ${quote.customer}`);
   };
 
   if (loading) {
@@ -1048,11 +1230,20 @@ export default function QuotesPage() {
                           <i className="ri-printer-line"></i>
                         </button>
                         <button
-                          onClick={() => handleSendQuote(quote.id, quote.customerEmail)}
-                          className="text-purple-600 hover:text-purple-900 p-1"
-                          title="Enviar por email"
+                          onClick={() => handleApproveQuote(quote.id)}
+                          disabled={quote.status === 'approved'}
+                          className={`p-1 ${quote.status === 'approved' ? 'text-green-300 cursor-not-allowed' : 'text-green-600 hover:text-green-900'}`}
+                          title="Aprobar cotización"
                         >
-                          <i className="ri-mail-line"></i>
+                          <i className="ri-check-line"></i>
+                        </button>
+                        <button
+                          onClick={() => handleRejectQuote(quote.id)}
+                          disabled={quote.status === 'rejected'}
+                          className={`p-1 ${quote.status === 'rejected' ? 'text-red-300 cursor-not-allowed' : 'text-red-600 hover:text-red-900'}`}
+                          title="Rechazar cotización"
+                        >
+                          <i className="ri-close-circle-line"></i>
                         </button>
                         {quote.status === 'approved' && (
                           <button
@@ -1063,13 +1254,6 @@ export default function QuotesPage() {
                             <i className="ri-file-transfer-line"></i>
                           </button>
                         )}
-                        <button
-                          onClick={() => handleFollowUp(quote.id)}
-                          className="text-orange-600 hover:text-orange-900 p-1"
-                          title="Programar seguimiento"
-                        >
-                          <i className="ri-calendar-check-line"></i>
-                        </button>
                         <button
                           onClick={() => handleDuplicateQuote(quote.id)}
                           className="text-blue-600 hover:text-blue-900 p-1"
@@ -1092,6 +1276,207 @@ export default function QuotesPage() {
             </table>
           </div>
         </div>
+
+        {/* View Quote Modal */}
+        {viewQuote && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">Detalle de Cotización</h3>
+                <button
+                  onClick={() => setViewQuote(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <i className="ri-close-line text-xl" />
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-700">
+                  <div>
+                    <p><span className="font-medium">Número:</span> {viewQuote.id}</p>
+                    <p><span className="font-medium">Cliente:</span> {viewQuote.customer}</p>
+                    {viewQuote.customerEmail && (
+                      <p><span className="font-medium">Email:</span> {viewQuote.customerEmail}</p>
+                    )}
+                    {viewQuote.project && (
+                      <p><span className="font-medium">Proyecto:</span> {viewQuote.project}</p>
+                    )}
+                  </div>
+                  <div>
+                    <p><span className="font-medium">Fecha:</span> {new Date(viewQuote.date).toLocaleDateString('es-DO')}</p>
+                    <p><span className="font-medium">Válida hasta:</span> {new Date(viewQuote.validUntil).toLocaleDateString('es-DO')}</p>
+                    <p><span className="font-medium">Probabilidad:</span> {viewQuote.probability}%</p>
+                    <p><span className="font-medium">Estado:</span> {getStatusText(viewQuote.status)}</p>
+                  </div>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg overflow-hidden mt-4">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cantidad</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Precio</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(viewQuote.items || []).map((item, idx) => (
+                        <tr key={idx} className="border-t border-gray-100">
+                          <td className="px-4 py-2">{item.description}</td>
+                          <td className="px-4 py-2">{item.quantity}</td>
+                          <td className="px-4 py-2">{viewQuote.currency} {item.price.toLocaleString('es-DO')}</td>
+                          <td className="px-4 py-2">{viewQuote.currency} {item.total.toLocaleString('es-DO')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-50">
+                      <tr>
+                        <td colSpan={3} className="px-4 py-2 text-right font-medium">Subtotal:</td>
+                        <td className="px-4 py-2 font-semibold">{viewQuote.currency} {viewQuote.amount.toLocaleString('es-DO')}</td>
+                      </tr>
+                      <tr>
+                        <td colSpan={3} className="px-4 py-2 text-right font-medium">Impuestos:</td>
+                        <td className="px-4 py-2 font-semibold">{viewQuote.currency} {viewQuote.tax.toLocaleString('es-DO')}</td>
+                      </tr>
+                      <tr>
+                        <td colSpan={3} className="px-4 py-2 text-right font-semibold">Total:</td>
+                        <td className="px-4 py-2 font-bold">{viewQuote.currency} {viewQuote.total.toLocaleString('es-DO')}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {viewQuote.notes && (
+                  <div className="mt-4">
+                    <h4 className="text-sm font-medium text-gray-900 mb-1">Notas</h4>
+                    <p className="text-sm text-gray-700 whitespace-pre-line">{viewQuote.notes}</p>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setViewQuote(null)}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Quote Modal */}
+        {editingQuote && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl max-w-xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">Editar Cotización</h3>
+                <button
+                  onClick={() => setEditingQuote(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <i className="ri-close-line text-xl" />
+                </button>
+              </div>
+              <div className="p-6 space-y-4 text-sm text-gray-700">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Proyecto</label>
+                    <input
+                      type="text"
+                      value={editingQuote.project}
+                      onChange={(e) => setEditingQuote(prev => prev ? { ...prev, project: e.target.value } : prev)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Válida hasta</label>
+                    <input
+                      type="date"
+                      value={editingQuote.validUntil?.slice(0, 10)}
+                      onChange={(e) => setEditingQuote(prev => prev ? { ...prev, validUntil: e.target.value } : prev)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Probabilidad (%)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={editingQuote.probability}
+                      onChange={(e) => setEditingQuote(prev => prev ? { ...prev, probability: Number(e.target.value) || 0 } : prev)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Estado</label>
+                    <select
+                      value={editingQuote.status}
+                      onChange={(e) => setEditingQuote(prev => prev ? { ...prev, status: e.target.value as StatusType } : prev)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="pending">Pendiente</option>
+                      <option value="under_review">En Revisión</option>
+                      <option value="approved">Aprobada</option>
+                      <option value="rejected">Rechazada</option>
+                      <option value="expired">Expirada</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Notas</label>
+                  <textarea
+                    rows={3}
+                    value={editingQuote.notes || ''}
+                    onChange={(e) => setEditingQuote(prev => prev ? { ...prev, notes: e.target.value } : prev)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Notas internas o comentarios de la cotización"
+                  />
+                </div>
+
+                <div className="flex justify-end space-x-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingQuote(null)}
+                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!editingQuote) return;
+                      try {
+                        await quotesService.update(editingQuote.id, {
+                          project: editingQuote.project,
+                          valid_until: editingQuote.validUntil,
+                          probability: editingQuote.probability,
+                          status: editingQuote.status,
+                          notes: editingQuote.notes ?? null,
+                        });
+                        setQuotes(prev => prev.map(q => q.id === editingQuote.id ? editingQuote : q));
+                        toast.success(`Cotización ${editingQuote.id} actualizada`);
+                        setEditingQuote(null);
+                      } catch (error) {
+                        // eslint-disable-next-line no-console
+                        console.error('Error al actualizar cotización', error);
+                        toast.error('Error al actualizar la cotización');
+                      }
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                  >
+                    Guardar cambios
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* New Quote Modal */}
         {showNewQuoteModal && (
