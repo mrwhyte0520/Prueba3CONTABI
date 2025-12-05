@@ -27,6 +27,17 @@ interface Invoice {
   }[];
 }
 
+interface Customer {
+  id: string;
+  name: string;
+  document: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  type: 'regular' | 'vip';
+  paymentTermId?: string | null;
+}
+
 export default function InvoicesPage() {
   const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,7 +46,8 @@ export default function InvoicesPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [loadingCustomers, setLoadingCustomers] = useState(false);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
 
@@ -44,9 +56,17 @@ export default function InvoicesPage() {
     setLoadingCustomers(true);
     try {
       const list = await customersService.getAll(user.id);
-      setCustomers(
-        list.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))
-      );
+      const mapped: Customer[] = (list || []).map((c: any) => ({
+        id: c.id,
+        name: c.name || c.customer_name || 'Cliente',
+        document: c.document || c.tax_id || '',
+        phone: c.phone || c.contact_phone || '',
+        email: c.email || c.contact_email || '',
+        address: c.address || '',
+        type: (c.type === 'vip' ? 'vip' : 'regular') as 'regular' | 'vip',
+        paymentTermId: c.paymentTermId ?? c.payment_term_id ?? null,
+      }));
+      setCustomers(mapped);
     } finally {
       setLoadingCustomers(false);
     }
@@ -146,6 +166,8 @@ export default function InvoicesPage() {
     const matchesStatus = statusFilter === 'all' || invoice.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+
+  const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
 
   const exportToPDF = () => {
     const doc = new jsPDF();
@@ -255,6 +277,7 @@ export default function InvoicesPage() {
 
   const handleNewInvoice = () => {
     setSelectedInvoice(null);
+    setSelectedCustomerId('');
     setShowInvoiceModal(true);
   };
 
@@ -273,6 +296,20 @@ export default function InvoicesPage() {
   const handlePrintInvoice = (invoiceId: string) => {
     const invoice = invoices.find(inv => inv.id === invoiceId);
     if (!invoice) return;
+
+    const customer = customers.find((c) => c.id === invoice.customerId);
+
+    const customerDetailsHtml = customer
+      ? `
+            <p><strong>Cliente:</strong> ${customer.name}</p>
+            ${customer.document ? `<p><strong>Documento:</strong> ${customer.document}</p>` : ''}
+            ${customer.phone ? `<p><strong>Teléfono:</strong> ${customer.phone}</p>` : ''}
+            ${customer.email ? `<p><strong>Email:</strong> ${customer.email}</p>` : ''}
+            ${customer.address ? `<p><strong>Dirección:</strong> ${customer.address}</p>` : ''}
+        `
+      : `
+            <p><strong>Cliente:</strong> ${invoice.customerName}</p>
+        `;
 
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
@@ -299,7 +336,7 @@ export default function InvoicesPage() {
             <p>Fecha: ${new Date(invoice.date).toLocaleDateString('es-DO')}</p>
           </div>
           <div class="details">
-            <p><strong>Cliente:</strong> ${invoice.customerName}</p>
+            ${customerDetailsHtml}
             <p><strong>Vencimiento:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('es-DO') : ''}</p>
           </div>
           <table>
@@ -669,6 +706,7 @@ export default function InvoicesPage() {
                       required
                       name="customer_id"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                      onChange={(e) => setSelectedCustomerId(e.target.value)}
                     >
                       <option value="">Seleccionar cliente</option>
                       {customers.map((customer) => (
@@ -691,6 +729,24 @@ export default function InvoicesPage() {
                     />
                   </div>
                 </div>
+                
+                {selectedCustomer && (
+                  <div className="p-3 bg-gray-50 rounded-lg text-sm text-gray-700">
+                    <p className="font-medium">{selectedCustomer.name}</p>
+                    {selectedCustomer.document && (
+                      <p>Documento: {selectedCustomer.document}</p>
+                    )}
+                    {selectedCustomer.phone && (
+                      <p>Teléfono: {selectedCustomer.phone}</p>
+                    )}
+                    {selectedCustomer.email && (
+                      <p>Email: {selectedCustomer.email}</p>
+                    )}
+                    {selectedCustomer.address && (
+                      <p>Dirección: {selectedCustomer.address}</p>
+                    )}
+                  </div>
+                )}
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
