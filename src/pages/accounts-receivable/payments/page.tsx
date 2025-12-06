@@ -3,7 +3,8 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customerPaymentsService, invoicesService, bankAccountsService, accountingSettingsService, journalEntriesService, customersService, receiptsService, receiptApplicationsService, chartAccountsService } from '../../../services/database';
+import { customerPaymentsService, invoicesService, bankAccountsService, accountingSettingsService, journalEntriesService, customersService, receiptsService, receiptApplicationsService, chartAccountsService, settingsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface Payment {
   id: string;
@@ -145,24 +146,41 @@ export default function PaymentsPage() {
     return matchesSearch && matchesMethod;
   });
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
     const doc = new jsPDF();
-    
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      console.error('Error obteniendo información de la empresa para PDF de pagos recibidos:', error);
+    }
+
+    doc.setFontSize(16);
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' } as any);
+
     doc.setFontSize(20);
-    doc.text('Reporte de Pagos Recibidos', 20, 20);
+    doc.text('Reporte de Pagos Recibidos', 20, 30);
     
     doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
-    
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 45);
+
     const totalPayments = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
     const paymentsByMethod = filteredPayments.reduce((acc, payment) => {
       acc[payment.paymentMethod] = (acc[payment.paymentMethod] || 0) + payment.amount;
       return acc;
     }, {} as Record<string, number>);
-    
+
     doc.setFontSize(14);
     doc.text('Resumen de Pagos', 20, 60);
-    
+
     const summaryData = [
       ['Concepto', 'Monto'],
       ['Total Recibido', `RD$ ${totalPayments.toLocaleString()}`],
@@ -172,7 +190,7 @@ export default function PaymentsPage() {
       ['Cheques', `RD$ ${(paymentsByMethod.check || 0).toLocaleString()}`],
       ['Tarjetas', `RD$ ${(paymentsByMethod.card || 0).toLocaleString()}`]
     ];
-    
+
     (doc as any).autoTable({
       startY: 70,
       head: [summaryData[0]],
@@ -180,10 +198,10 @@ export default function PaymentsPage() {
       theme: 'grid',
       headStyles: { fillColor: [34, 197, 94] }
     });
-    
+
     doc.setFontSize(14);
     doc.text('Detalle de Pagos', 20, (doc as any).lastAutoTable.finalY + 20);
-    
+
     const paymentData = filteredPayments.map(payment => [
       payment.date,
       payment.customerName,
@@ -192,7 +210,7 @@ export default function PaymentsPage() {
       getPaymentMethodName(payment.paymentMethod),
       payment.reference
     ]);
-    
+
     (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 30,
       head: [['Fecha', 'Cliente', 'Factura', 'Monto', 'Método', 'Referencia']],
@@ -201,46 +219,61 @@ export default function PaymentsPage() {
       headStyles: { fillColor: [16, 185, 129] },
       styles: { fontSize: 9 }
     });
-    
+
     doc.save(`pagos-recibidos-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportToExcel = () => {
-    const totalPayments = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
-    const paymentsByMethod = filteredPayments.reduce((acc, payment) => {
-      acc[payment.paymentMethod] = (acc[payment.paymentMethod] || 0) + payment.amount;
-      return acc;
-    }, {} as Record<string, number>);
-    
-    const csvContent = [
-      ['Reporte de Pagos Recibidos'],
-      [`Fecha de generación: ${new Date().toLocaleDateString()}`],
-      [''],
-      ['RESUMEN DE PAGOS'],
-      ['Total Recibido', `RD$ ${totalPayments.toLocaleString()}`],
-      ['Número de Pagos', filteredPayments.length.toString()],
-      ['Efectivo', `RD$ ${(paymentsByMethod.cash || 0).toLocaleString()}`],
-      ['Transferencias', `RD$ ${(paymentsByMethod.transfer || 0).toLocaleString()}`],
-      ['Cheques', `RD$ ${(paymentsByMethod.check || 0).toLocaleString()}`],
-      ['Tarjetas', `RD$ ${(paymentsByMethod.card || 0).toLocaleString()}`],
-      [''],
-      ['DETALLE DE PAGOS'],
-      ['Fecha', 'Cliente', 'Factura', 'Monto', 'Método', 'Referencia'],
-      ...filteredPayments.map(payment => [
-        payment.date,
-        payment.customerName,
-        payment.invoiceNumber,
-        payment.amount,
-        getPaymentMethodName(payment.paymentMethod),
-        payment.reference
-      ])
-    ].map(row => row.join(',')).join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `pagos-recibidos-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+  const exportToExcel = async () => {
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      console.error('Error obteniendo información de la empresa para Excel de pagos recibidos:', error);
+    }
+
+    const rows = filteredPayments.map((payment) => ({
+      date: payment.date,
+      customer: payment.customerName,
+      invoice: payment.invoiceNumber,
+      amount: payment.amount,
+      method: getPaymentMethodName(payment.paymentMethod),
+      reference: payment.reference,
+    }));
+
+    if (!rows.length) {
+      alert('No hay pagos para exportar con los filtros actuales.');
+      return;
+    }
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const todayLocal = new Date().toLocaleDateString();
+
+    const headers = [
+      { key: 'date', title: 'Fecha' },
+      { key: 'customer', title: 'Cliente' },
+      { key: 'invoice', title: 'Factura' },
+      { key: 'amount', title: 'Monto' },
+      { key: 'method', title: 'Método' },
+      { key: 'reference', title: 'Referencia' },
+    ];
+
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      `pagos-recibidos-${todayIso}`,
+      'Pagos',
+      [14, 28, 24, 16, 18, 24],
+      {
+        title: `Pagos Recibidos - ${todayLocal}`,
+        companyName,
+      },
+    );
   };
 
   const handleNewPayment = () => {

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { resolveTenantId } from '../../../services/database';
+import { resolveTenantId, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 
 // Estilos CSS para impresión
@@ -88,6 +88,7 @@ const GeneralLedgerPage: React.FC = () => {
   const [selectedFiscalYear, setSelectedFiscalYear] = useState('');
   const [selectedPeriodId, setSelectedPeriodId] = useState('');
   const [documentTypeFilter, setDocumentTypeFilter] = useState<string[]>([]);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   useEffect(() => {
     loadAccounts();
@@ -98,6 +99,19 @@ const GeneralLedgerPage: React.FC = () => {
       loadLedgerEntries(selectedAccount.id);
     }
   }, [selectedAccount]);
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        console.error('Error cargando información de la empresa para Mayor General', error);
+      }
+    };
+
+    loadCompany();
+  }, []);
 
   const loadAccounts = async () => {
     if (!user) return;
@@ -208,30 +222,67 @@ const GeneralLedgerPage: React.FC = () => {
       // Crear datos con balance inicial
       const dataToExport = [
         {
-          'Asiento': '',
+          Asiento: '',
           'Tipo Doc.': 'Balance inicial',
-          'Fecha': dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio',
-          'Descripción': `Balance inicial - ${selectedAccount.code} ${selectedAccount.name}`,
-          'Referencia': '',
-          'Débito': '',
-          'Crédito': '',
-          'Balance': openingBalance
+          Fecha: dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio',
+          Descripción: `Balance inicial - ${selectedAccount.code} ${selectedAccount.name}`,
+          Referencia: '',
+          Débito: '',
+          Crédito: '',
+          Balance: openingBalance,
         },
         ...filteredLedgerEntries.map(e => ({
-          'Asiento': e.entryNumber,
+          Asiento: e.entryNumber,
           'Tipo Doc.': getEntryDocumentType(e),
-          'Fecha': new Date(e.date).toLocaleDateString('es-DO'),
-          'Descripción': e.description || '',
-          'Referencia': e.reference || '',
-          'Débito': e.debit > 0 ? e.debit : '',
-          'Crédito': e.credit > 0 ? e.credit : '',
-          'Balance': e.balance
-        }))
+          Fecha: new Date(e.date).toLocaleDateString('es-DO'),
+          Descripción: e.description || '',
+          Referencia: e.reference || '',
+          Débito: e.debit > 0 ? e.debit : '',
+          Crédito: e.credit > 0 ? e.credit : '',
+          Balance: e.balance,
+        })),
       ];
+
+      const companyName =
+        (companyInfo as any)?.name ||
+        (companyInfo as any)?.company_name ||
+        'ContaBi';
+
+      const columns = Object.keys(dataToExport[0] || {});
+      const totalColumns = columns.length || 1;
+      const centerIndex = Math.floor((totalColumns - 1) / 2);
+
+      const headerRows: (string | number)[][] = [];
+
+      const row1 = new Array(totalColumns).fill('');
+      row1[centerIndex] = companyName;
+      headerRows.push(row1);
+
+      const row2 = new Array(totalColumns).fill('');
+      row2[centerIndex] = 'Mayor General';
+      headerRows.push(row2);
+
+      const row3 = new Array(totalColumns).fill('');
+      row3[centerIndex] = `Cuenta: ${selectedAccount.code} - ${selectedAccount.name}`;
+      headerRows.push(row3);
+
+      if (dateFrom || dateTo) {
+        const row4 = new Array(totalColumns).fill('');
+        row4[centerIndex] = `Período: ${dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} - ${
+          dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'
+        }`;
+        headerRows.push(row4);
+      }
+
+      headerRows.push(new Array(totalColumns).fill(''));
 
       // Crear libro de trabajo
       const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
+      const tableStartRow = headerRows.length + 1;
+      const ws = XLSX.utils.json_to_sheet(dataToExport as any, { origin: `A${tableStartRow}` } as any);
+
+      // Agregar encabezado centrado visualmente
+      XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
 
       // Ajustar anchos de columnas
       const colWidths = [
@@ -242,9 +293,9 @@ const GeneralLedgerPage: React.FC = () => {
         { wch: 15 }, // Referencia
         { wch: 15 }, // Débito
         { wch: 15 }, // Crédito
-        { wch: 15 }  // Balance
+        { wch: 15 }, // Balance
       ];
-      ws['!cols'] = colWidths;
+      (ws as any)['!cols'] = colWidths;
 
       // Agregar hoja al libro
       XLSX.utils.book_append_sheet(wb, ws, 'Mayor General');
@@ -362,6 +413,11 @@ const GeneralLedgerPage: React.FC = () => {
       </div>
     );
   }
+
+  const companyNameForPrint =
+    (companyInfo as any)?.name ||
+    (companyInfo as any)?.company_name ||
+    '';
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -675,145 +731,158 @@ const GeneralLedgerPage: React.FC = () => {
               {/* Contenido para impresión */}
               <div id="printable-ledger">
                 {/* Título para impresión */}
+                {companyNameForPrint && (
+                  <div className="hidden print:block print-title">{companyNameForPrint}</div>
+                )}
                 <div className="hidden print:block print-title">MAYOR GENERAL</div>
                 {selectedAccount && (
                   <div className="hidden print:block print-account">
                     Cuenta: {selectedAccount.code} - {selectedAccount.name}
                     {(dateFrom || dateTo) && (
                       <div className="text-xs mt-2">
-                        Período: {dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} - {dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'}
+                        Período: {dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} -{' '}
+                        {dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'}
                       </div>
                     )}
                   </div>
                 )}
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Asiento
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Documento
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Fecha
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Descripción
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Referencia
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Débito
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Crédito
-                      </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Balance
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {ledgerEntries.length === 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
                       <tr>
-                        <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
-                          <div className="flex flex-col items-center">
-                            <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
-                            <p>No hay movimientos para esta cuenta en el período seleccionado</p>
-                          </div>
-                        </td>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Asiento
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Documento
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Fecha
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Descripción
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Referencia
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Débito
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Crédito
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Balance
+                        </th>
                       </tr>
-                    ) : (
-                      <>
-                        <tr className="bg-gray-50">
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"></td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            Balance inicial
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900"></td>
-                          <td className="px-6 py-4 text-sm text-gray-900"></td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500"></td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            RD${Math.abs(openingBalance).toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {ledgerEntries.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
+                            <div className="flex flex-col items-center">
+                              <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
+                              <p>No hay movimientos para esta cuenta en el período seleccionado</p>
+                            </div>
                           </td>
                         </tr>
-                        {filteredLedgerEntries.length > 0 ? (
-                          filteredLedgerEntries.map((entry) => (
-                            <tr key={entry.id} className="hover:bg-gray-50">
-                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                <button
-                                  onClick={() => {
-                                    // Navegar al diario general con el asiento seleccionado
-                                    navigate(`/accounting/general-journal?entry=${entry.entryNumber}`);
-                                  }}
-                                  className="text-blue-600 hover:text-blue-900 hover:underline"
-                                  title="Ver/Editar asiento"
-                                >
-                                  {entry.entryNumber}
-                                </button>
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {getEntryDocumentType(entry)}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                {new Date(entry.date).toLocaleDateString()}
-                              </td>
-                              <td className="px-6 py-4 text-sm text-gray-900">
-                                {entry.description}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {entry.reference}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                {entry.debit > 0 ? `RD$${entry.debit.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '-'}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                {entry.credit > 0 ? `RD$${entry.credit.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '-'}
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                RD${Math.abs(entry.balance).toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
-                              <div className="flex flex-col items-center">
-                                <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
-                                <p>No hay movimientos para esta cuenta en el período seleccionado</p>
-                              </div>
+                      ) : (
+                        <>
+                          <tr className="bg-gray-50">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"></td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              Balance inicial
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900"></td>
+                            <td className="px-6 py-4 text-sm text-gray-900"></td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500"></td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                              RD${Math.abs(openingBalance).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </td>
                           </tr>
-                        )}
-                      </>
+                          {filteredLedgerEntries.length > 0 ? (
+                            filteredLedgerEntries.map((entry) => (
+                              <tr key={entry.id} className="hover:bg-gray-50">
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                  <button
+                                    onClick={() => {
+                                      navigate(`/accounting/general-journal?entry=${entry.entryNumber}`);
+                                    }}
+                                    className="text-blue-600 hover:text-blue-900 hover:underline"
+                                    title="Ver/Editar asiento"
+                                  >
+                                    {entry.entryNumber}
+                                  </button>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                  {getEntryDocumentType(entry)}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                  {new Date(entry.date).toLocaleDateString()}
+                                </td>
+                                <td className="px-6 py-4 text-sm text-gray-900">
+                                  {entry.description}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                  {entry.reference}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                  {entry.debit > 0
+                                    ? `RD$${entry.debit.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                    : '-'}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                  {entry.credit > 0
+                                    ? `RD$${entry.credit.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                    : '-'}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                  RD${Math.abs(entry.balance).toLocaleString('es-DO', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
+                                <div className="flex flex-col items-center">
+                                  <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
+                                  <p>No hay movimientos para esta cuenta en el período seleccionado</p>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      )}
+                    </tbody>
+                    {ledgerEntries.length > 0 && (
+                      <tfoot className="bg-gray-50">
+                        <tr>
+                          <td colSpan={5} className="px-6 py-3 text-right font-medium text-gray-900">
+                            Totales:
+                          </td>
+                          <td className="px-6 py-3 font-bold text-gray-900">
+                            RD${totalDebits.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-6 py-3 font-bold text-gray-900">
+                            RD${totalCredits.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="px-6 py-3 font-bold text-gray-900">
+                            RD${Math.abs(finalBalance).toLocaleString('es-DO', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                        </tr>
+                      </tfoot>
                     )}
-                  </tbody>
-                  {ledgerEntries.length > 0 && (
-                    <tfoot className="bg-gray-50">
-                      <tr>
-                        <td colSpan={5} className="px-6 py-3 text-right font-medium text-gray-900">
-                          Totales:
-                        </td>
-                        <td className="px-6 py-3 font-bold text-gray-900">
-                          RD${totalDebits.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                        </td>
-                        <td className="px-6 py-3 font-bold text-gray-900">
-                          RD${totalCredits.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                        </td>
-                        <td className="px-6 py-3 font-bold text-gray-900">
-                          RD${Math.abs(finalBalance).toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
+                  </table>
+                </div>
               </div>
-              </div> {/* Cierre de printable-ledger */}
 
               {/* Summary Stats */}
               {ledgerEntries.length > 0 && (
@@ -826,19 +895,22 @@ const GeneralLedgerPage: React.FC = () => {
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Débitos</div>
                       <div className="text-lg font-bold text-green-600">
-                        RD${totalDebits.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        RD${totalDebits.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Créditos</div>
                       <div className="text-lg font-bold text-red-600">
-                        RD${totalCredits.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        RD${totalCredits.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Balance Final</div>
                       <div className={`text-lg font-bold ${getBalanceColor(finalBalance, selectedAccount.normalBalance)}`}>
-                        RD${Math.abs(finalBalance).toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                        RD${Math.abs(finalBalance).toLocaleString('es-DO', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </div>
                     </div>
                   </div>

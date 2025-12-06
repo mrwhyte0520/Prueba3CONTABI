@@ -4,7 +4,8 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, receiptsService, invoicesService, receiptApplicationsService, bankAccountsService, accountingSettingsService, journalEntriesService } from '../../../services/database';
+import { customersService, receiptsService, invoicesService, receiptApplicationsService, bankAccountsService, accountingSettingsService, journalEntriesService, settingsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface Receipt {
   id: string;
@@ -167,16 +168,34 @@ export default function ReceiptsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
     const doc = new jsPDF();
-    
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para PDF de recibos de cobro:', error);
+    }
+
+    doc.setFontSize(16);
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' } as any);
+
     doc.setFontSize(20);
-    doc.text('Reporte de Recibos de Cobro', 20, 20);
+    doc.text('Reporte de Recibos de Cobro', 20, 30);
     
     doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
-    doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : statusFilter}`, 20, 50);
-    doc.text(`Método de pago: ${paymentMethodFilter === 'all' ? 'Todos' : getPaymentMethodName(paymentMethodFilter)}`, 20, 60);
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 45);
+    doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : statusFilter}`, 20, 55);
+    doc.text(`Método de pago: ${paymentMethodFilter === 'all' ? 'Todos' : getPaymentMethodName(paymentMethodFilter)}`, 20, 65);
     
     // Estadísticas
     const totalAmount = filteredReceipts.reduce((sum, receipt) => sum + receipt.amount, 0);
@@ -228,42 +247,62 @@ export default function ReceiptsPage() {
     doc.save(`recibos-cobro-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportToExcel = () => {
-    const totalAmount = filteredReceipts.reduce((sum, receipt) => sum + receipt.amount, 0);
-    const activeReceipts = filteredReceipts.filter(r => r.status === 'active').length;
-    const cancelledReceipts = filteredReceipts.filter(r => r.status === 'cancelled').length;
-    
-    const csvContent = [
-      ['Reporte de Recibos de Cobro'],
-      [`Fecha de generación: ${new Date().toLocaleDateString()}`],
-      [`Estado: ${statusFilter === 'all' ? 'Todos' : statusFilter}`],
-      [`Método de pago: ${paymentMethodFilter === 'all' ? 'Todos' : getPaymentMethodName(paymentMethodFilter)}`],
-      [''],
-      ['RESUMEN'],
-      ['Total Recibido', `RD$ ${totalAmount.toLocaleString()}`],
-      ['Recibos Activos', activeReceipts.toString()],
-      ['Recibos Anulados', cancelledReceipts.toString()],
-      ['Total de Recibos', filteredReceipts.length.toString()],
-      [''],
-      ['DETALLE DE RECIBOS'],
-      ['Recibo', 'Cliente', 'Fecha', 'Monto', 'Método', 'Referencia', 'Concepto', 'Estado'],
-      ...filteredReceipts.map(receipt => [
-        receipt.receiptNumber,
-        receipt.customerName,
-        receipt.date,
-        receipt.amount,
-        getPaymentMethodName(receipt.paymentMethod),
-        receipt.reference,
-        receipt.concept,
-        getStatusName(receipt.status)
-      ])
-    ].map(row => row.join(',')).join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `recibos-cobro-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+  const exportToExcel = async () => {
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de recibos de cobro:', error);
+    }
+
+    const rows = filteredReceipts.map((receipt) => ({
+      receiptNumber: receipt.receiptNumber,
+      customerName: receipt.customerName,
+      date: receipt.date,
+      amount: receipt.amount,
+      paymentMethod: getPaymentMethodName(receipt.paymentMethod),
+      reference: receipt.reference,
+      concept: receipt.concept,
+      status: getStatusName(receipt.status),
+    }));
+
+    if (!rows.length) {
+      alert('No hay recibos para exportar con los filtros actuales.');
+      return;
+    }
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const todayLocal = new Date().toLocaleDateString();
+
+    const headers = [
+      { key: 'receiptNumber', title: 'Recibo' },
+      { key: 'customerName', title: 'Cliente' },
+      { key: 'date', title: 'Fecha' },
+      { key: 'amount', title: 'Monto' },
+      { key: 'paymentMethod', title: 'Método' },
+      { key: 'reference', title: 'Referencia' },
+      { key: 'concept', title: 'Concepto' },
+      { key: 'status', title: 'Estado' },
+    ];
+
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      `recibos-cobro-${todayIso}`,
+      'Recibos',
+      [16, 28, 14, 16, 18, 24, 32, 14],
+      {
+        title: `Recibos de Cobro - ${todayLocal}`,
+        companyName,
+      },
+    );
   };
 
   const handleNewReceipt = () => {

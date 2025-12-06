@@ -9,6 +9,7 @@ import {
   customerAdvancesService,
   bankCurrenciesService,
   bankExchangeRatesService,
+  settingsService,
 } from '../../../services/database';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -80,6 +81,7 @@ export default function ReportsPage() {
     Array<{ code: string; name: string; symbol: string; is_base?: boolean; is_active?: boolean }>
   >([]);
   const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -259,15 +261,40 @@ export default function ReportsPage() {
     loadData();
   }, [user?.id]);
 
+  useEffect(() => {
+    const loadCompany = async () => {
+      if (!user?.id) return;
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error cargando información de la empresa para reportes de CxC', error);
+      }
+    };
+
+    void loadCompany();
+  }, [user?.id]);
+
+  const companyName =
+    (companyInfo as any)?.name ||
+    (companyInfo as any)?.company_name ||
+    'ContaBi';
+
   const handleGenerateAgingReport = () => {
     const doc = new jsPDF();
-    
-    doc.setFontSize(20);
-    doc.text('Reporte de Antigüedad de Saldos', 20, 20);
-    
-    doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
-    
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const centerX = pageWidth / 2;
+
+    doc.setFontSize(16);
+    doc.text(companyName, centerX, 20, { align: 'center' });
+
+    doc.setFontSize(14);
+    doc.text('Reporte de Antigüedad de Saldos', centerX, 28, { align: 'center' });
+
+    doc.setFontSize(10);
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, centerX, 36, { align: 'center' });
+
     // Análisis por períodos
     const agingData = customers.map(customer => {
       const customerInvoices = invoices.filter(inv => inv.customerId === customer.id && inv.balance > 0);
@@ -289,7 +316,7 @@ export default function ReportsPage() {
     });
     
     (doc as any).autoTable({
-      startY: 60,
+      startY: 48,
       head: [['Cliente', 'Corriente', '1-30 días', '31-60 días', '61-90 días', '+90 días', 'Total']],
       body: agingData,
       theme: 'striped',
@@ -302,19 +329,28 @@ export default function ReportsPage() {
 
   const handleGenerateStatementReport = () => {
     const doc = new jsPDF();
-    
-    doc.setFontSize(20);
-    doc.text('Estados de Cuenta por Cliente', 20, 20);
-    
-    doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
-    
-    let currentY = 60;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const centerX = pageWidth / 2;
+
+    const drawPageHeader = () => {
+      doc.setFontSize(16);
+      doc.text(companyName, centerX, 20, { align: 'center' });
+
+      doc.setFontSize(14);
+      doc.text('Estados de Cuenta por Cliente', centerX, 28, { align: 'center' });
+
+      doc.setFontSize(10);
+      doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, centerX, 36, { align: 'center' });
+    };
+
+    drawPageHeader();
+    let currentY = 50;
     
     customers.forEach((customer, index) => {
       if (index > 0) {
         doc.addPage();
-        currentY = 20;
+        drawPageHeader();
+        currentY = 50;
       }
       
       doc.setFontSize(16);
@@ -465,14 +501,19 @@ export default function ReportsPage() {
 
   const handleGenerateCollectionReport = () => {
     const doc = new jsPDF();
-    
-    doc.setFontSize(20);
-    doc.text('Reporte de Cobranza', 20, 20);
-    
-    doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const centerX = pageWidth / 2;
+
+    doc.setFontSize(16);
+    doc.text(companyName, centerX, 20, { align: 'center' });
+
+    doc.setFontSize(14);
+    doc.text('Reporte de Cobranza', centerX, 28, { align: 'center' });
+
+    doc.setFontSize(10);
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, centerX, 36, { align: 'center' });
     if (dateFrom && dateTo) {
-      doc.text(`Período: ${dateFrom} al ${dateTo}`, 20, 50);
+      doc.text(`Período: ${dateFrom} al ${dateTo}`, centerX, 44, { align: 'center' });
     }
     
     const totalPayments = payments.reduce((sum, p) => sum + p.amount, 0);
@@ -536,6 +577,7 @@ export default function ReportsPage() {
     const fmt = (value: number) => value.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     const rows: (string | number)[][] = [
+      [companyName],
       ['Reporte de Cobranza'],
       [`Fecha de generación: ${new Date().toLocaleDateString()}`],
       dateFrom && dateTo ? [`Período: ${dateFrom} al ${dateTo}`] : [],
@@ -562,10 +604,15 @@ export default function ReportsPage() {
 
     // CSV amigable para Excel (UTF-8 BOM + saltos de línea Windows)
     const csvBody = rows
-      .map(row => row.map(col => {
-        const str = String(col ?? '');
-        return /[",;\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
-      }).join(','))
+      .map(row =>
+        row
+          .map(col => {
+            const str = String(col ?? '');
+            // Si el texto contiene comillas, punto y coma o saltos de línea, lo encerramos entre comillas
+            return /[";\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+          })
+          .join(';') // Usar ; como separador para que Excel en español lo detecte como columnas
+      )
       .join('\r\n');
 
     const csvContent = '\uFEFF' + csvBody;
@@ -579,12 +626,17 @@ export default function ReportsPage() {
 
   const handleGenerateCustomerBalanceReport = () => {
     const doc = new jsPDF();
-    
-    doc.setFontSize(20);
-    doc.text('Reporte de Saldos por Cliente', 20, 20);
-    
-    doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const centerX = pageWidth / 2;
+
+    doc.setFontSize(16);
+    doc.text(companyName, centerX, 20, { align: 'center' });
+
+    doc.setFontSize(14);
+    doc.text('Reporte de Saldos por Cliente', centerX, 28, { align: 'center' });
+
+    doc.setFontSize(10);
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, centerX, 36, { align: 'center' });
     
     // Estadísticas generales
     const totalBalance = customers.reduce((sum, c) => sum + c.currentBalance, 0);
@@ -646,12 +698,17 @@ export default function ReportsPage() {
 
   const handleGenerateOverdueReport = () => {
     const doc = new jsPDF();
-    
-    doc.setFontSize(20);
-    doc.text('Reporte de Facturas Vencidas', 20, 20);
-    
-    doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const centerX = pageWidth / 2;
+
+    doc.setFontSize(16);
+    doc.text(companyName, centerX, 20, { align: 'center' });
+
+    doc.setFontSize(14);
+    doc.text('Reporte de Facturas Vencidas', centerX, 28, { align: 'center' });
+
+    doc.setFontSize(10);
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, centerX, 36, { align: 'center' });
     
     // Filtrar facturas vencidas
     const overdueInvoices = invoices.filter(inv => inv.daysOverdue > 0 && inv.balance > 0);
@@ -721,12 +778,17 @@ export default function ReportsPage() {
 
   const handleGeneratePaymentAnalysisReport = () => {
     const doc = new jsPDF();
-    
-    doc.setFontSize(20);
-    doc.text('Análisis de Patrones de Pago', 20, 20);
-    
-    doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const centerX = pageWidth / 2;
+
+    doc.setFontSize(16);
+    doc.text(companyName, centerX, 20, { align: 'center' });
+
+    doc.setFontSize(14);
+    doc.text('Análisis de Patrones de Pago', centerX, 28, { align: 'center' });
+
+    doc.setFontSize(10);
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, centerX, 36, { align: 'center' });
     
     // Análisis por cliente
     const customerPaymentAnalysis = customers.map(customer => {

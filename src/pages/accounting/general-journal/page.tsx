@@ -3,7 +3,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import { resolveTenantId } from '../../../services/database';
+import { resolveTenantId, settingsService } from '../../../services/database';
 
 // Estilos CSS para mejorar la impresión
 const printStyles = `
@@ -99,6 +99,7 @@ const GeneralJournalPage: React.FC = () => {
   const [documentTypeFilter, setDocumentTypeFilter] = useState('all');
   const [selectedFiscalYear, setSelectedFiscalYear] = useState('');
   const [selectedPeriodId, setSelectedPeriodId] = useState('');
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   // Formulario para nuevo asiento
   const [formData, setFormData] = useState({
@@ -114,6 +115,19 @@ const GeneralJournalPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [user]);
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        console.error('Error cargando información de la empresa para Diario General', error);
+      }
+    };
+
+    loadCompany();
+  }, []);
 
   const loadData = async () => {
     if (!user) return;
@@ -505,9 +519,61 @@ const GeneralJournalPage: React.FC = () => {
         }));
       });
 
+      const companyName =
+        (companyInfo as any)?.name ||
+        (companyInfo as any)?.company_name ||
+        'ContaBi';
+
+      const headerRows: (string | number)[][] = [];
+      headerRows.push([companyName]);
+      headerRows.push(['Diario General']);
+      headerRows.push([
+        `Generado: ${new Date().toLocaleDateString('es-DO', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        })}`,
+      ]);
+      headerRows.push([]);
+
       // Crear un nuevo libro de trabajo
       const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(dataToExport);
+      const tableStartRow = headerRows.length + 1;
+      const ws = XLSX.utils.json_to_sheet(dataToExport as any, { origin: `A${tableStartRow}` } as any);
+
+      XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
+
+      // Centrar el encabezado sobre todas las columnas
+      const totalColumns = dataToExport.length > 0 ? Object.keys(dataToExport[0]).length : 1;
+      const merges: any[] = (ws as any)['!merges'] || [];
+
+      // Las filas de encabezado son todas menos la última (que es vacía)
+      for (let rowIndex = 0; rowIndex < headerRows.length - 1; rowIndex++) {
+        merges.push({
+          s: { r: rowIndex, c: 0 },
+          e: { r: rowIndex, c: totalColumns - 1 },
+        });
+
+        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: 0 });
+        const cell = (ws as any)[cellAddress];
+        if (cell) {
+          const existingStyle = (cell as any).s || {};
+          (cell as any).s = {
+            ...existingStyle,
+            alignment: {
+              ...(existingStyle.alignment || {}),
+              horizontal: 'center',
+              vertical: 'center',
+            },
+            font: {
+              ...(existingStyle.font || {}),
+              bold: true,
+            },
+          };
+        }
+      }
+
+      (ws as any)['!merges'] = merges;
 
       // Ajustar el ancho de las columnas
       const colWidths = [
@@ -602,16 +668,26 @@ const GeneralJournalPage: React.FC = () => {
     );
   }
 
+  const companyNameForPrint =
+    (companyInfo as any)?.name ||
+    (companyInfo as any)?.company_name ||
+    '';
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Estilos de impresión */}
       <style dangerouslySetInnerHTML={{ __html: printStyles }} />
-      
+
       {/* Título para impresión (solo visible al imprimir) */}
+      {companyNameForPrint && (
+        <div className="hidden print:block print-title">{companyNameForPrint}</div>
+      )}
       <div className="hidden print:block print-title">DIARIO GENERAL</div>
       <div className="hidden print:block print-date">
-        Generado el {new Date().toLocaleDateString('es-DO', {year: 'numeric', month: 'long', day: 'numeric'})}
-        {(dateFrom || dateTo) && ` - Período: ${dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} a ${dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'}`}
+        Generado el {new Date().toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' })}
+        {(dateFrom || dateTo) && ` - Período: ${dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} a ${
+          dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'
+        }`}
       </div>
 
       {/* Header con botón de regreso */}

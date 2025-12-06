@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, chartAccountsService, salesRepsService, customerTypesService, paymentTermsService } from '../../../services/database';
+import { customersService, chartAccountsService, salesRepsService, customerTypesService, paymentTermsService, settingsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface Customer {
   id: string;
@@ -123,12 +124,29 @@ export default function CustomersPage() {
     const { default: jsPDF } = await import('jspdf');
     await import('jspdf-autotable');
     const doc = new jsPDF();
-    
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      console.error('Error obteniendo información de la empresa para PDF de clientes:', error);
+    }
+
+    doc.setFontSize(16);
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' } as any);
+
     doc.setFontSize(20);
-    doc.text('Reporte de Clientes', 20, 20);
+    doc.text('Reporte de Clientes', 20, 30);
     
     doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 45);
     
     const activeCustomers = customers.filter(c => c.status === 'active').length;
     const totalCreditLimit = customers.reduce((sum, c) => sum + c.creditLimit, 0);
@@ -178,40 +196,61 @@ export default function CustomersPage() {
     doc.save(`clientes-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportToExcel = () => {
-    const activeCustomers = customers.filter(c => c.status === 'active').length;
-    const totalCreditLimit = customers.reduce((sum, c) => sum + c.creditLimit, 0);
-    const totalBalance = customers.reduce((sum, c) => sum + c.currentBalance, 0);
-    
-    const csvContent = [
-      ['Reporte de Clientes'],
-      [`Fecha de generación: ${new Date().toLocaleDateString()}`],
-      [''],
-      ['ESTADÍSTICAS'],
-      ['Total de Clientes', customers.length.toString()],
-      ['Clientes Activos', activeCustomers.toString()],
-      ['Límite de Crédito Total', `RD$ ${totalCreditLimit.toLocaleString()}`],
-      ['Saldo Total Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
-      [''],
-      ['DETALLE DE CLIENTES'],
-      ['Cliente', 'Documento', 'Teléfono', 'Email', 'Dirección', 'Límite Crédito', 'Saldo Actual', 'Estado'],
-      ...filteredCustomers.map(customer => [
-        customer.name,
-        customer.document,
-        customer.phone,
-        customer.email,
-        customer.address,
-        customer.creditLimit,
-        customer.currentBalance,
-        getCustomerStatusName(customer.status)
-      ])
-    ].map(row => row.join(',')).join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `clientes-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+  const exportToExcel = async () => {
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      console.error('Error obteniendo información de la empresa para Excel de clientes:', error);
+    }
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const todayLocal = new Date().toLocaleDateString();
+
+    const headers = [
+      { key: 'name', title: 'Cliente' },
+      { key: 'document', title: 'Documento' },
+      { key: 'phone', title: 'Teléfono' },
+      { key: 'email', title: 'Email' },
+      { key: 'address', title: 'Dirección' },
+      { key: 'creditLimit', title: 'Límite Crédito' },
+      { key: 'currentBalance', title: 'Saldo Actual' },
+      { key: 'status', title: 'Estado' },
+    ];
+
+    const rows = filteredCustomers.map((customer) => ({
+      name: customer.name,
+      document: customer.document,
+      phone: customer.phone,
+      email: customer.email,
+      address: customer.address,
+      creditLimit: customer.creditLimit,
+      currentBalance: customer.currentBalance,
+      status: getCustomerStatusName(customer.status),
+    }));
+
+    if (!rows.length) {
+      alert('No hay clientes para exportar con los filtros actuales.');
+      return;
+    }
+
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      `clientes-${todayIso}`,
+      'Clientes',
+      [28, 18, 16, 28, 40, 18, 18, 14],
+      {
+        title: `Reporte de Clientes - ${todayLocal}`,
+        companyName,
+      },
+    );
   };
 
   const handleNewCustomer = () => {

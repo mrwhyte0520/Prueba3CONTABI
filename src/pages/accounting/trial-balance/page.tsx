@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
-import { financialReportsService } from '../../../services/database';
+import { financialReportsService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 
 // Estilos CSS para impresión
@@ -62,6 +62,7 @@ const TrialBalancePage: React.FC = () => {
 
   const [fromDateLabel, setFromDateLabel] = useState('');
   const [toDateLabel, setToDateLabel] = useState('');
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -75,6 +76,19 @@ const TrialBalancePage: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, cutoffDate, selectedFiscalYear, selectedPeriodId, mode]);
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        console.error('Error cargando información de la empresa para Balanza de Comprobación:', error);
+      }
+    };
+
+    loadCompany();
+  }, []);
 
   const loadPeriods = async () => {
     if (!user) return;
@@ -347,7 +361,7 @@ const TrialBalancePage: React.FC = () => {
       }
 
       const excelRows = rows.map((row) => ({
-        'Número': row.code,
+        Número: row.code,
         'Cuenta Contable': row.name,
         'Saldo Ant. Débito': row.prevDebit || 0,
         'Saldo Ant. Crédito': row.prevCredit || 0,
@@ -358,7 +372,7 @@ const TrialBalancePage: React.FC = () => {
       }));
 
       excelRows.push({
-        'Número': '',
+        Número: '',
         'Cuenta Contable': 'TOTALES',
         'Saldo Ant. Débito': totalPrevDebit,
         'Saldo Ant. Crédito': totalPrevCredit,
@@ -368,12 +382,45 @@ const TrialBalancePage: React.FC = () => {
         'Saldo Final Crédito': totalFinalCredit,
       });
 
+      const companyName =
+        (companyInfo as any)?.name ||
+        (companyInfo as any)?.company_name ||
+        'ContaBi';
+
+      const columns = Object.keys(excelRows[0] || {});
+      const totalColumns = columns.length || 1;
+      const centerIndex = Math.floor((totalColumns - 1) / 2);
+
+      const headerRows: (string | number)[][] = [];
+
+      const row1 = new Array(totalColumns).fill('');
+      row1[centerIndex] = companyName;
+      headerRows.push(row1);
+
+      const row2 = new Array(totalColumns).fill('');
+      row2[centerIndex] = 'Balanza de Comprobación';
+      headerRows.push(row2);
+
+      if (fromDateLabel && toDateLabel) {
+        const row3 = new Array(totalColumns).fill('');
+        row3[centerIndex] = `Período: ${new Date(fromDateLabel).toLocaleDateString('es-DO')} al ${
+          new Date(toDateLabel).toLocaleDateString('es-DO')
+        }`;
+        headerRows.push(row3);
+      }
+
+      headerRows.push(new Array(totalColumns).fill(''));
+
       // Crear libro de trabajo
       const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(excelRows);
+      const tableStartRow = headerRows.length + 1;
+      const ws = XLSX.utils.json_to_sheet(excelRows as any, { origin: `A${tableStartRow}` } as any);
+
+      // Agregar encabezado centrado visualmente
+      XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
 
       // Ajustar anchos de columnas
-      ws['!cols'] = [
+      (ws as any)['!cols'] = [
         { wch: 15 }, // Número
         { wch: 40 }, // Cuenta
         { wch: 18 }, // Saldo Ant. Débito
@@ -381,7 +428,7 @@ const TrialBalancePage: React.FC = () => {
         { wch: 18 }, // Mov. Débito
         { wch: 18 }, // Mov. Crédito
         { wch: 18 }, // Saldo Final Débito
-        { wch: 18 }  // Saldo Final Crédito
+        { wch: 18 }, // Saldo Final Crédito
       ];
 
       // Agregar hoja al libro
@@ -404,6 +451,11 @@ const TrialBalancePage: React.FC = () => {
       </div>
     );
   }
+
+  const companyNameForPrint =
+    (companyInfo as any)?.name ||
+    (companyInfo as any)?.company_name ||
+    '';
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -528,9 +580,13 @@ const TrialBalancePage: React.FC = () => {
       {/* Table */}
       <div id="printable-trial-balance">
         {/* Título para impresión */}
+        {companyNameForPrint && (
+          <div className="hidden print:block print-title">{companyNameForPrint}</div>
+        )}
         <div className="hidden print:block print-title">BALANZA DE COMPROBACIÓN</div>
         <div className="hidden print:block print-period">
-          Período: {fromDateLabel && new Date(fromDateLabel).toLocaleDateString('es-DO')} al {toDateLabel && new Date(toDateLabel).toLocaleDateString('es-DO')}
+          Período: {fromDateLabel && new Date(fromDateLabel).toLocaleDateString('es-DO')} al{' '}
+          {toDateLabel && new Date(toDateLabel).toLocaleDateString('es-DO')}
         </div>
       <div className="bg-white rounded-lg shadow overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
