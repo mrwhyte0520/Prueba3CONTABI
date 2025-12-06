@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import * as ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
-import { purchaseOrdersService, purchaseOrderItemsService, suppliersService, inventoryService, chartAccountsService } from '../../../services/database';
+import { purchaseOrdersService, purchaseOrderItemsService, suppliersService, inventoryService, chartAccountsService, settingsService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -19,6 +21,8 @@ export default function PurchaseOrdersPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [accounts, setAccounts] = useState<{ id: string; code: string; name: string }[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   const [formData, setFormData] = useState({
     supplierId: '',
@@ -27,8 +31,6 @@ export default function PurchaseOrdersPage() {
     products: [{ itemId: null as string | null, name: '', quantity: 1, price: 0 }],
     inventoryAccountId: '' as string | '',
   });
-
-  const [suppliers, setSuppliers] = useState<any[]>([]);
 
   const mapDbStatusToUi = (status: string | null | undefined): string => {
     switch (status) {
@@ -98,8 +100,17 @@ export default function PurchaseOrdersPage() {
       return;
     }
     try {
-      const data = await suppliersService.getAll(user.id);
-      setSuppliers(data || []);
+      const rows = await suppliersService.getAll(user.id);
+      const mapped = (rows || []).map((s: any) => ({
+        id: s.id,
+        name: s.name || 'Proveedor',
+        taxId: s.tax_id || '',
+        legalName: s.legal_name || s.name || '',
+        phone: s.phone || s.contact_phone || '',
+        email: s.email || s.contact_email || '',
+        address: s.address || '',
+      }));
+      setSuppliers(mapped);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error loading suppliers for purchase orders', error);
@@ -161,11 +172,27 @@ export default function PurchaseOrdersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading company info for purchase orders', error);
+      }
+    };
+
+    loadCompany();
+  }, [user?.id]);
+
   const filteredOrders = orders.filter(order => {
     const matchesStatus = filterStatus === 'all' || order.status === filterStatus;
     const matchesSupplier = filterSupplier === 'all' || order.supplier === filterSupplier;
     return matchesStatus && matchesSupplier;
   });
+
+  const selectedSupplier = suppliers.find((s: any) => String(s.id) === String(formData.supplierId));
 
   const calculateSubtotal = () => {
     return formData.products.reduce((sum, product) => sum + (product.quantity * product.price), 0);
@@ -225,11 +252,11 @@ export default function PurchaseOrdersPage() {
         orderId = String(updated.id);
         await purchaseOrderItemsService.deleteByOrder(orderId);
       } else {
-        const created = await purchaseOrdersService.create(user.id, payload);
+        const created = await purchaseOrdersService.create(user.id as string, payload);
         orderId = String(created.id);
       }
 
-      await purchaseOrderItemsService.createMany(user.id, orderId, formData.products);
+      await purchaseOrderItemsService.createMany(user.id as string, orderId, formData.products);
       await loadOrders();
       resetForm();
       alert(editingOrder ? 'Orden de compra actualizada exitosamente' : 'Orden de compra creada exitosamente');
@@ -322,7 +349,7 @@ export default function PurchaseOrdersPage() {
         }
 
         // Registrar siempre un movimiento de entrada (aunque no haya producto vinculado)
-        await inventoryService.createMovement(user.id, {
+        await inventoryService.createMovement(user.id as string, {
           item_id: it.inventory_item_id ? String(it.inventory_item_id) : null,
           movement_type: 'entry',
           quantity,
@@ -391,29 +418,26 @@ export default function PurchaseOrdersPage() {
   const exportToPDF = async () => {
     const { default: jsPDF } = await import('jspdf');
     await import('jspdf-autotable');
+
     const doc = new jsPDF();
-    
-    // Título
+
     doc.setFontSize(20);
     doc.text('Órdenes de Compra', 20, 20);
-    
-    // Información del reporte
+
     doc.setFontSize(12);
     doc.text(`Fecha de Generación: ${new Date().toLocaleDateString()}`, 20, 40);
     doc.text(`Total de Órdenes: ${filteredOrders.length}`, 20, 50);
-    
-    // Preparar datos para la tabla
-    const tableData = filteredOrders.map(order => [
+
+    const tableData = filteredOrders.map((order) => [
       order.number,
       order.date,
       order.supplier,
       `RD$ ${order.total.toLocaleString()}`,
       order.deliveryDate,
-      order.status
+      order.status,
     ]);
 
-    // Crear la tabla
-    doc.autoTable({
+    (doc as any).autoTable({
       head: [['Número', 'Fecha', 'Proveedor', 'Total', 'Entrega', 'Estado']],
       body: tableData,
       startY: 70,
@@ -422,29 +446,27 @@ export default function PurchaseOrdersPage() {
       styles: { fontSize: 10 },
       columnStyles: {
         3: { halign: 'right' },
-        5: { halign: 'center' }
-      }
+        5: { halign: 'center' },
+      },
     });
 
-    // Estadísticas
     const totalAmount = filteredOrders.reduce((sum, order) => sum + order.total, 0);
-    const pendingOrders = filteredOrders.filter(o => o.status === 'Pendiente').length;
-    const approvedOrders = filteredOrders.filter(o => o.status === 'Aprobada').length;
+    const pendingOrders = filteredOrders.filter((o) => o.status === 'Pendiente').length;
+    const approvedOrders = filteredOrders.filter((o) => o.status === 'Aprobada').length;
 
-    doc.autoTable({
+    (doc as any).autoTable({
       body: [
         ['Total en Órdenes:', `RD$ ${totalAmount.toLocaleString()}`],
         ['Órdenes Pendientes:', `${pendingOrders}`],
-        ['Órdenes Aprobadas:', `${approvedOrders}`]
+        ['Órdenes Aprobadas:', `${approvedOrders}`],
       ],
       startY: (((doc as any).lastAutoTable?.finalY) ?? 70) + 20,
       theme: 'plain',
-      styles: { fontStyle: 'bold' }
+      styles: { fontStyle: 'bold' },
     });
 
-    // Pie de página
     const pageCount = doc.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
+    for (let i = 1; i <= pageCount; i += 1) {
       doc.setPage(i);
       doc.setFontSize(10);
       doc.text(`Página ${i} de ${pageCount}`, doc.internal.pageSize.width - 50, doc.internal.pageSize.height - 10);
@@ -457,28 +479,26 @@ export default function PurchaseOrdersPage() {
   const exportToExcel = () => {
     let csvContent = 'Órdenes de Compra\n\n';
     csvContent += 'Número,Fecha,Proveedor,Subtotal,ITBIS,Total,Fecha Entrega,Estado,Notas\n';
-    
-    filteredOrders.forEach(order => {
+
+    filteredOrders.forEach((order) => {
       csvContent += `${order.number},${order.date},"${order.supplier}",${order.subtotal},${order.itbis},${order.total},${order.deliveryDate},"${order.status}","${order.notes}"\n`;
     });
 
-    // Detalle de productos
     csvContent += '\n\nDetalle de Productos\n';
     csvContent += 'Orden,Producto,Cantidad,Precio Unitario,Total\n';
-    
-    filteredOrders.forEach(order => {
-      order.products.forEach((product: any) => {
+
+    filteredOrders.forEach((order) => {
+      (order.products || []).forEach((product: any) => {
         const lineTotal = Number(product.quantity || 0) * Number(product.price || 0);
         csvContent += `${order.number},"${product.name}",${product.quantity},${product.price},${lineTotal}\n`;
       });
     });
 
-    // Estadísticas
     const totalAmount = filteredOrders.reduce((sum, order) => sum + order.total, 0);
-    const pendingOrders = filteredOrders.filter(o => o.status === 'Pendiente').length;
-    const approvedOrders = filteredOrders.filter(o => o.status === 'Aprobada').length;
+    const pendingOrders = filteredOrders.filter((o) => o.status === 'Pendiente').length;
+    const approvedOrders = filteredOrders.filter((o) => o.status === 'Aprobada').length;
 
-    csvContent += `\nEstadísticas\n`;
+    csvContent += '\nEstadísticas\n';
     csvContent += `Total en Órdenes,${totalAmount}\n`;
     csvContent += `Órdenes Pendientes,${pendingOrders}\n`;
     csvContent += `Órdenes Aprobadas,${approvedOrders}\n`;
@@ -496,7 +516,191 @@ export default function PurchaseOrdersPage() {
   };
 
   const printOrder = (order: any) => {
-    alert(`Imprimiendo orden de compra: ${order.number}`);
+    const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
+    const companyRnc = (companyInfo as any)?.rnc || (companyInfo as any)?.tax_id || (companyInfo as any)?.ruc || '';
+
+    const supplier = suppliers.find((s: any) => String(s.id) === String(order.supplierId));
+    const supplierName = supplier?.legalName || supplier?.name || order.supplier;
+    const supplierTaxId = supplier?.taxId || '';
+    const supplierPhone = supplier?.phone || '';
+    const supplierEmail = supplier?.email || '';
+    const supplierAddress = supplier?.address || '';
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('No se pudo abrir la ventana de impresión.');
+      return;
+    }
+
+    const rowsHtml = (order.products || [])
+      .map((product: any) => {
+        const qty = Number(product.quantity) || 0;
+        const price = Number(product.price) || 0;
+        const lineTotal = qty * price;
+        return `
+              <tr>
+                <td>${product.name || ''}</td>
+                <td style="text-align:right;">${qty.toLocaleString()}</td>
+                <td style="text-align:right;">RD$ ${price.toLocaleString()}</td>
+                <td style="text-align:right;">RD$ ${lineTotal.toLocaleString()}</td>
+              </tr>`;
+      })
+      .join('');
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Orden de Compra ${order.number}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            .header { text-align: center; margin-bottom: 20px; }
+            .details { margin: 20px 0; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #ddd; padding: 8px; }
+            th { background-color: #f3f4f6; text-align: left; }
+            .total { font-weight: bold; text-align: right; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${companyName}</h1>
+            ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
+            <h2>Orden de Compra #${order.number}</h2>
+            <p>Fecha: ${order.date}</p>
+          </div>
+          <div class="details">
+            <p><strong>Proveedor:</strong> ${supplierName}</p>
+            ${supplierTaxId ? `<p><strong>RNC:</strong> ${supplierTaxId}</p>` : ''}
+            ${supplierPhone ? `<p><strong>Teléfono:</strong> ${supplierPhone}</p>` : ''}
+            ${supplierEmail ? `<p><strong>Email:</strong> ${supplierEmail}</p>` : ''}
+            ${supplierAddress ? `<p><strong>Dirección:</strong> ${supplierAddress}</p>` : ''}
+            <p><strong>Fecha de Entrega:</strong> ${order.deliveryDate || ''}</p>
+            ${order.notes ? `<p><strong>Notas:</strong> ${order.notes}</p>` : ''}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Producto</th>
+                <th style="text-align:right;">Cantidad</th>
+                <th style="text-align:right;">Precio</th>
+                <th style="text-align:right;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="3" class="total">Subtotal:</td>
+                <td class="total">RD$ ${Number(order.subtotal || 0).toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td colspan="3" class="total">ITBIS:</td>
+                <td class="total">RD$ ${Number(order.itbis || 0).toLocaleString()}</td>
+              </tr>
+              <tr>
+                <td colspan="3" class="total">Total:</td>
+                <td class="total">RD$ ${Number(order.total || 0).toLocaleString()}</td>
+              </tr>
+            </tfoot>
+          </table>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 1000);
+            };
+          <\/script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handleExportOrderExcel = async (order: any) => {
+    const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
+    const companyRnc = (companyInfo as any)?.rnc || (companyInfo as any)?.tax_id || (companyInfo as any)?.ruc || '';
+
+    const supplier = suppliers.find((s: any) => String(s.id) === String(order.supplierId));
+    const supplierName = supplier?.legalName || supplier?.name || order.supplier;
+    const supplierTaxId = supplier?.taxId || '';
+    const supplierPhone = supplier?.phone || '';
+    const supplierEmail = supplier?.email || '';
+    const supplierAddress = supplier?.address || '';
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Orden');
+
+    worksheet.mergeCells('A1:D1');
+    worksheet.getCell('A1').value = companyName;
+    worksheet.getCell('A1').font = { bold: true, size: 16 };
+    worksheet.getCell('A1').alignment = { horizontal: 'center' } as any;
+
+    if (companyRnc) {
+      worksheet.mergeCells('A2:D2');
+      worksheet.getCell('A2').value = `RNC: ${companyRnc}`;
+      worksheet.getCell('A2').alignment = { horizontal: 'center' } as any;
+      worksheet.getCell('A2').font = { size: 10 };
+    }
+
+    const headerStartRow = companyRnc ? 3 : 2;
+    worksheet.mergeCells(`A${headerStartRow}:D${headerStartRow}`);
+    worksheet.getCell(`A${headerStartRow}`).value = `Orden de Compra #${order.number}`;
+    worksheet.getCell(`A${headerStartRow}`).font = { bold: true, size: 12 };
+
+    worksheet.addRow([]);
+
+    worksheet.addRow(['Proveedor', supplierName]);
+    if (supplierTaxId) worksheet.addRow(['RNC', supplierTaxId]);
+    if (supplierPhone) worksheet.addRow(['Teléfono', supplierPhone]);
+    if (supplierEmail) worksheet.addRow(['Correo', supplierEmail]);
+    if (supplierAddress) worksheet.addRow(['Dirección', supplierAddress]);
+    worksheet.addRow(['Fecha', order.date]);
+
+    worksheet.addRow(['Entrega', order.deliveryDate || '']);
+    worksheet.addRow(['Estado', order.status]);
+    if (order.notes) {
+      worksheet.addRow(['Notas', order.notes]);
+    }
+
+    worksheet.addRow([]);
+
+    const headerRow = worksheet.addRow(['Producto', 'Cantidad', 'Precio', 'Total']);
+    headerRow.font = { bold: true };
+
+    (order.products || []).forEach((product: any) => {
+      const qty = Number(product.quantity) || 0;
+      const price = Number(product.price) || 0;
+      const lineTotal = qty * price;
+      worksheet.addRow([
+        product.name || '',
+        qty,
+        price,
+        lineTotal,
+      ]);
+    });
+
+    worksheet.addRow([]);
+    worksheet.addRow(['', '', 'Subtotal', order.subtotal]);
+    worksheet.addRow(['', '', 'ITBIS', order.itbis]);
+    worksheet.addRow(['', '', 'Total', order.total]);
+
+    worksheet.columns = [
+      { width: 40 },
+      { width: 12 },
+      { width: 14 },
+      { width: 14 },
+    ];
+
+    ['C', 'D'].forEach((col) => {
+      worksheet.getColumn(col).numFmt = '#,##0.00';
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const safeNumber = order.number || order.id;
+    saveAs(blob, `orden_compra_${safeNumber}.xlsx`);
   };
 
   return (
@@ -668,6 +872,12 @@ export default function PurchaseOrdersPage() {
                         >
                           <i className="ri-printer-line"></i>
                         </button>
+                        <button
+                          onClick={() => handleExportOrderExcel(order)}
+                          className="text-green-600 hover:text-green-900 whitespace-nowrap"
+                        >
+                          <i className="ri-file-excel-2-line"></i>
+                        </button>
                         <button 
                           onClick={() => handleEdit(order)}
                           className="text-indigo-600 hover:text-indigo-900 whitespace-nowrap"
@@ -723,7 +933,12 @@ export default function PurchaseOrdersPage() {
                     <select 
                       required
                       value={formData.supplierId}
-                      onChange={(e) => setFormData({...formData, supplierId: e.target.value})}
+                      onChange={(e) =>
+                        setFormData(prev => ({
+                          ...prev,
+                          supplierId: e.target.value,
+                        }))
+                      }
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Seleccionar proveedor</option>
@@ -731,6 +946,37 @@ export default function PurchaseOrdersPage() {
                         <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
+                    {selectedSupplier && (
+                      <div className="mt-3 text-xs sm:text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-1">
+                        <p className="font-semibold">
+                          {selectedSupplier.legalName || selectedSupplier.name}
+                        </p>
+                        {selectedSupplier.taxId && (
+                          <p>
+                            <span className="font-medium">RNC / Tax ID: </span>
+                            {selectedSupplier.taxId}
+                          </p>
+                        )}
+                        {selectedSupplier.phone && (
+                          <p>
+                            <span className="font-medium">Teléfono: </span>
+                            {selectedSupplier.phone}
+                          </p>
+                        )}
+                        {selectedSupplier.email && (
+                          <p>
+                            <span className="font-medium">Email: </span>
+                            {selectedSupplier.email}
+                          </p>
+                        )}
+                        {selectedSupplier.address && (
+                          <p>
+                            <span className="font-medium">Dirección: </span>
+                            {selectedSupplier.address}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Fecha de Entrega *</label>
@@ -780,9 +1026,21 @@ export default function PurchaseOrdersPage() {
                             value={item.itemId || ''}
                             onChange={(e) => {
                               const selectedId = e.target.value || null;
-                              const selectedItem = inventoryItems.find((inv: any) => String(inv.id) === selectedId);
+                              const selectedItem = inventoryItems.find((inv: any) => String(inv.id) === String(selectedId));
                               updateProduct(index, 'itemId', selectedId);
                               updateProduct(index, 'name', selectedItem ? selectedItem.name : '');
+                              if (selectedItem) {
+                                const rawPrice =
+                                  selectedItem.last_purchase_price ??
+                                  selectedItem.cost_price ??
+                                  selectedItem.average_cost ??
+                                  selectedItem.selling_price ??
+                                  selectedItem.sale_price ??
+                                  selectedItem.price ??
+                                  0;
+                                const price = Number(rawPrice) || 0;
+                                updateProduct(index, 'price', price);
+                              }
                             }}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                           >

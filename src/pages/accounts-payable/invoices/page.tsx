@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import * as ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
 import {
   apInvoicesService,
@@ -658,6 +660,119 @@ export default function APInvoicesPage() {
     }
   };
 
+  const handleExportInvoiceExcel = async (invoice: APInvoice) => {
+    try {
+      const dbLines = await apInvoiceLinesService.getByInvoice(invoice.id);
+      const items = (dbLines || []).map((l: any) => {
+        const qty = Number(l.quantity) || 0;
+        const price = Number(l.unit_price) || 0;
+        const total = Number(l.line_total) || qty * price;
+        return {
+          description: l.description || (l.inventory_items as any)?.name || 'Gasto / Servicio',
+          quantity: qty,
+          unitPrice: price,
+          total,
+        };
+      });
+
+      if (items.length === 0) {
+        items.push({
+          description: invoice.expenseType606 || 'Gasto / Servicio',
+          quantity: 1,
+          unitPrice: invoice.totalToPay,
+          total: invoice.totalToPay,
+        });
+      }
+
+      const supplierName = invoice.legalName || invoice.supplierName;
+      const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
+      const companyRnc = (companyInfo as any)?.rnc || (companyInfo as any)?.tax_id || (companyInfo as any)?.ruc || '';
+
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Factura');
+
+      worksheet.mergeCells('A1:D1');
+      worksheet.getCell('A1').value = companyName;
+      worksheet.getCell('A1').font = { bold: true, size: 16 };
+      worksheet.getCell('A1').alignment = { horizontal: 'center' } as any;
+
+      if (companyRnc) {
+        worksheet.mergeCells('A2:D2');
+        worksheet.getCell('A2').value = `RNC: ${companyRnc}`;
+        worksheet.getCell('A2').alignment = { horizontal: 'center' } as any;
+        worksheet.getCell('A2').font = { size: 10 };
+      }
+
+      const headerStartRow = companyRnc ? 3 : 2;
+      worksheet.mergeCells(`A${headerStartRow}:D${headerStartRow}`);
+      worksheet.getCell(`A${headerStartRow}`).value = `Factura de Suplidor #${invoice.invoiceNumber}`;
+      worksheet.getCell(`A${headerStartRow}`).font = { bold: true, size: 12 };
+
+      worksheet.addRow([]);
+
+      worksheet.addRow(['Suplidor', supplierName]);
+      if (invoice.taxId) worksheet.addRow(['RNC / Tax ID', invoice.taxId]);
+      if (invoice.storeName) worksheet.addRow(['Tienda', invoice.storeName]);
+      worksheet.addRow([
+        'Moneda',
+        invoice.currency,
+      ]);
+      worksheet.addRow([
+        'Fecha',
+        invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString('es-DO') : '',
+      ]);
+      worksheet.addRow([
+        'Vencimiento',
+        invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('es-DO') : '',
+      ]);
+      if (invoice.notes) worksheet.addRow(['Notas', invoice.notes]);
+
+      worksheet.addRow([]);
+
+      const itemsHeader = worksheet.addRow(['Descripción', 'Cantidad', 'Precio', 'Total']);
+      itemsHeader.font = { bold: true };
+
+      items.forEach((item: any) => {
+        worksheet.addRow([
+          item.description,
+          item.quantity,
+          item.unitPrice,
+          item.total,
+        ]);
+      });
+
+      worksheet.addRow([]);
+      worksheet.addRow(['', '', 'Bruto', invoice.totalGross]);
+      worksheet.addRow(['', '', 'ITBIS', invoice.totalItbis]);
+      worksheet.addRow(['', '', 'Total a pagar', invoice.totalToPay]);
+      if (invoice.totalIsrWithheld) {
+        worksheet.addRow(['', '', 'ISR Retenido', invoice.totalIsrWithheld]);
+      }
+
+      worksheet.columns = [
+        { width: 40 },
+        { width: 12 },
+        { width: 14 },
+        { width: 14 },
+      ];
+
+      ['C', 'D'].forEach((col) => {
+        worksheet.getColumn(col).numFmt = '#,##0.00';
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const safeNumber = invoice.invoiceNumber || invoice.id;
+      saveAs(blob, `factura_cxp_${safeNumber}.xlsx`);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error exportando factura de suplidor a Excel', error);
+      alert('No se pudo exportar la factura a Excel.');
+    }
+  };
+
   const handleSaveInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -909,6 +1024,13 @@ export default function APInvoicesPage() {
                             title="Imprimir"
                           >
                             <i className="ri-printer-line" />
+                          </button>
+                          <button
+                            onClick={() => handleExportInvoiceExcel(inv)}
+                            className="text-green-600 hover:text-green-900"
+                            title="Exportar a Excel"
+                          >
+                            <i className="ri-file-excel-2-line" />
                           </button>
                           <button
                             onClick={() => handleDeleteInvoice(inv.id)}
