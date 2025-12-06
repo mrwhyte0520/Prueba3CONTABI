@@ -563,12 +563,19 @@ export default function POSPage() {
             notes: `Venta POS ${newSale.id}`,
           };
 
-          const linesPayload = newSale.items.map((item) => ({
-            description: item.name,
-            quantity: item.quantity,
-            unit_price: item.price,
-            line_total: item.total,
-          }));
+          // Enlazar líneas de factura con ítems de inventario cuando el id sea un UUID válido.
+          // Esto permite que invoicesService.create calcule el Costo de Ventas (COGS) y
+          // genere el asiento contable Costo de Ventas vs Inventario.
+          const linesPayload = newSale.items.map((item) => {
+            const itemId = isUuid(item.id) ? item.id : null;
+            return {
+              description: item.name,
+              quantity: item.quantity,
+              unit_price: item.price,
+              line_total: item.total,
+              item_id: itemId,
+            };
+          });
 
           const created = await invoicesService.create(user.id, invoicePayload, linesPayload);
 

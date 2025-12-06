@@ -59,13 +59,26 @@ export default function FinancialStatementsPage() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'statements' | 'balance' | 'income' | 'costs' | 'expenses' | 'cashflow'>('statements');
   const [statements, setStatements] = useState<FinancialStatement[]>([]);
-  const [selectedPeriod, setSelectedPeriod] = useState('');
+  const [selectedPeriod, setSelectedPeriod] = useState(() => new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [isGenerating, setIsGenerating] = useState(false);
   const [showNewStatementModal, setShowNewStatementModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedStatement, setSelectedStatement] = useState<FinancialStatement | null>(null);
   const [showExpensesDetail, setShowExpensesDetail] = useState(false);
+
+  const [periodOptions] = useState(() => {
+    const options: { value: string; label: string }[] = [];
+    const now = new Date();
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = d.toISOString().slice(0, 7); // YYYY-MM
+      const labelRaw = d.toLocaleDateString('es-DO', { month: 'long', year: 'numeric' });
+      const label = labelRaw.charAt(0).toUpperCase() + labelRaw.slice(1);
+      options.push({ value, label });
+    }
+    return options;
+  });
 
   const [financialData, setFinancialData] = useState<FinancialData>({
     assets: { current: [], nonCurrent: [] },
@@ -475,8 +488,18 @@ export default function FinancialStatementsPage() {
 
     const totalEquity = financialData.equity.reduce((sum, item) => sum + item.amount, 0);
     const totalRevenue = financialData.revenue.reduce((sum, item) => sum + item.amount, 0);
-    const totalCosts = financialData.costs.reduce((sum, item) => sum + item.amount, 0);
-    const totalExpenses = financialData.expenses.reduce((sum, item) => sum + item.amount, 0);
+
+    // Tratar las cuentas 5xxx como costo de ventas aunque estén clasificadas como gastos
+    const normalizeCode = (code: string | undefined) => (code || '').replace(/\./g, '');
+    const allExpenses = financialData.expenses || [];
+    const extraCostItems = allExpenses.filter((item) => normalizeCode(item.code).startsWith('5'));
+    const extraCostsTotal = extraCostItems.reduce((sum, item) => sum + item.amount, 0);
+    const expensesWithoutCosts = allExpenses.filter((item) => !normalizeCode(item.code).startsWith('5'));
+
+    const totalCosts =
+      financialData.costs.reduce((sum, item) => sum + item.amount, 0) + extraCostsTotal;
+    const totalExpenses = expensesWithoutCosts.reduce((sum, item) => sum + item.amount, 0);
+
     const netIncome = totalRevenue - totalCosts - totalExpenses;
 
     return {
@@ -490,7 +513,7 @@ export default function FinancialStatementsPage() {
       totalRevenue,
       totalCosts,
       totalExpenses,
-      netIncome
+      netIncome,
     };
   };
 
@@ -530,6 +553,16 @@ export default function FinancialStatementsPage() {
 
   // Derivados para Estado de Resultados en formato profesional
   const grossProfit = totals.totalRevenue - totals.totalCosts;
+
+  // Ítems de costo para el Estado de Resultados (incluye cuentas 5xxx aunque estén como gastos)
+  const costItemsForIncome = [
+    ...financialData.costs,
+    ...financialData.expenses.filter((item) => {
+      const code = item.code || '';
+      const normalized = code.replace(/\./g, '');
+      return normalized.startsWith('5');
+    }),
+  ];
 
   // Helpers para agrupar por prefijos de código
   const sumByPrefixes = (
@@ -806,12 +839,23 @@ export default function FinancialStatementsPage() {
       // INGRESOS - solo agregar si tiene saldo
       if (Math.abs(totals.totalRevenue) >= 0.01) {
         financialData.revenue.filter(i => Math.abs(i.amount) >= 0.01).forEach(i => rows.push(['INGRESOS', i.name, i.amount]));
-        rows.push(['', 'Total Ingresos', totals.totalRevenue]);
+        rows.push(['', 'Total Ventas', totals.totalRevenue]);
       }
       
       // COSTOS - solo agregar si tiene saldo
       if (Math.abs(totals.totalCosts) >= 0.01) {
-        financialData.costs.filter(i => Math.abs(i.amount) >= 0.01).forEach(i => rows.push(['COSTOS', i.name, i.amount]));
+        const costItemsForExport = [
+          ...financialData.costs,
+          ...financialData.expenses.filter((item) => {
+            const code = item.code || '';
+            const normalized = code.replace(/\./g, '');
+            return normalized.startsWith('5');
+          }),
+        ];
+
+        costItemsForExport
+          .filter((i) => Math.abs(i.amount) >= 0.01)
+          .forEach((i) => rows.push(['COSTOS', i.name, i.amount]));
         rows.push(['', 'Total Costos', totals.totalCosts]);
       }
       
@@ -1068,9 +1112,11 @@ export default function FinancialStatementsPage() {
                   onChange={(e) => setSelectedPeriod(e.target.value)}
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm pr-8"
                 >
-                  <option value="2024-12">Diciembre 2024</option>
-                  <option value="2024-11">Noviembre 2024</option>
-                  <option value="2024-10">Octubre 2024</option>
+                  {periodOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -1606,7 +1652,7 @@ export default function FinancialStatementsPage() {
               </div>
 
               <div className="max-w-3xl mx-auto space-y-6">
-                {/* INGRESOS */}
+                {/* INGRESOS / VENTAS */}
                 <div className={`${Math.abs(totals.totalRevenue) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                   <h2 className="text-base font-bold text-gray-900 mb-3 pb-1 border-b-2 border-gray-300">INGRESOS</h2>
                   {financialData.revenue.map((item, index) => (
@@ -1617,7 +1663,7 @@ export default function FinancialStatementsPage() {
                   ))}
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                     <div className="flex justify-between font-semibold">
-                      <span className="text-sm">Total Ingresos</span>
+                      <span className="text-sm">Total Ventas</span>
                       <span className="text-sm tabular-nums">{formatCurrency(totals.totalRevenue)}</span>
                     </div>
                   </div>
@@ -1626,7 +1672,7 @@ export default function FinancialStatementsPage() {
                 {/* COSTO DE VENTAS Y BENEFICIO BRUTO */}
                 <div className={`${Math.abs(totals.totalCosts) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                   <h2 className="text-sm font-bold text-gray-900 mb-2 underline">COSTO DE VENTAS</h2>
-                  {financialData.costs.map((item, index) => (
+                  {costItemsForIncome.map((item, index) => (
                     <div key={index} className={`flex justify-between py-0.5 pl-4 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                       <span className="text-sm text-gray-700">{item.name}</span>
                       <span className="text-sm text-gray-900 font-medium tabular-nums">{formatCurrency(item.amount)}</span>

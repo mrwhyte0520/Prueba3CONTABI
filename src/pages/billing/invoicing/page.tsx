@@ -20,6 +20,7 @@ import {
 } from '../../../services/database';
 
 interface UiInvoiceItem {
+  itemId?: string;
   description: string;
   quantity: number;
   price: number;
@@ -97,9 +98,9 @@ export default function InvoicingPage() {
   const [newInvoiceNotes, setNewInvoiceNotes] = useState('');
   const [newInvoiceStoreName, setNewInvoiceStoreName] = useState('Tienda principal');
 
-  type NewItem = { description: string; quantity: number; price: number; total: number };
+  type NewItem = { itemId?: string; description: string; quantity: number; price: number; total: number };
   const [newInvoiceItems, setNewInvoiceItems] = useState<NewItem[]>([
-    { description: '', quantity: 1, price: 0, total: 0 },
+    { itemId: undefined, description: '', quantity: 1, price: 0, total: 0 },
   ]);
   const [newInvoiceSubtotal, setNewInvoiceSubtotal] = useState(0);
   const [newInvoiceTax, setNewInvoiceTax] = useState(0);
@@ -189,6 +190,7 @@ export default function InvoicingPage() {
           const unitPrice = Number(line.unit_price) || 0;
           const lineTotal = Number(line.line_total) || qty * unitPrice;
           return {
+            itemId: line.item_id ? String(line.item_id) : undefined,
             description: line.description || line.inventory_items?.name || 'Ítem',
             quantity: qty,
             price: unitPrice,
@@ -381,7 +383,7 @@ export default function InvoicingPage() {
     setNewInvoiceDueDate(today);
     const defaultCurrency = currencies.find((c) => c.is_base) || currencies[0];
     setNewInvoiceCurrency(defaultCurrency?.code || 'DOP');
-    setNewInvoiceItems([{ description: '', quantity: 1, price: 0, total: 0 }]);
+    setNewInvoiceItems([{ itemId: undefined, description: '', quantity: 1, price: 0, total: 0 }]);
     setNewInvoiceSubtotal(0);
     setNewInvoiceTax(0);
     setNewInvoiceTotal(0);
@@ -716,6 +718,7 @@ export default function InvoicingPage() {
         unit_price: item.price,
         line_total: item.total,
         line_number: index + 1,
+        item_id: item.itemId ?? null,
       }));
 
       const invoicePatch = {
@@ -987,6 +990,7 @@ export default function InvoicingPage() {
       unit_price: item.price,
       line_total: item.total,
       line_number: index + 1,
+      item_id: item.itemId ?? null,
     }));
 
     try {
@@ -1615,9 +1619,9 @@ export default function InvoicingPage() {
                         const term = paymentTerms.find((t) => t.id === termId);
                         if (term?.days != null) {
                           const base = new Date(newInvoiceDate);
-                          const due = new Date(base);
-                          due.setDate(base.getDate() + term.days);
-                          setNewInvoiceDueDate(due.toISOString().slice(0, 10));
+                          const d = new Date(base);
+                          d.setDate(base.getDate() + term.days);
+                          setNewInvoiceDueDate(d.toISOString().slice(0, 10));
                         }
                       }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
@@ -1683,7 +1687,7 @@ export default function InvoicingPage() {
                             <td className="px-4 py-3">
                               <div className="space-y-2">
                                 <select
-                                  value={item.description}
+                                  value={item.itemId || ''}
                                   onChange={(e) => {
                                     const selectedId = e.target.value;
                                     const invItem = inventoryItems.find((it: any) => String(it.id) === selectedId);
@@ -1701,6 +1705,7 @@ export default function InvoicingPage() {
                                         const qty = next[index].quantity || 1;
                                         next[index] = {
                                           ...next[index],
+                                          itemId: selectedId || undefined,
                                           description: invItem.name || '',
                                           price,
                                           total: qty * price,
@@ -1726,7 +1731,7 @@ export default function InvoicingPage() {
                                     const desc = e.target.value;
                                     setNewInvoiceItems((prev) => {
                                       const next = [...prev];
-                                      next[index] = { ...next[index], description: desc };
+                                      next[index] = { ...next[index], description: desc, itemId: undefined };
                                       next[index].total = (next[index].quantity || 0) * (next[index].price || 0);
                                       recalcNewInvoiceTotals(next);
                                       return next;
@@ -1780,7 +1785,7 @@ export default function InvoicingPage() {
                                   setNewInvoiceItems((prev) => {
                                     const next = prev.filter((_, i) => i !== index);
                                     if (next.length === 0) {
-                                      next.push({ description: '', quantity: 1, price: 0, total: 0 });
+                                      next.push({ itemId: undefined, description: '', quantity: 1, price: 0, total: 0 });
                                     }
                                     recalcNewInvoiceTotals(next);
                                     return next;
@@ -1798,7 +1803,7 @@ export default function InvoicingPage() {
                   </div>
                   <button
                     className="mt-4 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
-                    onClick={() => setNewInvoiceItems((prev) => [...prev, { description: '', quantity: 1, price: 0, total: 0 }])}
+                    onClick={() => setNewInvoiceItems((prev) => [...prev, { itemId: undefined, description: '', quantity: 1, price: 0, total: 0 }])}
                   >
                     <i className="ri-add-line mr-2"></i>
                     Agregar Producto

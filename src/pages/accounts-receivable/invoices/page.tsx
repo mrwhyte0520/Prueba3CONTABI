@@ -5,7 +5,7 @@ import 'jspdf-autotable';
 import * as ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, settingsService } from '../../../services/database';
+import { customersService, invoicesService, settingsService, inventoryService, taxService } from '../../../services/database';
 
 interface Invoice {
   id: string;
@@ -56,11 +56,55 @@ export default function InvoicesPage() {
   const [loadingCustomers, setLoadingCustomers] = useState(false);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
 
+  const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+
+  type NewItem = { itemId?: string; description: string; quantity: number; price: number; total: number };
+
+  const [newInvoiceItems, setNewInvoiceItems] = useState<NewItem[]>([
+    { itemId: undefined, description: '', quantity: 1, price: 0, total: 0 },
+  ]);
+  const [newInvoiceSubtotal, setNewInvoiceSubtotal] = useState(0);
+  const [newInvoiceTax, setNewInvoiceTax] = useState(0);
+  const [newInvoiceTotal, setNewInvoiceTotal] = useState(0);
+  const [newInvoiceDiscountType, setNewInvoiceDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [newInvoiceDiscountPercent, setNewInvoiceDiscountPercent] = useState(0);
+  const [newInvoiceNoTax, setNewInvoiceNoTax] = useState(false);
+  const [taxConfig, setTaxConfig] = useState<{ itbis_rate: number } | null>(null);
+
+  const currentItbisRate = taxConfig?.itbis_rate ?? 18;
+
+  const recalcNewInvoiceTotals = (
+    items: NewItem[],
+    discountType = newInvoiceDiscountType,
+    discountValue = newInvoiceDiscountPercent,
+    noTaxFlag = newInvoiceNoTax,
+  ) => {
+    const rawSubtotal = items.reduce((sum, it) => sum + (it.total || 0), 0);
+    let discountAmount = 0;
+    if (discountType === 'percentage') {
+      discountAmount = rawSubtotal * (discountValue / 100);
+    } else if (discountType === 'fixed') {
+      discountAmount = discountValue;
+    }
+    if (discountAmount > rawSubtotal) {
+      discountAmount = rawSubtotal;
+    }
+    const subtotal = rawSubtotal - discountAmount;
+    const tax = noTaxFlag ? 0 : subtotal * (currentItbisRate / 100);
+    const total = subtotal + tax;
+    setNewInvoiceSubtotal(subtotal);
+    setNewInvoiceTax(tax);
+    setNewInvoiceTotal(total);
+  };
+
   const loadCustomers = async () => {
     if (!user?.id) return;
     setLoadingCustomers(true);
     try {
-      const list = await customersService.getAll(user.id);
+      const [list, items] = await Promise.all([
+        customersService.getAll(user.id),
+        inventoryService.getItems(user.id),
+      ]);
       const mapped: Customer[] = (list || []).map((c: any) => ({
         id: c.id,
         name: c.name || c.customer_name || 'Cliente',
@@ -72,6 +116,7 @@ export default function InvoicesPage() {
         paymentTermId: c.paymentTermId ?? c.payment_term_id ?? null,
       }));
       setCustomers(mapped);
+      setInventoryItems(items || []);
     } finally {
       setLoadingCustomers(false);
     }
@@ -143,6 +188,23 @@ export default function InvoicesPage() {
     loadCustomers();
     loadInvoices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadTaxConfig = async () => {
+      try {
+        const data = await taxService.getTaxConfiguration();
+        if (data && typeof data.itbis_rate === 'number') {
+          setTaxConfig({ itbis_rate: data.itbis_rate });
+        } else {
+          setTaxConfig({ itbis_rate: 18 });
+        }
+      } catch (error) {
+        console.error('Error cargando configuración de impuestos para Cuentas por Cobrar:', error);
+        setTaxConfig({ itbis_rate: 18 });
+      }
+    };
+    loadTaxConfig();
   }, [user?.id]);
 
   useEffect(() => {
@@ -314,6 +376,13 @@ export default function InvoicesPage() {
   const handleNewInvoice = () => {
     setSelectedInvoice(null);
     setSelectedCustomerId('');
+    setNewInvoiceItems([{ itemId: undefined, description: '', quantity: 1, price: 0, total: 0 }]);
+    setNewInvoiceSubtotal(0);
+    setNewInvoiceTax(0);
+    setNewInvoiceTotal(0);
+    setNewInvoiceDiscountType('percentage');
+    setNewInvoiceDiscountPercent(0);
+    setNewInvoiceNoTax(false);
     setShowInvoiceModal(true);
   };
 
@@ -539,14 +608,16 @@ export default function InvoicesPage() {
       alert('Debes iniciar sesión para crear facturas');
       return;
     }
+
     const formData = new FormData(e.currentTarget);
     const customerId = String(formData.get('customer_id') || '');
     const dueDate = String(formData.get('due_date') || '');
     const description = String(formData.get('description') || '');
-    const amount = Number(formData.get('amount') || 0);
+
+    const amount = newInvoiceTotal;
 
     if (!customerId || !amount) {
-      alert('Cliente y monto son obligatorios');
+      alert('Cliente y al menos un producto/servicio con monto son obligatorios');
       return;
     }
 
@@ -563,22 +634,29 @@ export default function InvoicesPage() {
       invoice_date: todayStr,
       due_date: dueDate || null,
       currency: 'DOP',
-      subtotal: amount,
-      tax_amount: 0,
-      total_amount: amount,
+      subtotal: newInvoiceSubtotal,
+      tax_amount: newInvoiceTax,
+      total_amount: newInvoiceTotal,
       paid_amount: 0,
       status: 'pending',
       notes: description,
     };
 
-    const linesPayload = [
-      {
-        description: description || 'Servicio/Producto',
-        quantity: 1,
-        unit_price: amount,
-        line_total: amount,
-      },
-    ];
+    const linesPayload = newInvoiceItems
+      .filter((it) => (it.description || it.itemId) && (it.quantity || 0) > 0)
+      .map((it, index) => ({
+        description: it.description || 'Servicio/Producto',
+        quantity: it.quantity || 0,
+        unit_price: it.price || 0,
+        line_total: it.total || (it.quantity || 0) * (it.price || 0),
+        line_number: index + 1,
+        item_id: it.itemId ?? null,
+      }));
+
+    if (linesPayload.length === 0) {
+      alert('Debes agregar al menos un producto o servicio a la factura');
+      return;
+    }
 
     try {
       await invoicesService.create(user.id, invoicePayload, linesPayload);
@@ -897,27 +975,266 @@ export default function InvoicesPage() {
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Descripción
+                    Productos/Servicios
+                  </label>
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500 uppercase">Producto</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500 uppercase">Cantidad</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500 uppercase">Precio</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500 uppercase">Total</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-500 uppercase">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {newInvoiceItems.map((item, index) => (
+                          <tr key={index}>
+                            <td className="px-4 py-2 align-top">
+                              <div className="space-y-2">
+                                <select
+                                  value={item.itemId || ''}
+                                  onChange={(e) => {
+                                    const selectedId = e.target.value;
+                                    const invItem = inventoryItems.find((it: any) => String(it.id) === selectedId);
+                                    setNewInvoiceItems((prev) => {
+                                      const next = [...prev];
+                                      if (invItem) {
+                                        const rawPrice =
+                                          invItem.selling_price ??
+                                          invItem.sale_price ??
+                                          invItem.price ??
+                                          invItem.cost_price ??
+                                          0;
+                                        const price = Number(rawPrice) || 0;
+                                        const qty = next[index].quantity || 1;
+                                        next[index] = {
+                                          ...next[index],
+                                          itemId: selectedId || undefined,
+                                          description: invItem.name || '',
+                                          price,
+                                          total: qty * price,
+                                        };
+                                      } else {
+                                        next[index] = {
+                                          ...next[index],
+                                          itemId: undefined,
+                                        };
+                                      }
+                                      recalcNewInvoiceTotals(next);
+                                      return next;
+                                    });
+                                  }}
+                                  className="w-full p-2 border border-gray-300 rounded text-sm"
+                                >
+                                  <option value="">-- Seleccionar ítem de inventario (opcional) --</option>
+                                  {inventoryItems.map((it: any) => (
+                                    <option key={it.id} value={String(it.id)}>
+                                      {it.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="text"
+                                  value={item.description}
+                                  onChange={(e) => {
+                                    const desc = e.target.value;
+                                    setNewInvoiceItems((prev) => {
+                                      const next = [...prev];
+                                      next[index] = {
+                                        ...next[index],
+                                        description: desc,
+                                        itemId: undefined,
+                                      };
+                                      next[index].total =
+                                        (next[index].quantity || 0) * (next[index].price || 0);
+                                      recalcNewInvoiceTotals(next);
+                                      return next;
+                                    });
+                                  }}
+                                  placeholder="Descripción del producto o servicio"
+                                  className="w-full p-2 border border-gray-300 rounded text-sm"
+                                />
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 align-top">
+                              <input
+                                type="number"
+                                min="1"
+                                value={item.quantity}
+                                onChange={(e) => {
+                                  const qty = Number(e.target.value) || 0;
+                                  setNewInvoiceItems((prev) => {
+                                    const next = [...prev];
+                                    next[index] = {
+                                      ...next[index],
+                                      quantity: qty,
+                                      total: qty * (next[index].price || 0),
+                                    };
+                                    recalcNewInvoiceTotals(next);
+                                    return next;
+                                  });
+                                }}
+                                className="w-full p-2 border border-gray-300 rounded text-sm"
+                              />
+                            </td>
+                            <td className="px-4 py-2 align-top">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={item.price}
+                                onChange={(e) => {
+                                  const price = Number(e.target.value) || 0;
+                                  setNewInvoiceItems((prev) => {
+                                    const next = [...prev];
+                                    next[index] = {
+                                      ...next[index],
+                                      price,
+                                      total: price * (next[index].quantity || 0),
+                                    };
+                                    recalcNewInvoiceTotals(next);
+                                    return next;
+                                  });
+                                }}
+                                className="w-full p-2 border border-gray-300 rounded text-sm"
+                              />
+                            </td>
+                            <td className="px-4 py-2 align-top">
+                              <span className="font-medium">
+                                RD$ {item.total.toLocaleString('es-DO')}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 align-top">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setNewInvoiceItems((prev) => {
+                                    const next = prev.filter((_, i) => i !== index);
+                                    if (next.length === 0) {
+                                      next.push({
+                                        itemId: undefined,
+                                        description: '',
+                                        quantity: 1,
+                                        price: 0,
+                                        total: 0,
+                                      });
+                                    }
+                                    recalcNewInvoiceTotals(next);
+                                    return next;
+                                  });
+                                }}
+                                className="text-red-600 hover:text-red-800"
+                              >
+                                <i className="ri-delete-bin-line"></i>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-between items-center mt-3 text-sm">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setNewInvoiceItems((prev) => [
+                          ...prev,
+                          { itemId: undefined, description: '', quantity: 1, price: 0, total: 0 },
+                        ])
+                      }
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap md:self-start"
+                    >
+                      <i className="ri-add-line mr-2"></i>
+                      Agregar Producto
+                    </button>
+                    <div className="flex-1 bg-gray-50 p-4 rounded-lg">
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-sm text-gray-600">Subtotal:</span>
+                          <span className="text-sm font-medium">
+                            RD${' '}
+                            {newInvoiceSubtotal.toLocaleString('es-DO', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center space-x-2">
+                          <span className="text-sm text-gray-600">Descuento global:</span>
+                          <div className="flex items-center space-x-2">
+                            <select
+                              value={newInvoiceDiscountType}
+                              onChange={(e) => {
+                                const t = e.target.value === 'fixed' ? 'fixed' : 'percentage';
+                                setNewInvoiceDiscountType(t);
+                                recalcNewInvoiceTotals(
+                                  [...newInvoiceItems],
+                                  t,
+                                  newInvoiceDiscountPercent,
+                                  newInvoiceNoTax,
+                                );
+                              }}
+                              className="px-2 py-1 border border-gray-300 rounded text-sm"
+                            >
+                              <option value="percentage">% Porcentaje</option>
+                              <option value="fixed">Monto</option>
+                            </select>
+                            <input
+                              type="number"
+                              min={0}
+                              value={newInvoiceDiscountPercent}
+                              onChange={(e) => {
+                                const val = Number(e.target.value) || 0;
+                                setNewInvoiceDiscountPercent(val);
+                                recalcNewInvoiceTotals(
+                                  [...newInvoiceItems],
+                                  newInvoiceDiscountType,
+                                  val,
+                                  newInvoiceNoTax,
+                                );
+                              }}
+                              className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-gray-600">ITBIS ({currentItbisRate.toFixed(2)}%):</span>
+                          <span className="text-sm font-medium">
+                            RD${' '}
+                            {newInvoiceTax.toLocaleString('es-DO', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </span>
+                        </div>
+                        <div className="border-t border-gray-200 pt-2">
+                          <div className="flex justify-between">
+                            <span className="text-base font-semibold">Total:</span>
+                            <span className="text-base font-semibold">
+                              RD${' '}
+                              {newInvoiceTotal.toLocaleString('es-DO', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Descripción / Notas
                   </label>
                   <textarea
                     rows={3}
                     name="description"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Descripción de los productos o servicios..."
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Monto
-                  </label>
-                  <input
-                    type="number" min="0"
-                    step="0.01"
-                    required
-                    name="amount"
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="0.00"
+                    placeholder="Descripción general o notas de la factura..."
                   />
                 </div>
                 

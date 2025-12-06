@@ -361,9 +361,29 @@ export default function InventoryPage() {
     try {
       if (modalType === 'item') {
         if (user) {
+          // Validaciones numéricas básicas
+          const errors: string[] = [];
+
+          const numCurrent = Number(formData.current_stock);
+          const numMin = Number(formData.minimum_stock);
+          const numMax = Number(formData.maximum_stock);
+          const numCost = Number(formData.cost_price);
+          const numSelling = Number(formData.selling_price);
+
+          if (numCurrent < 0) errors.push('El stock actual no puede ser negativo.');
+          if (numMin < 0) errors.push('El stock mínimo no puede ser negativo.');
+          if (numMax < 0) errors.push('El stock máximo no puede ser negativo.');
+          if (numCost < 0) errors.push('El precio de compra no puede ser negativo.');
+          if (numSelling < 0) errors.push('El precio de venta no puede ser negativo.');
+
+          if (errors.length > 0) {
+            alert(errors.join('\n'));
+            return;
+          }
+
           // Validación: stock máximo no puede ser menor que stock actual para productos inventariables
-          const rawCurrentStock = Number(formData.current_stock);
-          const rawMaximumStock = Number(formData.maximum_stock);
+          const rawCurrentStock = numCurrent;
+          const rawMaximumStock = numMax;
           const currentStock = Number.isFinite(rawCurrentStock) ? Math.round(rawCurrentStock) : 0;
           const maximumStock = Number.isFinite(rawMaximumStock) ? Math.round(rawMaximumStock) : 0;
 

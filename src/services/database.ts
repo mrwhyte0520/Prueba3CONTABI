@@ -6063,7 +6063,10 @@ export const invoicesService = {
         const salesAccountId = settings?.sales_account_id;
         const taxAccountId = settings?.sales_tax_account_id;
 
-        if (arAccountId && salesAccountId) {
+        // Solo exigimos la cuenta de CxC para poder registrar el asiento.
+        // Las cuentas de ingreso pueden venir de los productos y usar la
+        // cuenta de ventas global solo como respaldo.
+        if (arAccountId) {
           const subtotal = Number(invoiceData.subtotal) || 0;
           const taxAmount = Number(invoiceData.tax_amount) || 0;
           const totalAmount = Number(invoiceData.total_amount) || subtotal + taxAmount;
@@ -6076,14 +6079,101 @@ export const invoicesService = {
               credit_amount: 0,
               line_number: 1,
             },
-            {
-              account_id: salesAccountId,
-              description: 'Ventas',
-              debit_amount: 0,
-              credit_amount: subtotal,
-              line_number: 2,
-            },
           ];
+
+          let nextLineNumber = 2;
+
+          // Distribuir ingresos por cuentas de producto cuando sea posible
+          let salesTotalAssigned = 0;
+          try {
+            const { data: salesLines, error: salesLinesError } = await supabase
+              .from('invoice_lines')
+              .select(`
+                id,
+                quantity,
+                unit_price,
+                line_total,
+                item_id,
+                inventory_items (income_account_id)
+              `)
+              .eq('invoice_id', invoiceData.id);
+
+            if (!salesLinesError && salesLines && salesLines.length > 0 && subtotal > 0) {
+              const accountBaseTotals: Record<string, number> = {};
+              let totalLinesBase = 0;
+              let totalProductBase = 0;
+
+              salesLines.forEach((line: any) => {
+                const qty = Number(line.quantity) || 0;
+                const unitPrice = Number(line.unit_price) || 0;
+                const lineBase = Number(line.line_total) || qty * unitPrice;
+                if (lineBase <= 0) return;
+
+                totalLinesBase += lineBase;
+
+                const invItem = line.inventory_items as any | null;
+                const incomeAccountId = invItem?.income_account_id as string | null;
+
+                if (incomeAccountId) {
+                  totalProductBase += lineBase;
+                  accountBaseTotals[incomeAccountId] = (accountBaseTotals[incomeAccountId] || 0) + lineBase;
+                }
+              });
+
+              if (totalLinesBase > 0 && totalProductBase > 0) {
+                // Parte del subtotal atribuible a ítems con cuenta de ingreso propia
+                const productPortion = (subtotal * totalProductBase) / totalLinesBase;
+
+                let assignedToProductAccounts = 0;
+                for (const [accountId, baseAmount] of Object.entries(accountBaseTotals)) {
+                  if (baseAmount <= 0) continue;
+                  const allocated = (productPortion * (baseAmount as number)) / totalProductBase;
+                  const roundedAllocated = Number(allocated.toFixed(2));
+                  if (roundedAllocated <= 0) continue;
+
+                  entryLines.push({
+                    account_id: accountId,
+                    description: 'Ventas',
+                    debit_amount: 0,
+                    credit_amount: roundedAllocated,
+                    line_number: nextLineNumber++,
+                  });
+                  assignedToProductAccounts += roundedAllocated;
+                }
+
+                salesTotalAssigned = assignedToProductAccounts;
+              }
+            }
+          } catch (salesAllocError) {
+            // eslint-disable-next-line no-console
+            console.error('Error determining income accounts for invoice lines:', salesAllocError);
+          }
+
+          const remainingSales = Number((subtotal - salesTotalAssigned).toFixed(2));
+          if (remainingSales > 0) {
+            if (salesAccountId) {
+              // Parte del subtotal no cubierta por cuentas de producto:
+              // se envía a la cuenta de ventas global.
+              entryLines.push({
+                account_id: salesAccountId,
+                description: 'Ventas',
+                debit_amount: 0,
+                credit_amount: remainingSales,
+                line_number: nextLineNumber++,
+              });
+            } else {
+              // Si no hay cuenta global de ventas y queda remanente, no podemos
+              // completar el asiento de ingresos de forma consistente.
+              // En este caso dejamos que el asiento falle antes de insertarse
+              // y registramos el detalle en consola para que se corrija la
+              // configuración.
+              // eslint-disable-next-line no-console
+              console.error(
+                'No se pudo asignar todo el subtotal de ventas porque falta la cuenta de ventas global y no todas las líneas tienen cuenta de ingreso configurada.',
+                { invoiceId: invoiceData.id, subtotal, salesTotalAssigned, remainingSales }
+              );
+            }
+          }
 
           if (taxAmount > 0 && taxAccountId) {
             entryLines.push({
@@ -6091,7 +6181,7 @@ export const invoicesService = {
               description: 'ITBIS por pagar',
               debit_amount: 0,
               credit_amount: taxAmount,
-              line_number: entryLines.length + 1,
+              line_number: nextLineNumber++,
             });
           }
 
