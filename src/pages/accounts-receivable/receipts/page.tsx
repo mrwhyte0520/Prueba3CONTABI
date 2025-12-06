@@ -3,8 +3,11 @@ import { Link } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import * as ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
+
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, receiptsService, invoicesService, receiptApplicationsService, bankAccountsService, accountingSettingsService, journalEntriesService, settingsService } from '../../../services/database';
+import { customersService, receiptsService, invoicesService, receiptApplicationsService, settingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface Receipt {
@@ -21,10 +24,13 @@ interface Receipt {
   invoiceNumbers: string[];
 }
 
-interface BankAccountOption {
+interface CustomerOption {
   id: string;
   name: string;
-  chartAccountId: string | null;
+  document?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
 }
 
 export default function ReceiptsPage() {
@@ -36,14 +42,15 @@ export default function ReceiptsPage() {
   const [showReceiptDetails, setShowReceiptDetails] = useState(false);
   const [showApplyModal, setShowApplyModal] = useState(false);
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
-  const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedReceiptAvailableAmount, setSelectedReceiptAvailableAmount] = useState<number>(0);
+  const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(false);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loadingReceipts, setLoadingReceipts] = useState(false);
+
   const [applyInvoices, setApplyInvoices] = useState<Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number; balance: number }>>([]);
   const [loadingApplyInvoices, setLoadingApplyInvoices] = useState(false);
-  const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
-  const [customerArAccounts, setCustomerArAccounts] = useState<Record<string, string>>({});
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
 
   const getPaymentMethodName = (method: string) => {
     switch (method) {
@@ -52,6 +59,21 @@ export default function ReceiptsPage() {
       case 'transfer': return 'Transferencia';
       case 'card': return 'Tarjeta';
       default: return 'Otro';
+    }
+  };
+
+  const calculateReceiptAvailableAmount = async (receipt: Receipt): Promise<number> => {
+    if (!user?.id) return receipt.amount;
+    try {
+      const apps = await receiptApplicationsService.getByReceipt(user.id, receipt.id);
+      const alreadyApplied = ((apps || []) as any[]).reduce(
+        (sum, app) => sum + (Number((app as any).amount_applied) || 0),
+        0,
+      );
+      const remaining = receipt.amount - alreadyApplied;
+      return remaining > 0 ? remaining : 0;
+    } catch {
+      return receipt.amount;
     }
   };
 
@@ -93,21 +115,26 @@ export default function ReceiptsPage() {
     return matchesSearch && matchesStatus && matchesPaymentMethod;
   });
 
+  const selectedCustomer = customers.find((c) => c.id === selectedCustomerId) || null;
+  const selectedReceiptCustomer = selectedReceipt
+    ? customers.find((c) => c.id === selectedReceipt.customerId) || null
+    : null;
+
   const loadCustomers = async () => {
     if (!user?.id) return;
     setLoadingCustomers(true);
     try {
       const list = await customersService.getAll(user.id);
-      setCustomers((list || []).map((c: any) => ({ id: String(c.id), name: String(c.name) })));
-
-      // Mapa de cuentas por cobrar específicas por cliente
-      const arMap: Record<string, string> = {};
-      (list || []).forEach((c: any) => {
-        if (c.id && c.ar_account_id) {
-          arMap[String(c.id)] = String(c.ar_account_id);
-        }
-      });
-      setCustomerArAccounts(arMap);
+      setCustomers(
+        (list || []).map((c: any) => ({
+          id: String(c.id),
+          name: String(c.name),
+          document: c.document ? String(c.document) : '',
+          phone: c.phone ? String(c.phone) : '',
+          email: c.email ? String(c.email) : '',
+          address: c.address ? String(c.address) : '',
+        })),
+      );
     } finally {
       setLoadingCustomers(false);
     }
@@ -116,27 +143,6 @@ export default function ReceiptsPage() {
   useEffect(() => {
     loadCustomers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
-
-  // Cargar cuentas bancarias para poder generar asientos Banco vs CxC
-  useEffect(() => {
-    const loadBankAccounts = async () => {
-      if (!user?.id) return;
-      try {
-        const data = await bankAccountsService.getAll(user.id);
-        const mapped: BankAccountOption[] = (data || []).map((ba: any) => ({
-          id: String(ba.id),
-          name: `${ba.bank_name} - ${ba.account_number}`,
-          chartAccountId: ba.chart_account_id ? String(ba.chart_account_id) : null,
-        }));
-        setBankAccounts(mapped);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.error('[Receipts] Error loading bank accounts', error);
-      }
-    };
-
-    loadBankAccounts();
   }, [user?.id]);
 
   const loadReceipts = async () => {
@@ -224,20 +230,31 @@ export default function ReceiptsPage() {
     // Tabla de recibos
     doc.setFontSize(14);
     doc.text('Detalle de Recibos', 20, (doc as any).lastAutoTable.finalY + 20);
-    
-    const receiptData = filteredReceipts.map(receipt => [
-      receipt.receiptNumber,
-      receipt.customerName,
-      receipt.date,
-      `RD$ ${receipt.amount.toLocaleString()}`,
-      getPaymentMethodName(receipt.paymentMethod),
-      receipt.reference,
-      getStatusName(receipt.status)
-    ]);
-    
+
+    const receiptData = filteredReceipts.map((receipt) => {
+      const customer = customers.find((c) => c.id === receipt.customerId);
+      const customerDocument = customer?.document || '';
+      const customerPhone = customer?.phone || '';
+      const customerEmail = customer?.email || '';
+      const customerAddress = customer?.address || '';
+      return [
+        receipt.receiptNumber,
+        receipt.customerName,
+        customerDocument,
+        customerPhone,
+        customerEmail,
+        customerAddress,
+        receipt.date,
+        `RD$ ${receipt.amount.toLocaleString()}`,
+        getPaymentMethodName(receipt.paymentMethod),
+        receipt.reference,
+        getStatusName(receipt.status),
+      ];
+    });
+
     (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 30,
-      head: [['Recibo', 'Cliente', 'Fecha', 'Monto', 'Método', 'Referencia', 'Estado']],
+      head: [['Recibo', 'Cliente', 'Documento', 'Teléfono', 'Email', 'Dirección', 'Fecha', 'Monto', 'Método', 'Referencia', 'Estado']],
       body: receiptData,
       theme: 'striped',
       headStyles: { fillColor: [34, 197, 94] },
@@ -265,6 +282,10 @@ export default function ReceiptsPage() {
     const rows = filteredReceipts.map((receipt) => ({
       receiptNumber: receipt.receiptNumber,
       customerName: receipt.customerName,
+      customerDocument: customers.find((c) => c.id === receipt.customerId)?.document || '',
+      customerPhone: customers.find((c) => c.id === receipt.customerId)?.phone || '',
+      customerEmail: customers.find((c) => c.id === receipt.customerId)?.email || '',
+      customerAddress: customers.find((c) => c.id === receipt.customerId)?.address || '',
       date: receipt.date,
       amount: receipt.amount,
       paymentMethod: getPaymentMethodName(receipt.paymentMethod),
@@ -284,6 +305,10 @@ export default function ReceiptsPage() {
     const headers = [
       { key: 'receiptNumber', title: 'Recibo' },
       { key: 'customerName', title: 'Cliente' },
+      { key: 'customerDocument', title: 'Documento' },
+      { key: 'customerPhone', title: 'Teléfono' },
+      { key: 'customerEmail', title: 'Email' },
+      { key: 'customerAddress', title: 'Dirección' },
       { key: 'date', title: 'Fecha' },
       { key: 'amount', title: 'Monto' },
       { key: 'paymentMethod', title: 'Método' },
@@ -297,7 +322,7 @@ export default function ReceiptsPage() {
       headers,
       `recibos-cobro-${todayIso}`,
       'Recibos',
-      [16, 28, 14, 16, 18, 24, 32, 14],
+      [16, 28, 20, 16, 28, 40, 14, 16, 18, 24, 32, 14],
       {
         title: `Recibos de Cobro - ${todayLocal}`,
         companyName,
@@ -307,6 +332,7 @@ export default function ReceiptsPage() {
 
   const handleNewReceipt = () => {
     setSelectedReceipt(null);
+    setSelectedCustomerId('');
     setShowReceiptModal(true);
   };
 
@@ -356,7 +382,15 @@ export default function ReceiptsPage() {
   };
 
   const handleApplyReceipt = async (receipt: Receipt) => {
+    const available = await calculateReceiptAvailableAmount(receipt);
+
+    if (!available || available <= 0) {
+      alert('Este recibo ya fue aplicado completamente. Solo está disponible para reimpresión.');
+      return;
+    }
+
     setSelectedReceipt(receipt);
+    setSelectedReceiptAvailableAmount(available);
     await loadInvoicesForReceipt(receipt);
     setShowApplyModal(true);
   };
@@ -390,6 +424,22 @@ export default function ReceiptsPage() {
     if (amountToApply > targetInvoice.totalAmount) {
       alert('El monto a aplicar no puede ser mayor que el monto de la factura');
       return;
+    }
+
+    try {
+      const apps = await receiptApplicationsService.getByReceipt(user.id, selectedReceipt.id);
+      const alreadyApplied = ((apps || []) as any[]).reduce(
+        (sum, app) => sum + (Number((app as any).amount_applied) || 0),
+        0,
+      );
+      const availableForReceipt = selectedReceipt.amount - alreadyApplied;
+      if (amountToApply > availableForReceipt) {
+        alert('El monto a aplicar no puede ser mayor que el monto disponible del recibo.');
+        return;
+      }
+    } catch (checkError) {
+      // eslint-disable-next-line no-console
+      console.error('[Receipts] Error verificando monto disponible del recibo', checkError);
     }
 
     try {
@@ -447,6 +497,12 @@ export default function ReceiptsPage() {
   const handlePrintReceipt = async (receipt: Receipt) => {
     const enriched = await enrichReceiptWithInvoices(receipt);
 
+    const customer = customers.find((c) => c.id === enriched.customerId);
+    const customerDocument = customer?.document || '';
+    const customerPhone = customer?.phone || '';
+    const customerEmail = customer?.email || '';
+    const customerAddress = customer?.address || '';
+
     let companyName = 'ContaBi';
     let companyRnc = '';
     try {
@@ -501,6 +557,10 @@ export default function ReceiptsPage() {
 
           <div class="details">
             <p><strong>Cliente:</strong> ${enriched.customerName}</p>
+            ${customerDocument ? `<p><strong>Documento:</strong> ${customerDocument}</p>` : ''}
+            ${customerPhone ? `<p><strong>Teléfono:</strong> ${customerPhone}</p>` : ''}
+            ${customerEmail ? `<p><strong>Email:</strong> ${customerEmail}</p>` : ''}
+            ${customerAddress ? `<p><strong>Dirección:</strong> ${customerAddress}</p>` : ''}
             ${enriched.concept ? `<p><strong>Concepto:</strong> ${enriched.concept}</p>` : ''}
             <p><strong>Método de pago:</strong> ${getPaymentMethodName(enriched.paymentMethod)}</p>
             ${enriched.reference ? `<p><strong>Referencia:</strong> ${enriched.reference}</p>` : ''}
@@ -522,12 +582,17 @@ export default function ReceiptsPage() {
 
   const handleExportReceiptExcel = async (receipt: Receipt) => {
     let companyName = 'ContaBi';
+    let companyRnc = '';
     try {
       const info = await settingsService.getCompanyInfo();
       if (info && (info as any)) {
-        const resolvedName = (info as any).name || (info as any).company_name;
-        if (resolvedName) {
-          companyName = String(resolvedName);
+        const name = (info as any).name || (info as any).company_name;
+        const rnc = (info as any).rnc || (info as any).tax_id || (info as any).ruc;
+        if (name) {
+          companyName = String(name);
+        }
+        if (rnc) {
+          companyRnc = String(rnc);
         }
       }
     } catch (error) {
@@ -535,44 +600,90 @@ export default function ReceiptsPage() {
       console.error('Error obteniendo información de la empresa para Excel de recibo:', error);
     }
 
-    const rows = [
-      {
-        receiptNumber: receipt.receiptNumber,
-        customerName: receipt.customerName,
-        date: receipt.date,
-        amount: receipt.amount,
-        paymentMethod: getPaymentMethodName(receipt.paymentMethod),
-        reference: receipt.reference,
-        concept: receipt.concept,
-        status: getStatusName(receipt.status),
-      },
+    const customer = customers.find((c) => c.id === receipt.customerId);
+    const customerName = customer?.name || receipt.customerName;
+    const customerDoc = customer?.document || '';
+    const customerEmail = customer?.email || '';
+    const customerPhone = customer?.phone || '';
+    const customerAddress = customer?.address || '';
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Recibo');
+
+    // Encabezado de empresa
+    worksheet.mergeCells('A1:D1');
+    worksheet.getCell('A1').value = companyName;
+    worksheet.getCell('A1').font = { bold: true, size: 16 } as any;
+    worksheet.getCell('A1').alignment = { horizontal: 'center' } as any;
+
+    if (companyRnc) {
+      worksheet.mergeCells('A2:D2');
+      worksheet.getCell('A2').value = `RNC: ${companyRnc}`;
+      worksheet.getCell('A2').alignment = { horizontal: 'center' } as any;
+      worksheet.getCell('A2').font = { size: 10 } as any;
+    }
+
+    const headerStartRow = companyRnc ? 3 : 2;
+    worksheet.mergeCells(`A${headerStartRow}:D${headerStartRow}`);
+    worksheet.getCell(`A${headerStartRow}`).value = `Recibo #${receipt.receiptNumber}`;
+    worksheet.getCell(`A${headerStartRow}`).font = { bold: true, size: 12 } as any;
+
+    worksheet.addRow([]);
+
+    // Datos del cliente
+    worksheet.addRow(['Cliente', customerName]);
+    if (customerDoc) worksheet.addRow(['Documento', customerDoc]);
+    if (customerEmail) worksheet.addRow(['Correo', customerEmail]);
+    if (customerPhone) worksheet.addRow(['Teléfono', customerPhone]);
+    if (customerAddress) worksheet.addRow(['Dirección', customerAddress]);
+    worksheet.addRow([
+      'Fecha',
+      receipt.date ? new Date(receipt.date).toLocaleDateString('es-DO') : '',
+    ]);
+    worksheet.addRow(['Método de pago', getPaymentMethodName(receipt.paymentMethod)]);
+    if (receipt.reference) worksheet.addRow(['Referencia', receipt.reference]);
+    if (receipt.concept) worksheet.addRow(['Concepto', receipt.concept]);
+
+    worksheet.addRow([]);
+
+    // Detalle del recibo (similar a detalle de factura)
+    const itemsHeader = worksheet.addRow(['Descripción', 'Cantidad', 'Precio', 'Total']);
+    itemsHeader.font = { bold: true } as any;
+
+    worksheet.addRow([
+      receipt.concept || 'Pago de recibo',
+      1,
+      receipt.amount,
+      receipt.amount,
+    ]);
+
+    worksheet.addRow([]);
+
+    // Totales del recibo (mismo layout que la factura)
+    worksheet.addRow(['', '', 'Subtotal', receipt.amount]);
+    worksheet.addRow(['', '', 'ITBIS', 0]);
+    worksheet.addRow(['', '', 'Total', receipt.amount]);
+    worksheet.addRow(['', '', 'Pagado', receipt.amount]);
+    worksheet.addRow(['', '', 'Saldo', 0]);
+
+    worksheet.columns = [
+      { width: 40 },
+      { width: 12 },
+      { width: 14 },
+      { width: 14 },
     ];
 
-    const todayIso = new Date().toISOString().split('T')[0];
-    const todayLocal = new Date().toLocaleDateString();
+    ['C', 'D'].forEach((col) => {
+      const column = worksheet.getColumn(col as any);
+      (column as any).numFmt = '#,##0.00';
+    });
 
-    const headers = [
-      { key: 'receiptNumber', title: 'Recibo' },
-      { key: 'customerName', title: 'Cliente' },
-      { key: 'date', title: 'Fecha' },
-      { key: 'amount', title: 'Monto' },
-      { key: 'paymentMethod', title: 'Método' },
-      { key: 'reference', title: 'Referencia' },
-      { key: 'concept', title: 'Concepto' },
-      { key: 'status', title: 'Estado' },
-    ];
-
-    exportToExcelWithHeaders(
-      rows,
-      headers,
-      `recibo-${receipt.receiptNumber || todayIso}`,
-      'Recibo',
-      [16, 28, 14, 16, 18, 24, 32, 14],
-      {
-        title: `Recibo de Cobro ${receipt.receiptNumber} - ${todayLocal}`,
-        companyName,
-      },
-    );
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const safeNumber = receipt.receiptNumber || receipt.id;
+    saveAs(blob, `recibo_cxc_${safeNumber}.xlsx`);
   };
 
   const handleSaveReceipt = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -588,19 +699,14 @@ export default function ReceiptsPage() {
     const paymentMethod = String(formData.get('payment_method') || 'cash');
     const reference = String(formData.get('reference') || '');
     const concept = String(formData.get('concept') || '');
-    const bankAccountId = String(formData.get('bank_account_id') || '');
 
     if (!customerId || !amount) {
       alert('Cliente y monto son obligatorios');
       return;
     }
 
-    if (paymentMethod !== 'cash' && !bankAccountId) {
-      alert('Debe seleccionar una cuenta de banco para este método de pago');
-      return;
-    }
-
     const todayStr = date || new Date().toISOString().slice(0, 10);
+
     const receiptNumber = `RC-${Date.now()}`;
 
     const payload = {
@@ -615,82 +721,7 @@ export default function ReceiptsPage() {
     };
 
     try {
-      const created = await receiptsService.create(user.id, payload);
-
-      // Best-effort: registrar asiento contable del recibo (Banco/Caja vs CxC)
-      try {
-        const settings = await accountingSettingsService.get(user.id);
-
-        // Preferir cuenta de CxC específica del cliente, si existe
-        const customerSpecificArId = customerArAccounts[customerId];
-        const arAccountId = customerSpecificArId || settings?.ar_account_id;
-
-        if (!arAccountId) {
-          alert('Recibo registrado, pero no se pudo crear el asiento: falta configurar la Cuenta de Cuentas por Cobrar en Ajustes Contables o en el cliente.');
-        } else {
-          // Determinar cuenta contable del banco si se seleccionó uno
-          let bankChartAccountId: string | null = null;
-          if (bankAccountId) {
-            const bank = bankAccounts.find(b => b.id === bankAccountId);
-            bankChartAccountId = bank?.chartAccountId || null;
-          }
-
-          if (!bankChartAccountId) {
-            if (paymentMethod === 'cash') {
-              alert('Recibo registrado en efectivo sin cuenta de banco/caja configurada; no se generó asiento automático.');
-            } else {
-              alert('Recibo registrado, pero no se pudo crear el asiento: la cuenta de banco seleccionada no tiene cuenta contable asociada.');
-            }
-          } else {
-            const entryAmount = Number(created.amount) || amount;
-
-            const lines: any[] = [
-              {
-                account_id: bankChartAccountId,
-                description: 'Cobro de cliente - Banco/Recibo',
-                debit_amount: entryAmount,
-                credit_amount: 0,
-                line_number: 1,
-              },
-              {
-                account_id: arAccountId,
-                description: 'Cobro de cliente - Cuentas por Cobrar (Recibo)',
-                debit_amount: 0,
-                credit_amount: entryAmount,
-                line_number: 2,
-              },
-            ];
-
-            const customerName = customers.find(c => c.id === customerId)?.name || '';
-            const descriptionText = customerName
-              ? `Recibo ${created.receipt_number || receiptNumber} - ${customerName}`
-              : `Recibo ${created.receipt_number || receiptNumber}`;
-
-            const refText = created.reference || reference || '';
-            const entryReference = refText
-              ? `Recibo:${created.id} Ref:${refText}`
-              : `Recibo:${created.id}`;
-
-            const entryDate = created.receipt_date || todayStr;
-
-            const entryPayload = {
-              entry_number: created.id,
-              entry_date: entryDate,
-              description: descriptionText,
-              reference: entryReference,
-              total_debit: entryAmount,
-              total_credit: entryAmount,
-              status: 'posted' as const,
-            };
-
-            await journalEntriesService.createWithLines(user.id, entryPayload, lines);
-          }
-        }
-      } catch (jeError) {
-        // eslint-disable-next-line no-console
-        console.error('[Receipts] Error creando asiento contable de recibo:', jeError);
-        alert('Recibo registrado, pero ocurrió un error al crear el asiento contable. Revise el libro diario y la configuración.');
-      }
+      await receiptsService.create(user.id, payload);
 
       await loadReceipts();
       alert('Recibo creado exitosamente');
@@ -962,6 +993,116 @@ export default function ReceiptsPage() {
           </div>
         </div>
 
+        {/* Apply Receipt Modal */}
+        {showApplyModal && selectedReceipt && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold">Aplicar Recibo</h3>
+                <button
+                  onClick={() => {
+                    setShowApplyModal(false);
+                    setSelectedReceipt(null);
+                  }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <i className="ri-close-line"></i>
+                </button>
+              </div>
+
+              <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-600">
+                  Recibo: <span className="font-medium">{selectedReceipt.receiptNumber}</span>
+                </p>
+                <p className="text-sm text-gray-600">
+                  Cliente: <span className="font-medium">{selectedReceipt.customerName}</span>
+                </p>
+                <p className="text-lg font-semibold text-green-600">
+                  Monto disponible: RD${selectedReceiptAvailableAmount.toLocaleString()}
+                </p>
+              </div>
+
+              {loadingApplyInvoices && (
+                <div className="mb-2 text-sm text-gray-500">Cargando facturas disponibles...</div>
+              )}
+
+              {!loadingApplyInvoices && applyInvoices.length === 0 && (
+                <div className="mb-4 text-sm text-red-600">
+                  No se encontraron facturas elegibles para aplicar este recibo.
+                </div>
+              )}
+
+              {applyInvoices.length > 0 && (
+                <form onSubmit={handleSaveApplication} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Factura a Aplicar
+                    </label>
+                    <select
+                      required
+                      name="invoice_id"
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Seleccionar factura</option>
+                      {applyInvoices.map((inv) => (
+                        <option key={inv.id} value={inv.id}>
+                          {inv.invoiceNumber} - RD$ {inv.totalAmount.toLocaleString()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Monto a Aplicar
+                    </label>
+                    <input
+                      type="number" min="0"
+                      step="0.01"
+                      name="amount_to_apply"
+                      required
+                      max={selectedReceiptAvailableAmount || selectedReceipt.amount}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="0.00"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Observaciones
+                    </label>
+                    <textarea
+                      rows={3}
+                      name="notes"
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Observaciones sobre la aplicación del recibo..."
+                    />
+                  </div>
+
+                  <div className="flex space-x-3 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowApplyModal(false);
+                        setSelectedReceipt(null);
+                      }}
+                      className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors whitespace-nowrap"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+                    >
+                      Aplicar Recibo
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* New Receipt Modal */}
         {showReceiptModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -985,6 +1126,8 @@ export default function ReceiptsPage() {
                     <select 
                       required
                       name="customer_id"
+                      value={selectedCustomerId}
+                      onChange={(e) => setSelectedCustomerId(e.target.value)}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar cliente</option>
@@ -994,6 +1137,26 @@ export default function ReceiptsPage() {
                         </option>
                       ))}
                     </select>
+                    {selectedCustomer && (
+                      <div className="mt-3 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-1">
+                        <p>
+                          <span className="font-medium">Documento:</span>{' '}
+                          {selectedCustomer.document || '—'}
+                        </p>
+                        <p>
+                          <span className="font-medium">Teléfono:</span>{' '}
+                          {selectedCustomer.phone || '—'}
+                        </p>
+                        <p>
+                          <span className="font-medium">Email:</span>{' '}
+                          {selectedCustomer.email || '—'}
+                        </p>
+                        <p>
+                          <span className="font-medium">Dirección:</span>{' '}
+                          {selectedCustomer.address || '—'}
+                        </p>
+                      </div>
+                    )}
                   </div>
                   
                   <div>
@@ -1114,6 +1277,34 @@ export default function ReceiptsPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Cliente</label>
                     <p className="text-gray-900">{selectedReceipt.customerName}</p>
+                    {selectedReceiptCustomer && (
+                      <div className="mt-2 text-sm text-gray-600 space-y-1">
+                        {selectedReceiptCustomer.document && (
+                          <p>
+                            <span className="font-medium">Documento:</span>{' '}
+                            {selectedReceiptCustomer.document}
+                          </p>
+                        )}
+                        {selectedReceiptCustomer.phone && (
+                          <p>
+                            <span className="font-medium">Teléfono:</span>{' '}
+                            {selectedReceiptCustomer.phone}
+                          </p>
+                        )}
+                        {selectedReceiptCustomer.email && (
+                          <p>
+                            <span className="font-medium">Email:</span>{' '}
+                            {selectedReceiptCustomer.email}
+                          </p>
+                        )}
+                        {selectedReceiptCustomer.address && (
+                          <p>
+                            <span className="font-medium">Dirección:</span>{' '}
+                            {selectedReceiptCustomer.address}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                   
                   <div>
