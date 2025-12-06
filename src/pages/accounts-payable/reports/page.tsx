@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import * as ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
 import {
   apInvoicesService,
@@ -10,6 +12,7 @@ import {
   suppliersService,
   bankCurrenciesService,
   bankExchangeRatesService,
+  settingsService,
 } from '../../../services/database';
 
 declare module 'jspdf' {
@@ -32,6 +35,7 @@ export default function ReportsPage() {
   const [paymentsData, setPaymentsData] = useState<any[]>([]);
   const [baseCurrencyCode, setBaseCurrencyCode] = useState<string>('DOP');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   const loadSuppliers = async () => {
     if (!user?.id) {
@@ -106,6 +110,26 @@ export default function ReportsPage() {
     loadCurrencies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  useEffect(() => {
+    const loadCompanyInfo = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading company info for AP reports', error);
+      }
+    };
+
+    loadCompanyInfo();
+  }, [user?.id]);
+
+  const companyName =
+    (companyInfo as any)?.name ||
+    (companyInfo as any)?.company_name ||
+    (companyInfo as any)?.legal_name ||
+    '';
 
   const generateReport = async () => {
     if (!user?.id) {
@@ -235,16 +259,27 @@ export default function ReportsPage() {
 
   const exportToPDF = () => {
     const doc = new jsPDF();
-    
-    // Título del reporte
-    doc.setFontSize(20);
-    doc.text('Reporte de Cuentas por Pagar', 20, 20);
+
+    const headerCompanyName = companyName || 'ContaBi';
+
+    // Encabezado con nombre de empresa y título
+    doc.setFontSize(16);
+    if (headerCompanyName) {
+      doc.text(headerCompanyName, 20, 20);
+    }
+
+    doc.setFontSize(14);
+    doc.text('Reporte de Cuentas por Pagar', 20, 30);
     
     // Información del reporte
     doc.setFontSize(12);
-    doc.text(`Tipo de Reporte: ${reportType === 'aging' ? 'Antigüedad de Saldos' : 'Reporte de Pagos'}`, 20, 40);
-    doc.text(`Período: ${startDate} - ${endDate}`, 20, 50);
-    doc.text(`Fecha de Generación: ${new Date().toLocaleDateString()}`, 20, 60);
+    doc.text(
+      `Tipo de Reporte: ${reportType === 'aging' ? 'Antigüedad de Saldos' : 'Reporte de Pagos'}`,
+      20,
+      46,
+    );
+    doc.text(`Período: ${startDate} - ${endDate}`, 20, 54);
+    doc.text(`Fecha de Generación: ${new Date().toLocaleDateString()}`, 20, 62);
 
     if (reportType === 'aging') {
       // Reporte de Antigüedad de Saldos
@@ -288,7 +323,7 @@ export default function ReportsPage() {
           `RD$ ${totals.days61_90.toLocaleString()}`,
           `RD$ ${totals.over90.toLocaleString()}`
         ]],
-        startY: doc.lastAutoTable.finalY + 10,
+        startY: ((((doc as any).lastAutoTable?.finalY) ?? 80) + 10),
         theme: 'plain',
         styles: { fontStyle: 'bold', fillColor: [240, 240, 240] }
       });
@@ -315,7 +350,7 @@ export default function ReportsPage() {
       const totalPayments = paymentsData.reduce((sum, payment) => sum + payment.amount, 0);
       doc.autoTable({
         body: [['TOTAL DE PAGOS', `RD$ ${totalPayments.toLocaleString()}`]],
-        startY: doc.lastAutoTable.finalY + 10,
+        startY: ((((doc as any).lastAutoTable?.finalY) ?? 80) + 10),
         theme: 'plain',
         styles: { fontStyle: 'bold', fillColor: [240, 240, 240] }
       });
@@ -333,48 +368,186 @@ export default function ReportsPage() {
     doc.save(`reporte-cuentas-por-pagar-${reportType}-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportToExcel = () => {
-    let csvContent = '';
-    
-    if (reportType === 'aging') {
-      csvContent = 'Reporte de Antigüedad de Saldos\n\n';
-      csvContent += 'Proveedor,Total,Corriente,1-30 días,31-60 días,61-90 días,+90 días\n';
-      
-      agingData.forEach(item => {
-        csvContent += `"${item.supplier}",${item.total},${item.current},${item.days1_30},${item.days31_60},${item.days61_90},${item.over90}\n`;
+  const exportToExcel = async () => {
+    const workbook = new ExcelJS.Workbook();
+    const isAging = reportType === 'aging';
+    const sheetName = isAging ? 'Antigüedad' : 'Pagos';
+    const worksheet = workbook.addWorksheet(sheetName);
+
+    const headerCompanyName = companyName || 'ContaBi';
+    const today = new Date().toLocaleDateString('es-DO');
+    const periodLabel = `${startDate} - ${endDate}`;
+
+    // Encabezado principal
+    let currentRow = 1;
+    worksheet.mergeCells(`A${currentRow}:G${currentRow}`);
+    worksheet.getCell(`A${currentRow}`).value = headerCompanyName;
+    worksheet.getCell(`A${currentRow}`).font = { bold: true, size: 16 };
+    worksheet.getCell(`A${currentRow}`).alignment = { horizontal: 'center' } as any;
+
+    currentRow += 1;
+    worksheet.mergeCells(`A${currentRow}:G${currentRow}`);
+    worksheet.getCell(`A${currentRow}`).value = isAging
+      ? 'Reporte de Antigüedad de Saldos - Cuentas por Pagar'
+      : 'Reporte de Pagos a Proveedores';
+    worksheet.getCell(`A${currentRow}`).font = { bold: true, size: 13 };
+    worksheet.getCell(`A${currentRow}`).alignment = { horizontal: 'center' } as any;
+
+    currentRow += 1;
+    worksheet.mergeCells(`A${currentRow}:G${currentRow}`);
+    worksheet.getCell(`A${currentRow}`).value = `Período: ${periodLabel}`;
+    worksheet.getCell(`A${currentRow}`).alignment = { horizontal: 'center' } as any;
+
+    currentRow += 1;
+    worksheet.mergeCells(`A${currentRow}:G${currentRow}`);
+    worksheet.getCell(`A${currentRow}`).value = `Fecha de generación: ${today}`;
+    worksheet.getCell(`A${currentRow}`).alignment = { horizontal: 'center' } as any;
+
+    currentRow += 2; // línea en blanco
+
+    if (isAging) {
+      // Encabezados de columnas para Antigüedad
+      const headerRow = worksheet.addRow([
+        'Proveedor',
+        'Total',
+        'Corriente',
+        '1-30 días',
+        '31-60 días',
+        '61-90 días',
+        '+90 días',
+      ]);
+      headerRow.font = { bold: true };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF3B82F6' },
+      } as any;
+      headerRow.alignment = { horizontal: 'center' } as any;
+
+      // Datos
+      agingData.forEach((item: any) => {
+        worksheet.addRow([
+          item.supplier,
+          item.total,
+          item.current,
+          item.days1_30,
+          item.days31_60,
+          item.days61_90,
+          item.over90,
+        ]);
       });
 
-      const totals = agingData.reduce((acc, item) => ({
-        total: acc.total + item.total,
-        current: acc.current + item.current,
-        days1_30: acc.days1_30 + item.days1_30,
-        days31_60: acc.days31_60 + item.days31_60,
-        days61_90: acc.days61_90 + item.days61_90,
-        over90: acc.over90 + item.over90
-      }), { total: 0, current: 0, days1_30: 0, days31_60: 0, days61_90: 0, over90: 0 });
+      // Fila de totales
+      const totals = agingData.reduce(
+        (acc: any, item: any) => ({
+          total: acc.total + item.total,
+          current: acc.current + item.current,
+          days1_30: acc.days1_30 + item.days1_30,
+          days31_60: acc.days31_60 + item.days31_60,
+          days61_90: acc.days61_90 + item.days61_90,
+          over90: acc.over90 + item.over90,
+        }),
+        { total: 0, current: 0, days1_30: 0, days31_60: 0, days61_90: 0, over90: 0 },
+      );
 
-      csvContent += `\nTOTALES,${totals.total},${totals.current},${totals.days1_30},${totals.days31_60},${totals.days61_90},${totals.over90}\n`;
+      const totalRow = worksheet.addRow([
+        'TOTALES',
+        totals.total,
+        totals.current,
+        totals.days1_30,
+        totals.days31_60,
+        totals.days61_90,
+        totals.over90,
+      ]);
+      totalRow.font = { bold: true };
+
+      // Ajustar anchos de columna
+      worksheet.columns = [
+        { width: 35 },
+        { width: 16 },
+        { width: 16 },
+        { width: 16 },
+        { width: 16 },
+        { width: 16 },
+        { width: 16 },
+      ];
+
+      // Formato numérico para montos
+      ['B', 'C', 'D', 'E', 'F', 'G'].forEach((col) => {
+        const column = worksheet.getColumn(col);
+        column.numFmt = '"RD$"#,##0.00';
+        column.alignment = { horizontal: 'right' } as any;
+      });
     } else {
-      csvContent = 'Reporte de Pagos\n\n';
-      csvContent += 'Fecha,Proveedor,Referencia,Método,Monto\n';
-      
-      paymentsData.forEach(item => {
-        csvContent += `${item.date},"${item.supplier}",${item.reference},${item.method},${item.amount}\n`;
+      // Encabezados de columnas para Pagos
+      const headerRow = worksheet.addRow([
+        'Fecha',
+        'Proveedor',
+        'Referencia',
+        'Método',
+        'Monto',
+      ]);
+      headerRow.font = { bold: true };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF22C55E' },
+      } as any;
+      headerRow.alignment = { horizontal: 'center' } as any;
+
+      // Datos
+      paymentsData.forEach((item: any) => {
+        const dateValue = item.date ? new Date(item.date) : null;
+        const formattedDate = dateValue
+          ? dateValue.toLocaleDateString('es-DO')
+          : item.date;
+
+        worksheet.addRow([
+          formattedDate,
+          item.supplier,
+          item.reference,
+          item.method,
+          item.amount,
+        ]);
       });
 
-      const totalPayments = paymentsData.reduce((sum, payment) => sum + payment.amount, 0);
-      csvContent += `\n,,,TOTAL,${totalPayments}\n`;
+      const totalPayments = paymentsData.reduce(
+        (sum: number, payment: any) => sum + payment.amount,
+        0,
+      );
+
+      const totalRow = worksheet.addRow([
+        'TOTAL DE PAGOS',
+        '',
+        '',
+        '',
+        totalPayments,
+      ]);
+      totalRow.font = { bold: true };
+
+      worksheet.columns = [
+        { width: 14 },
+        { width: 32 },
+        { width: 18 },
+        { width: 16 },
+        { width: 18 },
+      ];
+
+      const amountColumn = worksheet.getColumn('E');
+      amountColumn.numFmt = '"RD$"#,##0.00';
+      amountColumn.alignment = { horizontal: 'right' } as any;
     }
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `reporte-cuentas-por-pagar-${reportType}-${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // Generar y descargar archivo
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const safeType = isAging ? 'antiguedad' : 'pagos';
+    const fileName = `reporte_cxp_${safeType}_${new Date()
+      .toISOString()
+      .split('T')[0]}.xlsx`;
+    saveAs(blob, fileName);
   };
 
   return (
@@ -383,6 +556,9 @@ export default function ReportsPage() {
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Reportes de Cuentas por Pagar</h1>
+          {companyName && (
+            <p className="text-sm font-medium text-gray-700">{companyName}</p>
+          )}
           <p className="text-gray-600">Genera reportes detallados de proveedores y pagos</p>
         </div>
 

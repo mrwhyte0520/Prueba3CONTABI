@@ -798,11 +798,17 @@ export default function ProductsPage() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Sin cuenta asignada</option>
-                      {accounts.map((acc) => (
-                        <option key={acc.id} value={acc.id}>
-                          {acc.code} - {acc.name}
-                        </option>
-                      ))}
+                      {accounts
+                        .filter((acc) => {
+                          const code = String(acc.code || '');
+                          const normalized = code.replace(/\./g, '');
+                          return normalized.startsWith('5');
+                        })
+                        .map((acc) => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.code} - {acc.name}
+                          </option>
+                        ))}
                     </select>
                   </div>
                   <div>

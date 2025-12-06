@@ -361,6 +361,22 @@ export default function InventoryPage() {
     try {
       if (modalType === 'item') {
         if (user) {
+          // Validación: stock máximo no puede ser menor que stock actual para productos inventariables
+          const rawCurrentStock = Number(formData.current_stock);
+          const rawMaximumStock = Number(formData.maximum_stock);
+          const currentStock = Number.isFinite(rawCurrentStock) ? Math.round(rawCurrentStock) : 0;
+          const maximumStock = Number.isFinite(rawMaximumStock) ? Math.round(rawMaximumStock) : 0;
+
+          if (
+            (formData.item_type === 'inventory' || !formData.item_type) &&
+            Number.isFinite(rawCurrentStock) &&
+            Number.isFinite(rawMaximumStock) &&
+            maximumStock < currentStock
+          ) {
+            alert('El stock máximo no puede ser menor que el stock actual.');
+            return;
+          }
+
           // Normalizar campos numéricos antes de guardar
           const normalizedItem = {
             ...formData,
@@ -2141,8 +2157,9 @@ export default function InventoryPage() {
                           <option value="">Seleccionar cuenta</option>
                           {accounts
                             .filter((acc) => {
-                              const t = (acc.type || '').toLowerCase();
-                              return t === 'expense';
+                              const code = String(acc.code || '');
+                              const normalized = code.replace(/\./g, '');
+                              return normalized.startsWith('5');
                             })
                             .map((acc) => (
                               <option key={acc.id} value={acc.id}>
