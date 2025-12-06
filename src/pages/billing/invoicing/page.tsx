@@ -581,6 +581,104 @@ export default function InvoicingPage() {
     printWindow.document.close();
   };
 
+  const handleExportInvoiceExcel = async (invoiceId: string) => {
+    const invoice = invoices.find((inv) => inv.id === invoiceId);
+    if (!invoice) return;
+
+    const fullCustomer = invoice.customerId
+      ? customers.find((c) => c.id === invoice.customerId)
+      : undefined;
+
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id || '';
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Factura');
+
+    worksheet.mergeCells('A1:D1');
+    worksheet.getCell('A1').value = companyName;
+    worksheet.getCell('A1').font = { bold: true, size: 16 };
+    worksheet.getCell('A1').alignment = { horizontal: 'center' } as any;
+
+    if (companyRnc) {
+      worksheet.mergeCells('A2:D2');
+      worksheet.getCell('A2').value = `RNC: ${companyRnc}`;
+      worksheet.getCell('A2').alignment = { horizontal: 'center' } as any;
+      worksheet.getCell('A2').font = { size: 10 };
+    }
+
+    const headerStartRow = companyRnc ? 3 : 2;
+    worksheet.mergeCells(`A${headerStartRow}:D${headerStartRow}`);
+    worksheet.getCell(`A${headerStartRow}`).value = `Factura #${invoice.id}`;
+    worksheet.getCell(`A${headerStartRow}`).font = { bold: true, size: 12 };
+
+    worksheet.addRow([]);
+
+    const customerName = invoice.customer;
+    const customerDoc = fullCustomer?.document || invoice.customerDocument || '';
+    const customerEmail = fullCustomer?.email || invoice.customerEmail || '';
+    const customerPhone = fullCustomer?.phone || invoice.customerPhone || '';
+
+    worksheet.addRow(['Cliente', customerName]);
+    if (customerDoc) worksheet.addRow(['Documento', customerDoc]);
+    if (customerEmail) worksheet.addRow(['Correo', customerEmail]);
+    if (customerPhone) worksheet.addRow(['Teléfono', customerPhone]);
+    worksheet.addRow([
+      'Fecha',
+      new Date(invoice.date).toLocaleDateString('es-DO'),
+    ]);
+    worksheet.addRow([
+      'Vencimiento',
+      new Date(invoice.dueDate).toLocaleDateString('es-DO'),
+    ]);
+
+    worksheet.addRow([]);
+
+    const itemsHeader = worksheet.addRow(['Descripción', 'Cantidad', 'Precio', 'Total']);
+    itemsHeader.font = { bold: true };
+
+    invoice.items.forEach((item) => {
+      worksheet.addRow([
+        item.description,
+        item.quantity,
+        item.price,
+        item.total,
+      ]);
+    });
+
+    worksheet.addRow([]);
+    worksheet.addRow(['', '', 'Subtotal', invoice.amount]);
+    worksheet.addRow([
+      '',
+      '',
+      `ITBIS (${(taxConfig?.itbis_rate ?? 18).toFixed(2)}%)`,
+      invoice.tax,
+    ]);
+    worksheet.addRow(['', '', 'Total', invoice.total]);
+
+    worksheet.columns = [
+      { width: 40 },
+      { width: 12 },
+      { width: 14 },
+      { width: 14 },
+    ];
+
+    ['C', 'D'].forEach((col) => {
+      worksheet.getColumn(col).numFmt = '#,##0.00';
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    saveAs(blob, `factura_${invoice.id}.xlsx`);
+  };
+
   const handleDuplicateInvoice = (invoiceId: string) => {
     const original = invoices.find((inv) => inv.id === invoiceId);
     if (!original) return;
@@ -1120,6 +1218,13 @@ export default function InvoicingPage() {
                             title="Imprimir factura"
                           >
                             <i className="ri-printer-line"></i>
+                          </button>
+                          <button
+                            onClick={() => handleExportInvoiceExcel(invoice.id)}
+                            className="text-green-600 hover:text-green-900 p-1"
+                            title="Exportar factura a Excel"
+                          >
+                            <i className="ri-file-excel-2-line"></i>
                           </button>
                           <button
                             onClick={() => handleDuplicateInvoice(invoice.id)}

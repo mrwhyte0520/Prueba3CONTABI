@@ -10,9 +10,8 @@ const printStyles = `
   @media print {
     @page { 
       size: portrait; 
-      margin: 1cm;
-      margin-top: 0;
-      margin-bottom: 0;
+      /* Márgenes amplios en todo el contorno para que el contenido no quede pegado al borde */
+      margin: 1.5cm 1.8cm;
     }
     body * { visibility: hidden; }
     #printable-statement, #printable-statement * { visibility: visible; }
@@ -24,7 +23,6 @@ const printStyles = `
     .print-hidden { display: none !important; }
     .hide-zero-on-print { display: none !important; }
   }
-  @page { margin: 0; }
 `;
 
 interface FinancialStatement {
