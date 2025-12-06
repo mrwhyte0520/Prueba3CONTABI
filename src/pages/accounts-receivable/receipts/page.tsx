@@ -361,36 +361,6 @@ export default function ReceiptsPage() {
     setShowApplyModal(true);
   };
 
-  const handlePrintReceipt = async (receipt: Receipt) => {
-    const enriched = await enrichReceiptWithInvoices(receipt);
-    const doc = new jsPDF();
-    
-    doc.setFontSize(20);
-    doc.text('RECIBO DE COBRO', 20, 30);
-    
-    doc.setFontSize(12);
-    doc.text(`Recibo No: ${enriched.receiptNumber}`, 20, 50);
-    doc.text(`Fecha: ${enriched.date}`, 20, 60);
-    
-    doc.text(`Cliente: ${enriched.customerName}`, 20, 80);
-    doc.text(`Concepto: ${enriched.concept}`, 20, 90);
-    doc.text(`Método de Pago: ${getPaymentMethodName(enriched.paymentMethod)}`, 20, 100);
-    doc.text(`Referencia: ${enriched.reference}`, 20, 110);
-    
-    doc.setFontSize(16);
-    doc.text(`Monto: RD$ ${enriched.amount.toLocaleString()}`, 20, 130);
-    
-    if (enriched.invoiceNumbers.length > 0) {
-      doc.setFontSize(12);
-      doc.text('Facturas aplicadas:', 20, 150);
-      enriched.invoiceNumbers.forEach((invoice, index) => {
-        doc.text(`- ${invoice}`, 30, 160 + (index * 10));
-      });
-    }
-    
-    doc.save(`recibo-${receipt.receiptNumber}.pdf`);
-  };
-
   const handleSaveApplication = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!user?.id || !selectedReceipt) {
@@ -434,6 +404,7 @@ export default function ReceiptsPage() {
       setShowApplyModal(false);
       setSelectedReceipt(null);
     } catch (error: any) {
+      // eslint-disable-next-line no-console
       console.error('[Receipts] Error al aplicar recibo', error);
       alert(`Error al aplicar el recibo: ${error?.message || 'revisa la consola para más detalles'}`);
     }
@@ -471,6 +442,137 @@ export default function ReceiptsPage() {
       console.error('[Receipts] Error al reactivar recibo', error);
       alert(`Error al reactivar el recibo: ${error?.message || 'revisa la consola para más detalles'}`);
     }
+  };
+
+  const handlePrintReceipt = async (receipt: Receipt) => {
+    const enriched = await enrichReceiptWithInvoices(receipt);
+
+    let companyName = 'ContaBi';
+    let companyRnc = '';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const name = (info as any).name || (info as any).company_name;
+        const rnc = (info as any).rnc || (info as any).tax_id;
+        if (name) {
+          companyName = String(name);
+        }
+        if (rnc) {
+          companyRnc = String(rnc);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[Receipts] Error obteniendo información de la empresa para impresión de recibo:', error);
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('No se pudo abrir la ventana de impresión.');
+      return;
+    }
+
+    const appliedInvoicesHtml =
+      enriched.invoiceNumbers && enriched.invoiceNumbers.length
+        ? `<p><strong>Facturas aplicadas:</strong></p>
+           <ul>
+             ${enriched.invoiceNumbers.map((inv) => `<li>${inv}</li>`).join('')}
+           </ul>`
+        : '';
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Recibo ${enriched.receiptNumber}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            .header { text-align: center; margin-bottom: 20px; }
+            .details { margin: 20px 0; }
+            .amount { font-size: 18px; font-weight: bold; margin-top: 10px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${companyName}</h1>
+            ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
+            <h2>Recibo de Cobro #${enriched.receiptNumber}</h2>
+            <p>Fecha: ${new Date(enriched.date).toLocaleDateString('es-DO')}</p>
+          </div>
+
+          <div class="details">
+            <p><strong>Cliente:</strong> ${enriched.customerName}</p>
+            ${enriched.concept ? `<p><strong>Concepto:</strong> ${enriched.concept}</p>` : ''}
+            <p><strong>Método de pago:</strong> ${getPaymentMethodName(enriched.paymentMethod)}</p>
+            ${enriched.reference ? `<p><strong>Referencia:</strong> ${enriched.reference}</p>` : ''}
+            <p class="amount">Monto: RD$ ${enriched.amount.toLocaleString('es-DO')}</p>
+            ${appliedInvoicesHtml}
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 800);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handleExportReceiptExcel = async (receipt: Receipt) => {
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de recibo:', error);
+    }
+
+    const rows = [
+      {
+        receiptNumber: receipt.receiptNumber,
+        customerName: receipt.customerName,
+        date: receipt.date,
+        amount: receipt.amount,
+        paymentMethod: getPaymentMethodName(receipt.paymentMethod),
+        reference: receipt.reference,
+        concept: receipt.concept,
+        status: getStatusName(receipt.status),
+      },
+    ];
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const todayLocal = new Date().toLocaleDateString();
+
+    const headers = [
+      { key: 'receiptNumber', title: 'Recibo' },
+      { key: 'customerName', title: 'Cliente' },
+      { key: 'date', title: 'Fecha' },
+      { key: 'amount', title: 'Monto' },
+      { key: 'paymentMethod', title: 'Método' },
+      { key: 'reference', title: 'Referencia' },
+      { key: 'concept', title: 'Concepto' },
+      { key: 'status', title: 'Estado' },
+    ];
+
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      `recibo-${receipt.receiptNumber || todayIso}`,
+      'Recibo',
+      [16, 28, 14, 16, 18, 24, 32, 14],
+      {
+        title: `Recibo de Cobro ${receipt.receiptNumber} - ${todayLocal}`,
+        companyName,
+      },
+    );
   };
 
   const handleSaveReceipt = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -745,100 +847,6 @@ export default function ReceiptsPage() {
             <div className="px-6 pt-3 text-sm text-gray-500">Cargando datos...</div>
           )}
 
-        {/* Apply Receipt Modal */}
-        {showApplyModal && selectedReceipt && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold">Aplicar Recibo a Factura</h3>
-                <button
-                  onClick={() => {
-                    setShowApplyModal(false);
-                    setSelectedReceipt(null);
-                  }}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <i className="ri-close-line"></i>
-                </button>
-              </div>
-
-              <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-600">Recibo: <span className="font-medium">{selectedReceipt.receiptNumber}</span></p>
-                <p className="text-sm text-gray-600">Cliente: <span className="font-medium">{selectedReceipt.customerName}</span></p>
-                <p className="text-lg font-semibold text-green-600">Monto del recibo: RD${selectedReceipt.amount.toLocaleString()}</p>
-              </div>
-
-              {loadingApplyInvoices && (
-                <p className="text-sm text-gray-500 mb-2">Cargando facturas pendientes...</p>
-              )}
-
-              <form onSubmit={handleSaveApplication} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Factura a Aplicar
-                  </label>
-                  <select
-                    required
-                    name="invoice_id"
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
-                  >
-                    <option value="">Seleccionar factura</option>
-                    {applyInvoices.map((inv) => (
-                      <option key={inv.id} value={inv.id}>
-                        {inv.invoiceNumber} - Saldo RD$ {inv.balance.toLocaleString()}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Monto a Aplicar
-                  </label>
-                  <input
-                    type="number" min="0"
-                    step="0.01"
-                    name="amount_to_apply"
-                    required
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="0.00"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Notas (opcional)
-                  </label>
-                  <textarea
-                    name="notes"
-                    rows={3}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Notas sobre la aplicación del recibo..."
-                  />
-                </div>
-
-                <div className="flex space-x-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowApplyModal(false);
-                      setSelectedReceipt(null);
-                    }}
-                    className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors whitespace-nowrap"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
-                  >
-                    Aplicar Recibo
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -899,40 +907,47 @@ export default function ReceiptsPage() {
                       <div className="flex space-x-2">
                         <button
                           onClick={() => handleViewReceipt(receipt)}
-                          className="text-blue-600 hover:text-blue-900"
-                          title="Ver detalles"
+                          className="text-blue-600 hover:text-blue-900 p-1"
+                          title="Ver detalles del recibo"
                         >
                           <i className="ri-eye-line"></i>
                         </button>
                         <button
                           onClick={() => handlePrintReceipt(receipt)}
-                          className="text-purple-600 hover:text-purple-900"
+                          className="text-purple-600 hover:text-purple-900 p-1"
                           title="Imprimir recibo"
                         >
                           <i className="ri-printer-line"></i>
                         </button>
+                        <button
+                          onClick={() => handleExportReceiptExcel(receipt)}
+                          className="text-green-600 hover:text-green-900 p-1"
+                          title="Exportar recibo a Excel"
+                        >
+                          <i className="ri-file-excel-2-line"></i>
+                        </button>
                         {receipt.status === 'active' && (
-                          <button
-                            onClick={() => handleApplyReceipt(receipt)}
-                            className="text-green-600 hover:text-green-900"
-                            title="Aplicar a factura"
-                          >
-                            <i className="ri-arrow-down-circle-line"></i>
-                          </button>
-                        )}
-                        {receipt.status === 'active' && (
-                          <button
-                            onClick={() => handleCancelReceipt(receipt.id)}
-                            className="text-red-600 hover:text-red-900"
-                            title="Anular recibo"
-                          >
-                            <i className="ri-close-circle-line"></i>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleApplyReceipt(receipt)}
+                              className="text-emerald-600 hover:text-emerald-900 p-1"
+                              title="Aplicar a factura"
+                            >
+                              <i className="ri-money-dollar-circle-line"></i>
+                            </button>
+                            <button
+                              onClick={() => handleCancelReceipt(receipt.id)}
+                              className="text-red-600 hover:text-red-900 p-1"
+                              title="Anular recibo"
+                            >
+                              <i className="ri-close-circle-line"></i>
+                            </button>
+                          </>
                         )}
                         {receipt.status === 'cancelled' && (
                           <button
                             onClick={() => handleReactivateReceipt(receipt.id)}
-                            className="text-green-600 hover:text-green-900"
+                            className="text-green-600 hover:text-green-900 p-1"
                             title="Reactivar recibo"
                           >
                             <i className="ri-arrow-go-back-line"></i>
