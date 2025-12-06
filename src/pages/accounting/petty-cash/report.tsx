@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { pettyCashService } from '../../../services/database';
+import { pettyCashService, settingsService } from '../../../services/database';
 import { exportToExcelWithHeaders, exportToPdf } from '../../../utils/exportImportUtils';
 
 interface PettyCashFund {
@@ -41,6 +41,8 @@ const PettyCashReportPage: React.FC = () => {
   const [funds, setFunds] = useState<PettyCashFund[]>([]);
   const [expenses, setExpenses] = useState<PettyCashExpense[]>([]);
   const [reimbursements, setReimbursements] = useState<PettyCashReimbursement[]>([]);
+
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [selectedFundId, setSelectedFundId] = useState<string>('all');
@@ -102,6 +104,20 @@ const PettyCashReportPage: React.FC = () => {
 
     loadData();
   }, [user]);
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading company info for petty cash report:', error);
+      }
+    };
+
+    loadCompany();
+  }, []);
 
   const filteredFunds = funds.filter((fund) => {
     if (selectedFundId === 'all') return true;
@@ -231,12 +247,19 @@ const PettyCashReportPage: React.FC = () => {
 
       const today = new Date().toISOString().split('T')[0];
 
+      const companyName =
+        (companyInfo as any)?.name ||
+        (companyInfo as any)?.company_name ||
+        (companyInfo as any)?.legal_name ||
+        '';
+
       exportToExcelWithHeaders(
         rows,
         headers,
         `reporte_caja_chica_${today}`,
         'ReporteCajaChica',
         [24, 18, 18, 20, 16, 16, 22, 18, 14, 40, 18, 16, 14, 20, 20],
+        { title: 'Reporte de Caja Chica', companyName: companyName || undefined },
       );
     } catch (error) {
       // eslint-disable-next-line no-console

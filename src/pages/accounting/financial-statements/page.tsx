@@ -3,7 +3,8 @@ import { exportToExcel } from '../../../lib/excel';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { financialReportsService, chartAccountsService, financialStatementsService } from '../../../services/database';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 
 // Estilos CSS para impresión
 const printStyles = `
@@ -821,17 +822,39 @@ export default function FinancialStatementsPage() {
 
       rows.push(['TOTAL PASIVOS Y PATRIMONIO', '', '', totalLiabilitiesAndEquity]);
 
-      exportToExcel({
-        sheetName: 'Balance',
-        fileName: `balance_general_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: '', width: 55 },
-          { header: '', width: 10 },
-          { header: '', width: 10 },
-          { header: 'Monto', width: 18, numFmt: '#,##0.00' }
-        ],
-        rows
+      // Construir archivo Excel usando ExcelJS para poder centrar el título
+      const headerRow = ['', '', '', 'Monto'];
+      const allRows = [headerRow, ...rows];
+
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Balance');
+
+      // Definir anchos de columna similares al reporte original
+      ws.getColumn(1).width = 55;
+      ws.getColumn(2).width = 10;
+      ws.getColumn(3).width = 10;
+      ws.getColumn(4).width = 18;
+
+      allRows.forEach((r) => {
+        ws.addRow(r as any[]);
       });
+
+      // Formato numérico para la columna de montos
+      ws.getColumn(4).numFmt = '#,##0.00';
+
+      // Centrar y negrita para las primeras filas de título (empresa, título, fecha, moneda)
+      const titleRowCount = 4;
+      for (let i = 0; i < titleRowCount; i++) {
+        const excelRowIndex = 2 + i; // fila 1 es la cabecera de columnas
+        ws.mergeCells(excelRowIndex, 1, excelRowIndex, 4);
+        const cell = ws.getRow(excelRowIndex).getCell(1);
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.font = { ...(cell.font || {}), bold: true };
+      }
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `balance_general_${new Date().toISOString().split('T')[0]}.xlsx`);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error downloading Balance Sheet:', error);
@@ -839,17 +862,17 @@ export default function FinancialStatementsPage() {
     }
   };
 
-  const downloadIncomeStatementExcel = () => {
+  const downloadIncomeStatementExcel = async () => {
     try {
-      const rows: any[] = [];
-      
-      // INGRESOS - solo agregar si tiene saldo
+      const dataRows: any[] = [];
+
       if (Math.abs(totals.totalRevenue) >= 0.01) {
-        financialData.revenue.filter(i => Math.abs(i.amount) >= 0.01).forEach(i => rows.push(['INGRESOS', i.name, i.amount]));
-        rows.push(['', 'Total Ventas', totals.totalRevenue]);
+        financialData.revenue
+          .filter(i => Math.abs(i.amount) >= 0.01)
+          .forEach(i => dataRows.push(['INGRESOS', i.name, i.amount]));
+        dataRows.push(['', 'Total Ventas', totals.totalRevenue]);
       }
-      
-      // COSTOS - solo agregar si tiene saldo
+
       if (Math.abs(totals.totalCosts) >= 0.01) {
         const costItemsForExport = [
           ...financialData.costs,
@@ -862,51 +885,78 @@ export default function FinancialStatementsPage() {
 
         costItemsForExport
           .filter((i) => Math.abs(i.amount) >= 0.01)
-          .forEach((i) => rows.push(['COSTOS', i.name, i.amount]));
-        rows.push(['', 'Total Costos', totals.totalCosts]);
+          .forEach((i) => dataRows.push(['COSTOS', i.name, i.amount]));
+        dataRows.push(['', 'Total Costos', totals.totalCosts]);
       }
-      
-      // GASTOS - solo agregar si tiene saldo
-      if (Math.abs(totals.totalExpenses) >= 0.01) {
-        financialData.expenses.filter(i => Math.abs(i.amount) >= 0.01).forEach(i => rows.push(['GASTOS', i.name, i.amount]));
-        rows.push(['', 'Total Gastos', totals.totalExpenses]);
-      }
-      
-      rows.push(['', 'UTILIDAD NETA', totals.netIncome]);
 
-      exportToExcel({
-        sheetName: 'Resultados',
-        fileName: `estado_resultados_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: 'Grupo', width: 16 },
-          { header: 'Cuenta', width: 36 },
-          { header: 'Monto', width: 14, numFmt: '#,##0.00' }
-        ],
-        rows
+      if (Math.abs(totals.totalExpenses) >= 0.01) {
+        financialData.expenses
+          .filter(i => Math.abs(i.amount) >= 0.01)
+          .forEach(i => dataRows.push(['GASTOS', i.name, i.amount]));
+        dataRows.push(['', 'Total Gastos', totals.totalExpenses]);
+      }
+
+      dataRows.push(['', 'UTILIDAD NETA', totals.netIncome]);
+
+      const today = new Date().toISOString().split('T')[0];
+
+      const headerRow = ['Grupo', 'Cuenta', 'Monto'];
+      const titleRows = [
+        ['ESTADO DE RESULTADOS', '', ''],
+        [periodDates.periodLabel.toUpperCase(), '', ''],
+        ['VALORES EN RD$', '', ''],
+        ['', '', ''],
+      ];
+
+      const allRows = [headerRow, ...titleRows, ...dataRows];
+
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Resultados');
+
+      ws.getColumn(1).width = 16;
+      ws.getColumn(2).width = 36;
+      ws.getColumn(3).width = 14;
+      ws.getColumn(3).numFmt = '#,##0.00';
+
+      allRows.forEach((r) => {
+        ws.addRow(r as any[]);
       });
+
+      const titleRowCount = 3;
+      for (let i = 0; i < titleRowCount; i++) {
+        const excelRowIndex = 2 + i;
+        ws.mergeCells(excelRowIndex, 1, excelRowIndex, 3);
+        const cell = ws.getRow(excelRowIndex).getCell(1);
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.font = { ...(cell.font || {}), bold: true };
+      }
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `estado_resultados_${today}.xlsx`);
     } catch (error) {
       console.error('Error downloading Income Statement:', error);
       alert('Error al descargar el Estado de Resultados');
     }
   };
 
-  const downloadExpensesStatementExcel = () => {
+  const downloadExpensesStatementExcel = async () => {
     try {
-      const rows: any[] = [];
+      const dataRows: any[] = [];
 
       const addCategory = (
         categoryName: string,
         total: number,
         items: { name: string; amount: number }[],
       ) => {
-        // Solo agregar categoría si tiene saldo
         if (Math.abs(total) >= 0.01) {
-          rows.push([categoryName, '', total]);
-          // Solo agregar items con saldo diferente de 0
-          items.filter(item => Math.abs(item.amount) >= 0.01).forEach((item) => {
-            rows.push(['', item.name, item.amount]);
-          });
-          rows.push(['', '', null]);
+          dataRows.push([categoryName, '', total]);
+          items
+            .filter(item => Math.abs(item.amount) >= 0.01)
+            .forEach((item) => {
+              dataRows.push(['', item.name, item.amount]);
+            });
+          dataRows.push(['', '', null]);
         }
       };
 
@@ -917,98 +967,172 @@ export default function FinancialStatementsPage() {
       addCategory('Gastos de Impuestos No Deducibles', gastosImpuestosNoDeducibles, expenseItemsImpuestosNoDeducibles);
       addCategory('Gastos Financieros', gastosFinancieros, expenseItemsFinancieros);
 
-      rows.push(['Total gastos del Periodo', '', totals.totalExpenses]);
+      dataRows.push(['Total gastos del Periodo', '', totals.totalExpenses]);
 
-      exportToExcel({
-        sheetName: 'Gastos',
-        fileName: `estado_gastos_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: 'Categoría', width: 32 },
-          { header: 'Cuenta', width: 42 },
-          { header: 'Monto', width: 16, numFmt: '#,##0.00' },
-        ],
-        rows,
+      const today = new Date().toISOString().split('T')[0];
+
+      const headerRow = ['Categoría', 'Cuenta', 'Monto'];
+      const titleRows = [
+        ['ESTADO DE GASTOS GENERALES Y ADMINISTRATIVOS', '', ''],
+        [periodDates.periodLabel.toUpperCase(), '', ''],
+        ['VALORES EN RD$', '', ''],
+        ['', '', ''],
+      ];
+
+      const allRows = [headerRow, ...titleRows, ...dataRows];
+
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Gastos');
+
+      ws.getColumn(1).width = 32;
+      ws.getColumn(2).width = 42;
+      ws.getColumn(3).width = 16;
+      ws.getColumn(3).numFmt = '#,##0.00';
+
+      allRows.forEach((r) => {
+        ws.addRow(r as any[]);
       });
+
+      const titleRowCount = 3;
+      for (let i = 0; i < titleRowCount; i++) {
+        const excelRowIndex = 2 + i;
+        ws.mergeCells(excelRowIndex, 1, excelRowIndex, 3);
+        const cell = ws.getRow(excelRowIndex).getCell(1);
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.font = { ...(cell.font || {}), bold: true };
+      }
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `estado_gastos_${today}.xlsx`);
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Error downloading Expenses Statement:', error);
       alert('Error al descargar el Estado de Gastos');
     }
   };
 
-  const downloadCostOfSalesExcel = () => {
+  const downloadCostOfSalesExcel = async () => {
     try {
-      const rows: any[] = [];
+      const dataRows: any[] = [];
 
-      // Solo agregar líneas con saldo diferente de 0
       if (Math.abs(costOfSalesData.openingInventory) >= 0.01) {
-        rows.push(['Inventario Inicial', costOfSalesData.openingInventory]);
+        dataRows.push(['Inventario Inicial', costOfSalesData.openingInventory]);
       }
       if (Math.abs(costOfSalesData.purchasesLocal) >= 0.01) {
-        rows.push(['Compras Proveedores Locales', costOfSalesData.purchasesLocal]);
+        dataRows.push(['Compras Proveedores Locales', costOfSalesData.purchasesLocal]);
       }
       if (Math.abs(costOfSalesData.purchasesImports) >= 0.01) {
-        rows.push(['Importaciones', costOfSalesData.purchasesImports]);
+        dataRows.push(['Importaciones', costOfSalesData.purchasesImports]);
       }
       if (Math.abs(costOfSalesData.totalPurchases) >= 0.01) {
-        rows.push(['Total Compras del Periodo', costOfSalesData.totalPurchases]);
+        dataRows.push(['Total Compras del Periodo', costOfSalesData.totalPurchases]);
       }
       if (Math.abs(costOfSalesData.indirectCosts) >= 0.01) {
-        rows.push(['Costos Indirectos', costOfSalesData.indirectCosts]);
+        dataRows.push(['Costos Indirectos', costOfSalesData.indirectCosts]);
       }
       if (Math.abs(costOfSalesData.availableForSale) >= 0.01) {
-        rows.push(['Mercancía Disponible para la venta', costOfSalesData.availableForSale]);
+        dataRows.push(['Mercancía Disponible para la venta', costOfSalesData.availableForSale]);
       }
       if (Math.abs(costOfSalesData.closingInventory) >= 0.01) {
-        rows.push(['Inventario Final', costOfSalesData.closingInventory]);
+        dataRows.push(['Inventario Final', costOfSalesData.closingInventory]);
       }
-      rows.push(['Costo de Venta del Periodo', totals.totalCosts]);
+      dataRows.push(['Costo de Venta del Periodo', totals.totalCosts]);
 
-      exportToExcel({
-        sheetName: 'Costos de Ventas',
-        fileName: `estado_costos_ventas_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: 'Concepto', width: 45 },
-          { header: 'Monto', width: 18, numFmt: '#,##0.00' },
-        ],
-        rows,
+      const today = new Date().toISOString().split('T')[0];
+
+      const headerRow = ['Concepto', 'Monto'];
+      const titleRows = [
+        ['ESTADO DE COSTOS DE VENTAS', ''],
+        [periodDates.periodLabel.toUpperCase(), ''],
+        ['VALORES EN RD$', ''],
+        ['', ''],
+      ];
+
+      const allRows = [headerRow, ...titleRows, ...dataRows];
+
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Costos de Ventas');
+
+      ws.getColumn(1).width = 45;
+      ws.getColumn(2).width = 18;
+      ws.getColumn(2).numFmt = '#,##0.00';
+
+      allRows.forEach((r) => {
+        ws.addRow(r as any[]);
       });
+
+      const titleRowCount = 3;
+      for (let i = 0; i < titleRowCount; i++) {
+        const excelRowIndex = 2 + i;
+        ws.mergeCells(excelRowIndex, 1, excelRowIndex, 2);
+        const cell = ws.getRow(excelRowIndex).getCell(1);
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.font = { ...(cell.font || {}), bold: true };
+      }
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `estado_costos_ventas_${today}.xlsx`);
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Error downloading Cost of Sales Statement:', error);
       alert('Error al descargar el Estado de Costos de Ventas');
     }
   };
 
-  const downloadCashFlowExcel = () => {
+  const downloadCashFlowExcel = async () => {
     try {
-      const rows: any[] = [];
+      const dataRows: any[] = [];
       const openingCash = cashFlow.openingCash || 0;
       const closingCash = cashFlow.closingCash || 0;
       const netChange = closingCash - openingCash;
 
-      // Solo agregar actividades con saldo diferente de 0
       if (Math.abs(cashFlow.operatingCashFlow || 0) >= 0.01) {
-        rows.push(['ACTIVIDADES DE OPERACIÓN', 'Efectivo de Actividades de Operación', cashFlow.operatingCashFlow]);
+        dataRows.push(['ACTIVIDADES DE OPERACIÓN', 'Efectivo de Actividades de Operación', cashFlow.operatingCashFlow]);
       }
       if (Math.abs(cashFlow.investingCashFlow || 0) >= 0.01) {
-        rows.push(['ACTIVIDADES DE INVERSIÓN', 'Efectivo de Actividades de Inversión', cashFlow.investingCashFlow]);
+        dataRows.push(['ACTIVIDADES DE INVERSIÓN', 'Efectivo de Actividades de Inversión', cashFlow.investingCashFlow]);
       }
       if (Math.abs(cashFlow.financingCashFlow || 0) >= 0.01) {
-        rows.push(['ACTIVIDADES DE FINANCIAMIENTO', 'Efectivo de Actividades de Financiamiento', cashFlow.financingCashFlow]);
+        dataRows.push(['ACTIVIDADES DE FINANCIAMIENTO', 'Efectivo de Actividades de Financiamiento', cashFlow.financingCashFlow]);
       }
-      rows.push(['RESUMEN', 'Aumento Neto en Efectivo', netChange]);
+      dataRows.push(['RESUMEN', 'Aumento Neto en Efectivo', netChange]);
 
-      exportToExcel({
-        sheetName: 'Flujo',
-        fileName: `flujo_efectivo_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: 'Actividad', width: 18 },
-          { header: 'Concepto', width: 36 },
-          { header: 'Monto', width: 14, numFmt: '#,##0.00' }
-        ],
-        rows
+      const today = new Date().toISOString().split('T')[0];
+
+      const headerRow = ['Actividad', 'Concepto', 'Monto'];
+      const titleRows = [
+        ['ESTADO DE FLUJOS DE EFECTIVO', '', ''],
+        [periodDates.periodLabel.toUpperCase(), '', ''],
+        ['VALORES EN RD$', '', ''],
+        ['', '', ''],
+      ];
+
+      const allRows = [headerRow, ...titleRows, ...dataRows];
+
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('Flujo');
+
+      ws.getColumn(1).width = 18;
+      ws.getColumn(2).width = 36;
+      ws.getColumn(3).width = 14;
+      ws.getColumn(3).numFmt = '#,##0.00';
+
+      allRows.forEach((r) => {
+        ws.addRow(r as any[]);
       });
+
+      const titleRowCount = 3;
+      for (let i = 0; i < titleRowCount; i++) {
+        const excelRowIndex = 2 + i;
+        ws.mergeCells(excelRowIndex, 1, excelRowIndex, 3);
+        const cell = ws.getRow(excelRowIndex).getCell(1);
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.font = { ...(cell.font || {}), bold: true };
+      }
+
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `flujo_efectivo_${today}.xlsx`);
     } catch (error) {
       console.error('Error downloading Cash Flow:', error);
       alert('Error al descargar el Flujo de Efectivo');

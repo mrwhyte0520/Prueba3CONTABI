@@ -126,37 +126,60 @@ export default function PurchaseOrdersPage() {
     try {
       const [orderRows, itemRows] = await Promise.all([
         purchaseOrdersService.getAll(user.id),
-        purchaseOrderItemsService.getAllByUser(user.id),
+        purchaseOrderItemsService.getAllWithInvoicedByUser(user.id),
       ]);
 
       const itemsByOrder: Record<string, any[]> = {};
       (itemRows || []).forEach((it: any) => {
         const key = String(it.purchase_order_id);
+
         if (!itemsByOrder[key]) itemsByOrder[key] = [];
         itemsByOrder[key].push(it);
       });
 
-      const mapped = (orderRows || []).map((po: any) => ({
-        id: po.id,
-        number: po.po_number,
-        date: po.order_date,
-        supplier: (po.suppliers as any)?.name || 'Proveedor',
-        supplierId: po.supplier_id,
-        products: (itemsByOrder[String(po.id)] || []).map((it: any) => ({
-          itemId: it.inventory_item_id as string | null,
-          name: it.description as string,
-          quantity: Number(it.quantity) || 0,
-          price: Number(it.unit_cost) || 0,
-        })),
-        subtotal: Number(po.subtotal) || 0,
-        itbis: Number(po.tax_amount) || 0,
-        total: Number(po.total_amount) || 0,
-        deliveryDate: po.expected_date,
-        status: mapDbStatusToUi(po.status),
-        notes: po.notes || '',
-        inventoryAccountId: po.inventory_account_id || '',
-      }));
+      const mapped = (orderRows || []).map((po: any) => {
+        const orderItems = itemsByOrder[String(po.id)] || [];
+
+        let orderedQtyTotal = 0;
+        let invoicedQtyTotal = 0;
+
+        orderItems.forEach((it: any) => {
+          const ordered = Number(it.quantity) || 0;
+          const invoiced = Number(it.quantity_invoiced || 0);
+          orderedQtyTotal += ordered;
+          invoicedQtyTotal += invoiced;
+        });
+
+        const remainingQtyTotal = Math.max(orderedQtyTotal - invoicedQtyTotal, 0);
+        const invoicedPct = orderedQtyTotal > 0 ? (invoicedQtyTotal / orderedQtyTotal) * 100 : 0;
+
+        return {
+          id: po.id,
+          number: po.po_number,
+          date: po.order_date,
+          supplier: (po.suppliers as any)?.name || 'Proveedor',
+          supplierId: po.supplier_id,
+          products: orderItems.map((it: any) => ({
+            itemId: it.inventory_item_id as string | null,
+            name: it.description as string,
+            quantity: Number(it.quantity) || 0,
+            price: Number(it.unit_cost) || 0,
+          })),
+          subtotal: Number(po.subtotal) || 0,
+          itbis: Number(po.tax_amount) || 0,
+          total: Number(po.total_amount) || 0,
+          deliveryDate: po.expected_date,
+          status: mapDbStatusToUi(po.status),
+          notes: po.notes || '',
+          inventoryAccountId: po.inventory_account_id || '',
+          orderedQtyTotal,
+          invoicedQtyTotal,
+          remainingQtyTotal,
+          invoicedPct,
+        };
+      });
       setOrders(mapped);
+
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error loading purchase orders', error);
@@ -840,6 +863,7 @@ export default function PurchaseOrdersPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Proveedor</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Entrega</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Facturado / Pendiente</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
                 </tr>
@@ -853,6 +877,26 @@ export default function PurchaseOrdersPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.deliveryDate}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-semibold text-gray-900">
                       RD$ {order.total.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {order.orderedQtyTotal > 0 ? (
+                        <div className="space-y-1">
+                          <div>
+                            <span className="font-medium">Facturado:</span>{' '}
+                            {order.invoicedQtyTotal.toLocaleString()} / {order.orderedQtyTotal.toLocaleString()}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Pendiente: {order.remainingQtyTotal.toLocaleString()}
+                            {order.invoicedQtyTotal > 0 && (
+                              <span className="ml-2">
+                                ({Math.round(order.invoicedPct)}%)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-500">Sin líneas</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${

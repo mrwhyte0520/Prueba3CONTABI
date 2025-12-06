@@ -50,6 +50,9 @@ interface LineFormRow {
   unitPrice: string;
   inventoryItemId?: string;
   discountPercentage?: string;
+  purchaseOrderItemId?: string;
+  maxQuantityFromPo?: number;
+  alreadyInvoicedQty?: number;
 }
 
 export default function APInvoicesPage() {
@@ -504,20 +507,37 @@ export default function APInvoicesPage() {
     if (!poId || !user?.id) return;
 
     try {
-      const orderItems = await purchaseOrderItemsService.getByOrder(poId);
+      const orderItems = await purchaseOrderItemsService.getWithInvoicedByOrder(poId);
 
       if (!orderItems || orderItems.length === 0) return;
 
-      const mappedLines: LineFormRow[] = orderItems.map((it: any) => ({
-        description: it.description || (it.inventory_items as any)?.name || '',
-        expenseAccountId: '',
-        quantity: String(it.quantity ?? '1'),
-        unitPrice: String(it.unit_cost ?? '0'),
-        inventoryItemId: it.inventory_item_id ? String(it.inventory_item_id) : '',
-        discountPercentage: '0',
-      }));
+      const rawLines = (orderItems as any[]).map((it: any) => {
+        const orderedQty = Number(it.quantity) || 0;
+        const invoicedQty = Number(it.quantity_invoiced || 0);
+        const remainingQty = Math.max(orderedQty - invoicedQty, 0);
 
-      setLines(mappedLines.length > 0 ? mappedLines : [{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0', inventoryItemId: '', discountPercentage: '0' }]);
+        if (remainingQty <= 0) {
+          return null;
+        }
+
+        return {
+          description: it.description || (it.inventory_items as any)?.name || '',
+          expenseAccountId: '',
+          quantity: String(remainingQty),
+          unitPrice: String(it.unit_cost ?? '0'),
+          inventoryItemId: it.inventory_item_id ? String(it.inventory_item_id) : '',
+          discountPercentage: '0',
+          purchaseOrderItemId: it.id ? String(it.id) : undefined,
+          maxQuantityFromPo: orderedQty,
+          alreadyInvoicedQty: invoicedQty,
+        } as LineFormRow;
+      });
+
+      const mappedLines: LineFormRow[] = rawLines.filter((l) => l !== null) as LineFormRow[];
+
+      setLines(mappedLines.length > 0
+        ? mappedLines
+        : [{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0', inventoryItemId: '', discountPercentage: '0' }]);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error cargando líneas desde orden de compra', error);
@@ -808,6 +828,21 @@ export default function APInvoicesPage() {
       return;
     }
 
+    // Validar que la cantidad no exceda lo pendiente por facturar de la orden de compra
+    if (headerForm.purchaseOrderId) {
+      const invalidLine = activeLines.find((l) => {
+        if (!l.purchaseOrderItemId || l.maxQuantityFromPo == null || l.alreadyInvoicedQty == null) return false;
+        const qty = Number(l.quantity) || 0;
+        const maxAvailable = (Number(l.maxQuantityFromPo) || 0) - (Number(l.alreadyInvoicedQty) || 0);
+        return qty > maxAvailable + 1e-6;
+      });
+
+      if (invalidLine) {
+        alert('La cantidad de una o más líneas supera lo pendiente por facturar de la orden de compra seleccionada.');
+        return;
+      }
+    }
+
     const { gross, totalDiscount, grossAfterDiscount, itbis, totalOtherTaxes, otherTaxesDetail, itbisWithheld, isr, toPay } = calculateTotals();
     const { affectsItbis } = getCurrentSupplierTaxProfile();
 
@@ -856,6 +891,7 @@ export default function APInvoicesPage() {
         description: l.description,
         expense_account_id: l.expenseAccountId || null,
         inventory_item_id: l.inventoryItemId || null,
+        purchase_order_item_id: l.purchaseOrderItemId || null,
         quantity: qty,
         unit_price: price,
         line_total: lineTotal,

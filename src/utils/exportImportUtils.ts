@@ -74,24 +74,34 @@ export const exportToExcelWithHeaders = (
   headers: { key: string; title: string }[],
   fileName: string,
   sheetName: string = 'Datos',
-  columnWidths?: number[]
+  columnWidths?: number[],
+  options?: { title?: string; companyName?: string }
 ) => {
   try {
     const aoa: any[][] = [];
-    // Header row
+
+    if (options?.title || options?.companyName) {
+      const titleParts: string[] = [];
+      if (options.companyName) titleParts.push(options.companyName);
+      if (options.title) titleParts.push(options.title);
+      const titleText = titleParts.join(' - ');
+      aoa.push([titleText]);
+    }
+
     aoa.push(headers.map(h => h.title));
-    // Data rows in the exact header key order
+
     for (const row of rows) {
       aoa.push(headers.map(h => row[h.key]));
     }
+
     const ws = utils.aoa_to_sheet(aoa);
-    // Optional: set column widths
+
     if (columnWidths && columnWidths.length) {
       ws['!cols'] = columnWidths.map(w => ({ wch: w }));
     } else {
-      // Autosize roughly based on header length
       ws['!cols'] = headers.map(h => ({ wch: Math.max(12, h.title.length + 2) }));
     }
+
     const wb = utils.book_new();
     utils.book_append_sheet(wb, ws, sheetName);
     writeFile(wb, `${fileName}.xlsx`);

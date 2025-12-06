@@ -5408,7 +5408,7 @@ export const absencesService = {
    Accounting Settings Service
 ========================================================== */
 export const accountingSettingsService = {
-  async get(userId?: string) {
+  async get(userId?: string | null | undefined) {
     try {
       const tenantId = userId ? await resolveTenantId(userId) : null;
       const query = supabase
@@ -7512,59 +7512,61 @@ export const apInvoicesService = {
       if (error) throw error;
 
       // Crear asiento contable automático para factura de compra
-      try {
-        const settings = await accountingSettingsService.get(tenantId);
-        const apAccountId = settings?.ap_account_id; // Cuentas por Pagar
-        const purchaseAccountId = settings?.purchase_account_id; // Cuenta de Compras o Inventario
-        const purchaseTaxAccountId = settings?.purchase_tax_account_id; // ITBIS Pagado
+      if (false) {
+        try {
+          const settings = await accountingSettingsService.get(tenantId);
+          const apAccountId = settings?.ap_account_id; // Cuentas por Pagar
+          const purchaseAccountId = settings?.purchase_account_id; // Cuenta de Compras o Inventario
+          const purchaseTaxAccountId = settings?.purchase_tax_account_id; // ITBIS Pagado
 
-        if (apAccountId && purchaseAccountId) {
-          const subtotal = Number(data.subtotal) || 0;
-          const taxAmount = Number(data.tax_amount) || 0;
-          const totalAmount = Number(data.total_to_pay) || subtotal + taxAmount;
+          if (apAccountId && purchaseAccountId) {
+            const subtotal = Number(data.subtotal) || 0;
+            const taxAmount = Number(data.tax_amount) || 0;
+            const totalAmount = Number(data.total_to_pay) || subtotal + taxAmount;
 
-          const entryLines: any[] = [
-            {
-              account_id: purchaseAccountId,
-              description: 'Compras / Inventario',
-              debit_amount: subtotal,
-              credit_amount: 0,
-              line_number: 1,
-            },
-          ];
+            const entryLines: any[] = [
+              {
+                account_id: purchaseAccountId,
+                description: 'Compras / Inventario',
+                debit_amount: subtotal,
+                credit_amount: 0,
+                line_number: 1,
+              },
+            ];
 
-          // Agregar línea de impuesto si existe
-          if (taxAmount > 0 && purchaseTaxAccountId) {
+            // Agregar línea de impuesto si existe
+            if (taxAmount > 0 && purchaseTaxAccountId) {
+              entryLines.push({
+                account_id: purchaseTaxAccountId,
+                description: 'ITBIS Pagado (Crédito Fiscal)',
+                debit_amount: taxAmount,
+                credit_amount: 0,
+                line_number: 2,
+              });
+            }
+
+            // Línea de Cuentas por Pagar (crédito)
             entryLines.push({
-              account_id: purchaseTaxAccountId,
-              description: 'ITBIS Pagado (Crédito Fiscal)',
-              debit_amount: taxAmount,
-              credit_amount: 0,
-              line_number: 2,
+              account_id: apAccountId,
+              description: 'Cuentas por Pagar Proveedores',
+              debit_amount: 0,
+              credit_amount: totalAmount,
+              line_number: entryLines.length + 1,
             });
+
+            const entryPayload = {
+              entry_number: String(data.invoice_number || `AP-${data.id?.slice(0, 8)}`),
+              entry_date: String(data.invoice_date),
+              description: `Factura de compra ${data.invoice_number || ''} - ${data.supplier_name || ''}`.trim(),
+              reference: data.id ? String(data.id) : null,
+              status: 'posted' as const,
+            };
+
+            await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
           }
-
-          // Línea de Cuentas por Pagar (crédito)
-          entryLines.push({
-            account_id: apAccountId,
-            description: 'Cuentas por Pagar Proveedores',
-            debit_amount: 0,
-            credit_amount: totalAmount,
-            line_number: entryLines.length + 1,
-          });
-
-          const entryPayload = {
-            entry_number: String(data.invoice_number || `AP-${data.id?.slice(0, 8)}`),
-            entry_date: String(data.invoice_date),
-            description: `Factura de compra ${data.invoice_number || ''} - ${data.supplier_name || ''}`.trim(),
-            reference: data.id ? String(data.id) : null,
-            status: 'posted' as const,
-          };
-
-          await journalEntriesService.createWithLines(tenantId, entryPayload, entryLines);
+        } catch (jeError) {
+          console.error('Error creating journal entry for AP invoice:', jeError);
         }
-      } catch (jeError) {
-        console.error('Error creating journal entry for AP invoice:', jeError);
       }
 
       return data;
@@ -7956,6 +7958,74 @@ export const purchaseOrderItemsService = {
     }
   },
 
+  async getAllWithInvoicedByUser(userId: string) {
+    try {
+      if (!userId) return [];
+
+      const { data, error } = await supabase
+        .from('purchase_order_items')
+        .select(`
+          *,
+          inventory_items (current_stock, name, sku, inventory_account_id)
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+
+      const rows = data ?? [];
+      if (rows.length === 0) return rows;
+
+      const ids = rows
+        .map((it: any) => it.id)
+        .filter((id) => id);
+
+      if (ids.length === 0) {
+        return rows.map((it: any) => ({
+          ...it,
+          quantity_invoiced: 0,
+          remaining_quantity: Number(it.quantity) || 0,
+        }));
+      }
+
+      const { data: invLines, error: invError } = await supabase
+        .from('ap_invoice_lines')
+        .select('purchase_order_item_id, quantity')
+        .in('purchase_order_item_id', ids);
+
+      if (invError) {
+        console.error('purchaseOrderItemsService.getAllWithInvoicedByUser invoice lines error', invError);
+        return rows.map((it: any) => ({
+          ...it,
+          quantity_invoiced: 0,
+          remaining_quantity: Number(it.quantity) || 0,
+        }));
+      }
+
+      const quantityByItemId: Record<string, number> = {};
+      (invLines || []).forEach((l: any) => {
+        const key = l.purchase_order_item_id ? String(l.purchase_order_item_id) : '';
+        if (!key) return;
+        const qty = Number(l.quantity) || 0;
+        if (qty <= 0) return;
+        quantityByItemId[key] = (quantityByItemId[key] || 0) + qty;
+      });
+
+      return rows.map((it: any) => {
+        const orderedQty = Number(it.quantity) || 0;
+        const invoicedQty = quantityByItemId[String(it.id)] || 0;
+        const remainingQty = Math.max(orderedQty - invoicedQty, 0);
+        return {
+          ...it,
+          quantity_invoiced: invoicedQty,
+          remaining_quantity: remainingQty,
+        };
+      });
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
   async getByOrder(orderId: string) {
     try {
       if (!orderId) return [];
@@ -7969,6 +8039,74 @@ export const purchaseOrderItemsService = {
         .order('created_at', { ascending: true });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getWithInvoicedByOrder(orderId: string) {
+    try {
+      if (!orderId) return [];
+
+      const { data: items, error: itemsError } = await supabase
+        .from('purchase_order_items')
+        .select(`
+          *,
+          inventory_items (current_stock, name, sku, cost_price, average_cost, last_purchase_price)
+        `)
+        .eq('purchase_order_id', orderId)
+        .order('created_at', { ascending: true });
+
+      if (itemsError) return handleDatabaseError(itemsError, []);
+
+      const rows = items ?? [];
+      if (rows.length === 0) return rows;
+
+      const ids = rows
+        .map((it: any) => it.id)
+        .filter((id) => id);
+
+      if (ids.length === 0) {
+        return rows.map((it: any) => ({
+          ...it,
+          quantity_invoiced: 0,
+          remaining_quantity: Number(it.quantity) || 0,
+        }));
+      }
+
+      const { data: invLines, error: invError } = await supabase
+        .from('ap_invoice_lines')
+        .select('purchase_order_item_id, quantity')
+        .in('purchase_order_item_id', ids);
+
+      if (invError) {
+        console.error('purchaseOrderItemsService.getWithInvoicedByOrder invoice lines error', invError);
+        return rows.map((it: any) => ({
+          ...it,
+          quantity_invoiced: 0,
+          remaining_quantity: Number(it.quantity) || 0,
+        }));
+      }
+
+      const quantityByItemId: Record<string, number> = {};
+      (invLines || []).forEach((l: any) => {
+        const key = l.purchase_order_item_id ? String(l.purchase_order_item_id) : '';
+        if (!key) return;
+        const qty = Number(l.quantity) || 0;
+        if (qty <= 0) return;
+        quantityByItemId[key] = (quantityByItemId[key] || 0) + qty;
+      });
+
+      return rows.map((it: any) => {
+        const orderedQty = Number(it.quantity) || 0;
+        const invoicedQty = quantityByItemId[String(it.id)] || 0;
+        const remainingQty = Math.max(orderedQty - invoicedQty, 0);
+        return {
+          ...it,
+          quantity_invoiced: invoicedQty,
+          remaining_quantity: remainingQty,
+        };
+      });
     } catch (error) {
       return handleDatabaseError(error, []);
     }
