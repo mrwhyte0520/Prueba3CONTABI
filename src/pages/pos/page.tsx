@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
 import { toast } from 'sonner';
-import { customersService, invoicesService, receiptsService, inventoryService, customerTypesService, cashClosingService } from '../../services/database';
+import { customersService, invoicesService, receiptsService, inventoryService, customerTypesService, cashClosingService, taxService } from '../../services/database';
 import { exportToExcelStyled } from '../../utils/exportImportUtils';
 
 interface Product {
@@ -97,6 +97,9 @@ export default function POSPage() {
   );
   const [cashClosingNotes, setCashClosingNotes] = useState('');
   const [savingCashClosing, setSavingCashClosing] = useState(false);
+  const [taxConfig, setTaxConfig] = useState<{ itbis_rate: number } | null>(null);
+
+  const currentItbisRate = taxConfig?.itbis_rate ?? 18;
   
   // Paginación
   const [currentPage, setCurrentPage] = useState(1);
@@ -219,6 +222,28 @@ export default function POSPage() {
       }
     };
     loadCustomerTypes();
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadTaxConfig = async () => {
+      if (!user?.id) {
+        setTaxConfig(null);
+        return;
+      }
+      try {
+        const data = await taxService.getTaxConfiguration();
+        if (data && typeof data.itbis_rate === 'number') {
+          setTaxConfig({ itbis_rate: data.itbis_rate });
+        } else {
+          setTaxConfig({ itbis_rate: 18 });
+        }
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[POS] Error loading tax configuration', error);
+        setTaxConfig({ itbis_rate: 18 });
+      }
+    };
+    loadTaxConfig();
   }, [user?.id]);
 
   const loadProducts = async () => {
@@ -495,11 +520,15 @@ export default function POSPage() {
   const getTax = () => {
     const type = getSelectedCustomerType();
     if (type && type.noTax) return 0;
-    return getSubtotal() * 0.18;
+    return getSubtotal() * (currentItbisRate / 100);
   };
   const getTotal = () => getSubtotal() + getTax();
 
   const processPayment = async () => {
+    if (!selectedCustomer) {
+      alert('Debes seleccionar un cliente antes de procesar la venta');
+      return;
+    }
     const total = getTotal();
     const received = parseFloat(amountReceived) || total;
     

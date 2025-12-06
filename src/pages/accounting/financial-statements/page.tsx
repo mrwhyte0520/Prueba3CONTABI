@@ -453,8 +453,15 @@ export default function FinancialStatementsPage() {
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('es-DO', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  };
+
+  const formatCurrencyRD = (amount: number) => {
+    return new Intl.NumberFormat('es-DO', {
       style: 'currency',
-      currency: 'DOP'
+      currency: 'DOP',
     }).format(amount);
   };
 
@@ -1352,7 +1359,7 @@ export default function FinancialStatementsPage() {
                 <div className="border-t-2 border-gray-800 pt-3 mt-3">
                   <div className="flex justify-between font-bold">
                     <span className="text-base">Total gastos del Periodo</span>
-                    <span className="text-base tabular-nums">{formatCurrency(totals.totalExpenses)}</span>
+                    <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalExpenses)}</span>
                   </div>
                 </div>
               </div>
@@ -1414,7 +1421,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-6">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Total Compras del Periodo</span>
-                      <span className="text-sm tabular-nums">{formatCurrency(costOfSalesData.totalPurchases)}</span>
+                      <span className="text-sm tabular-nums">{formatCurrencyRD(costOfSalesData.totalPurchases)}</span>
                     </div>
                   </div>
                 </div>
@@ -1431,7 +1438,7 @@ export default function FinancialStatementsPage() {
                 <div className="border-t border-gray-800 pt-2 mt-3">
                   <div className="flex justify-between font-bold">
                     <span className="text-sm">Mercancía Disponible para la venta</span>
-                    <span className="text-sm tabular-nums">{formatCurrency(costOfSalesData.availableForSale)}</span>
+                    <span className="text-sm tabular-nums">{formatCurrencyRD(costOfSalesData.availableForSale)}</span>
                   </div>
                 </div>
 
@@ -1448,7 +1455,7 @@ export default function FinancialStatementsPage() {
                 <div className="border-t-2 border-gray-800 pt-3 mt-3">
                   <div className="flex justify-between font-bold">
                     <span className="text-base">Costo de Venta del Periodo</span>
-                    <span className="text-base tabular-nums">{formatCurrency(totals.totalCosts)}</span>
+                    <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalCosts)}</span>
                   </div>
                 </div>
               </div>
@@ -1506,7 +1513,7 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Activos Corrientes</span>
-                        <span className="text-sm tabular-nums">{formatCurrency(totals.totalCurrentAssets)}</span>
+                        <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalCurrentAssets)}</span>
                       </div>
                     </div>
                   </div>
@@ -1529,7 +1536,7 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Otros Activos</span>
-                        <span className="text-sm tabular-nums">{formatCurrency(totals.totalNonCurrentAssets)}</span>
+                        <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalNonCurrentAssets)}</span>
                       </div>
                     </div>
                   </div>
@@ -1538,7 +1545,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-2 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">TOTAL ACTIVOS</span>
-                      <span className="text-base tabular-nums">{formatCurrency(totals.totalAssets)}</span>
+                      <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalAssets)}</span>
                     </div>
                   </div>
                 </div>
@@ -1558,7 +1565,7 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Pasivos Corrientes</span>
-                        <span className="text-sm tabular-nums">{formatCurrency(pasivosCorrientes)}</span>
+                        <span className="text-sm tabular-nums">{formatCurrencyRD(pasivosCorrientes)}</span>
                       </div>
                     </div>
                   </div>
@@ -1571,7 +1578,7 @@ export default function FinancialStatementsPage() {
                       <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Total Pasivos a Largo Plazo</span>
-                          <span className="text-sm tabular-nums">{formatCurrency(pasivosLargoPlazo)}</span>
+                          <span className="text-sm tabular-nums">{formatCurrencyRD(pasivosLargoPlazo)}</span>
                         </div>
                       </div>
                     )}
@@ -1581,7 +1588,7 @@ export default function FinancialStatementsPage() {
                   <div className={`border-t border-gray-400 pt-2 mb-4 ${Math.abs(totals.totalLiabilities) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between font-bold">
                       <span className="text-sm">TOTAL PASIVOS</span>
-                      <span className="text-sm tabular-nums">{formatCurrency(totals.totalLiabilities)}</span>
+                      <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalLiabilities)}</span>
                     </div>
                   </div>
 
@@ -1602,7 +1609,7 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Patrimonio</span>
-                        <span className="text-sm tabular-nums">{formatCurrency(patrimonioConResultado)}</span>
+                        <span className="text-sm tabular-nums">{formatCurrencyRD(patrimonioConResultado)}</span>
                       </div>
                     </div>
                   </div>
@@ -1611,7 +1618,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-2 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">TOTAL PASIVOS Y PATRIMONIO</span>
-                      <span className="text-base tabular-nums">{formatCurrency(totalLiabilitiesAndEquity)}</span>
+                      <span className="text-base tabular-nums">{formatCurrencyRD(totalLiabilitiesAndEquity)}</span>
                     </div>
                   </div>
                 </div>
@@ -1664,7 +1671,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Total Ventas</span>
-                      <span className="text-sm tabular-nums">{formatCurrency(totals.totalRevenue)}</span>
+                      <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalRevenue)}</span>
                     </div>
                   </div>
                 </div>
@@ -1681,7 +1688,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Costo de Ventas</span>
-                      <span className="text-sm tabular-nums">{formatCurrency(totals.totalCosts)}</span>
+                      <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalCosts)}</span>
                     </div>
                   </div>
 
@@ -1689,7 +1696,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-2 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">Beneficio Bruto</span>
-                      <span className="text-base tabular-nums">{formatCurrency(grossProfit)}</span>
+                      <span className="text-base tabular-nums">{formatCurrencyRD(grossProfit)}</span>
                     </div>
                   </div>
                 </div>
@@ -1707,7 +1714,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Total Gastos de Operaciones</span>
-                      <span className="text-sm tabular-nums">{formatCurrency(operatingExpenses)}</span>
+                      <span className="text-sm tabular-nums">{formatCurrencyRD(operatingExpenses)}</span>
                     </div>
                   </div>
 
@@ -1715,7 +1722,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-400 pt-2 mb-4">
                     <div className="flex justify-between font-bold">
                       <span className="text-sm">Beneficios netos operacionales</span>
-                      <span className="text-sm tabular-nums">{formatCurrency(operatingIncome)}</span>
+                      <span className="text-sm tabular-nums">{formatCurrencyRD(operatingIncome)}</span>
                     </div>
                   </div>
                 </div>
@@ -1729,7 +1736,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-300 pt-2 mt-2">
                     <div className="flex justify-between font-bold">
                       <span className="text-sm">Beneficios (pérdida) antes de ISR y Reservas</span>
-                      <span className="text-sm tabular-nums">{formatCurrency(incomeBeforeTaxReserves)}</span>
+                      <span className="text-sm tabular-nums">{formatCurrencyRD(incomeBeforeTaxReserves)}</span>
                     </div>
                   </div>
                 </div>
@@ -1753,7 +1760,7 @@ export default function FinancialStatementsPage() {
                           totals.netIncome >= 0 ? 'text-green-600' : 'text-red-600'
                         }`}
                       >
-                        {formatCurrency(totals.netIncome)}
+                        {formatCurrencyRD(totals.netIncome)}
                       </span>
                     </div>
                   </div>
@@ -1845,7 +1852,7 @@ export default function FinancialStatementsPage() {
                       <div className="border-t border-gray-300 mt-2 pt-1 pl-4 hide-zero-on-print">
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Total ajustes</span>
-                          <span className="text-sm tabular-nums">{formatCurrency(0)}</span>
+                          <span className="text-sm tabular-nums">{formatCurrencyRD(0)}</span>
                         </div>
                       </div>
 

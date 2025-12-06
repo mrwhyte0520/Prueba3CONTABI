@@ -5,7 +5,7 @@ import 'jspdf-autotable';
 import * as ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, settingsService, inventoryService, taxService } from '../../../services/database';
+import { customersService, invoicesService, settingsService, inventoryService, taxService, customerTypesService } from '../../../services/database';
 
 interface Invoice {
   id: string;
@@ -38,6 +38,7 @@ interface Customer {
   address?: string;
   type: 'regular' | 'vip';
   paymentTermId?: string | null;
+  customerTypeId?: string | null;
 }
 
 export default function InvoicesPage() {
@@ -57,6 +58,7 @@ export default function InvoicesPage() {
   const [loadingInvoices, setLoadingInvoices] = useState(false);
 
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+  const [customerTypes, setCustomerTypes] = useState<any[]>([]);
 
   type NewItem = { itemId?: string; description: string; quantity: number; price: number; total: number };
 
@@ -101,9 +103,10 @@ export default function InvoicesPage() {
     if (!user?.id) return;
     setLoadingCustomers(true);
     try {
-      const [list, items] = await Promise.all([
+      const [list, items, types] = await Promise.all([
         customersService.getAll(user.id),
         inventoryService.getItems(user.id),
+        customerTypesService.getAll(user.id),
       ]);
       const mapped: Customer[] = (list || []).map((c: any) => ({
         id: c.id,
@@ -114,9 +117,11 @@ export default function InvoicesPage() {
         address: c.address || '',
         type: (c.type === 'vip' ? 'vip' : 'regular') as 'regular' | 'vip',
         paymentTermId: c.paymentTermId ?? c.payment_term_id ?? null,
+        customerTypeId: c.customerType ?? c.customer_type ?? null,
       }));
       setCustomers(mapped);
       setInventoryItems(items || []);
+      setCustomerTypes(types || []);
     } finally {
       setLoadingCustomers(false);
     }
@@ -243,6 +248,34 @@ export default function InvoicesPage() {
   });
 
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
+
+  const handleNewInvoiceCustomerChange = (customerId: string) => {
+    setSelectedCustomerId(customerId);
+    const customer = customers.find((c) => c.id === customerId);
+    if (!customer) {
+      setNewInvoiceDiscountType('percentage');
+      setNewInvoiceDiscountPercent(0);
+      setNewInvoiceNoTax(false);
+      recalcNewInvoiceTotals([...newInvoiceItems], 'percentage', 0, false);
+      return;
+    }
+
+    const type = customer.customerTypeId
+      ? customerTypes.find((t: any) => t.id === customer.customerTypeId)
+      : null;
+
+    let discountPercent = 0;
+    let noTaxFlag = false;
+    if (type) {
+      discountPercent = Number((type as any).fixedDiscount) || 0;
+      noTaxFlag = Boolean((type as any).noTax);
+    }
+
+    setNewInvoiceDiscountType('percentage');
+    setNewInvoiceDiscountPercent(discountPercent);
+    setNewInvoiceNoTax(noTaxFlag);
+    recalcNewInvoiceTotals([...newInvoiceItems], 'percentage', discountPercent, noTaxFlag);
+  };
 
   const exportToPDF = () => {
     const doc = new jsPDF();
@@ -931,7 +964,7 @@ export default function InvoicesPage() {
                       required
                       name="customer_id"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
-                      onChange={(e) => setSelectedCustomerId(e.target.value)}
+                      onChange={(e) => handleNewInvoiceCustomerChange(e.target.value)}
                     >
                       <option value="">Seleccionar cliente</option>
                       {customers.map((customer) => (
