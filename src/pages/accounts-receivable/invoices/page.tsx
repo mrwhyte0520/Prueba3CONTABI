@@ -362,48 +362,135 @@ export default function InvoicesPage() {
     doc.save(`facturas-por-cobrar-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     const totalAmount = filteredInvoices.reduce((sum, inv) => sum + inv.amount, 0);
     const totalBalance = filteredInvoices.reduce((sum, inv) => sum + inv.balance, 0);
     const totalPaid = filteredInvoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
-    const headerCompanyName =
+
+    const companyName =
       (companyInfo as any)?.name ||
       (companyInfo as any)?.company_name ||
       'ContaBi';
 
-    const csvContent = [
-      [headerCompanyName],
-      ['Reporte de Facturas por Cobrar'],
-      [`Fecha de generación: ${new Date().toLocaleDateString('es-DO')}`],
-      [`Estado: ${statusFilter === 'all' ? 'Todos' : statusFilter}`],
+    const statusText =
+      statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter as Invoice['status']);
 
-      [''],
-      ['RESUMEN FINANCIERO'],
-      ['Total Facturado', `RD$ ${totalAmount.toLocaleString()}`],
-      ['Total Pagado', `RD$ ${totalPaid.toLocaleString()}`],
-      ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
-      ['Número de Facturas', filteredInvoices.length.toString()],
-      [''],
-      ['DETALLE DE FACTURAS'],
-      ['Factura', 'Cliente', 'Fecha', 'Vencimiento', 'Monto', 'Pagado', 'Saldo', 'Estado', 'Días Vencido'],
-      ...filteredInvoices.map(invoice => [
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Facturas por Cobrar');
+
+    // Encabezado principal
+    worksheet.mergeCells('A1:I1');
+    worksheet.getCell('A1').value = companyName;
+    worksheet.getCell('A1').font = { bold: true, size: 16 };
+    worksheet.getCell('A1').alignment = { horizontal: 'center' } as any;
+
+    worksheet.mergeCells('A2:I2');
+    worksheet.getCell('A2').value = 'Reporte de Facturas por Cobrar';
+    worksheet.getCell('A2').font = { bold: true, size: 12 };
+    worksheet.getCell('A2').alignment = { horizontal: 'center' } as any;
+
+    worksheet.getCell('A3').value = `Fecha de generación: ${new Date().toLocaleDateString('es-DO')}`;
+    worksheet.getCell('A4').value = `Estado: ${statusText}`;
+
+    // Resumen financiero
+    worksheet.addRow([]);
+    const resumenTitleRow = worksheet.addRow(['RESUMEN FINANCIERO']);
+    resumenTitleRow.font = { bold: true };
+
+    const resumenStartRow = resumenTitleRow.number + 1;
+    worksheet.getCell(`A${resumenStartRow}`).value = 'Total Facturado';
+    worksheet.getCell(`B${resumenStartRow}`).value = totalAmount;
+
+    worksheet.getCell(`A${resumenStartRow + 1}`).value = 'Total Pagado';
+    worksheet.getCell(`B${resumenStartRow + 1}`).value = totalPaid;
+
+    worksheet.getCell(`A${resumenStartRow + 2}`).value = 'Saldo Pendiente';
+    worksheet.getCell(`B${resumenStartRow + 2}`).value = totalBalance;
+
+    worksheet.getCell(`A${resumenStartRow + 3}`).value = 'Número de Facturas';
+    worksheet.getCell(`B${resumenStartRow + 3}`).value = filteredInvoices.length;
+
+    // Formato numérico RD$
+    for (let r = resumenStartRow; r <= resumenStartRow + 2; r++) {
+      const cell = worksheet.getCell(`B${r}`);
+      cell.numFmt = '#,##0.00';
+    }
+
+    worksheet.addRow([]);
+
+    // Detalle de facturas
+    const detalleTitleRow = worksheet.addRow(['DETALLE DE FACTURAS']);
+    detalleTitleRow.font = { bold: true };
+
+    const headerRow = worksheet.addRow([
+      'Factura',
+      'Cliente',
+      'Documento',
+      'Teléfono',
+      'Email',
+      'Dirección',
+      'Fecha',
+      'Vencimiento',
+      'Monto',
+      'Pagado',
+      'Saldo',
+      'Estado',
+      'Días Vencido',
+    ]);
+    headerRow.font = { bold: true };
+
+    filteredInvoices.forEach((invoice) => {
+      const customer = customers.find((c) => c.id === invoice.customerId);
+      const customerDocument = customer?.document || '';
+      const customerPhone = customer?.phone || '';
+      const customerEmail = customer?.email || '';
+      const customerAddress = customer?.address || '';
+
+      worksheet.addRow([
         invoice.invoiceNumber,
         invoice.customerName,
+        customerDocument,
+        customerPhone,
+        customerEmail,
+        customerAddress,
         invoice.date,
         invoice.dueDate,
         invoice.amount,
         invoice.paidAmount,
         invoice.balance,
         getStatusName(invoice.status),
-        invoice.daysOverdue
-      ])
-    ].map(row => row.join(',')).join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `facturas-por-cobrar-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+        invoice.daysOverdue,
+      ]);
+    });
+
+    // Anchos de columnas
+    worksheet.columns = [
+      { width: 20 },  // Factura
+      { width: 30 },  // Cliente
+      { width: 20 },  // Documento
+      { width: 16 },  // Teléfono
+      { width: 26 },  // Email
+      { width: 40 },  // Dirección
+      { width: 14 },  // Fecha
+      { width: 14 },  // Vencimiento
+      { width: 16 },  // Monto
+      { width: 16 },  // Pagado
+      { width: 16 },  // Saldo
+      { width: 14 },  // Estado
+      { width: 14 },  // Días Vencido
+    ];
+
+    // Formato numérico en columnas de montos (Monto, Pagado, Saldo)
+    ['I', 'J', 'K'].forEach((col) => {
+      const column = worksheet.getColumn(col);
+      column.numFmt = '#,##0.00';
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    saveAs(blob, `facturas-por-cobrar-${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const handleNewInvoice = () => {

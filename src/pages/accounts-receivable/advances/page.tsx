@@ -4,7 +4,8 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, customerAdvancesService, bankAccountsService, journalEntriesService } from '../../../services/database';
+import { customersService, invoicesService, customerAdvancesService, bankAccountsService, journalEntriesService, settingsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface Advance {
   id: string;
@@ -20,6 +21,15 @@ interface Advance {
   concept: string;
   status: 'pending' | 'applied' | 'partial' | 'cancelled';
   appliedInvoices: string[];
+}
+
+interface CustomerOption {
+  id: string;
+  name: string;
+  document?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
 }
 
 interface BankAccountOption {
@@ -38,8 +48,11 @@ export default function AdvancesPage() {
   const [selectedAdvance, setSelectedAdvance] = useState<Advance | null>(null);
   const [advances, setAdvances] = useState<Advance[]>([]);
   const [loadingAdvances, setLoadingAdvances] = useState(false);
-  const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
-  const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number }>>([]);
+  const [customers, setCustomers] = useState<CustomerOption[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [invoices, setInvoices] = useState<
+    Array<{ id: string; invoiceNumber: string; totalAmount: number; paidAmount: number; customerId: string }>
+  >([]);
   const [loadingSupport, setLoadingSupport] = useState(false);
   const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
   const [customerAdvanceAccounts, setCustomerAdvanceAccounts] = useState<Record<string, string>>({});
@@ -82,6 +95,8 @@ export default function AdvancesPage() {
     return matchesSearch && matchesStatus;
   });
 
+  const selectedCustomer = customers.find((c) => c.id === selectedCustomerId) || null;
+
   const loadSupportData = async () => {
     if (!user?.id) return;
     setLoadingSupport(true);
@@ -91,13 +106,24 @@ export default function AdvancesPage() {
         invoicesService.getAll(user.id),
         bankAccountsService.getAll(user.id),
       ]);
-      setCustomers(custList.map((c: any) => ({ id: c.id, name: c.name })));
+      setCustomers(
+        (custList || []).map((c: any) => ({
+          id: String(c.id),
+          name: c.name || c.customer_name || 'Cliente',
+          document: c.document || c.tax_id || '',
+          phone: c.phone || c.contact_phone || '',
+          email: c.email || c.contact_email || '',
+          address: c.address || '',
+        })),
+      );
+
       setInvoices(
         (invList as any[]).map((inv) => ({
           id: String(inv.id),
           invoiceNumber: inv.invoice_number as string,
           totalAmount: Number(inv.total_amount) || 0,
           paidAmount: Number(inv.paid_amount) || 0,
+          customerId: String(inv.customer_id),
         }))
       );
 
@@ -175,15 +201,33 @@ export default function AdvancesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
     const doc = new jsPDF();
-    
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[Advances] Error obteniendo información de la empresa para PDF de anticipos:', error);
+    }
+
+    doc.setFontSize(16);
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' } as any);
+
     doc.setFontSize(20);
-    doc.text('Reporte de Anticipos de Clientes', 20, 20);
+    doc.text('Reporte de Anticipos de Clientes', 20, 30);
     
     doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
-    doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter)}`, 20, 50);
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 45);
+    doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter)}`, 20, 55);
     
     // Estadísticas
     const activeAdvances = filteredAdvances.filter(a => a.status !== 'cancelled');
@@ -193,7 +237,7 @@ export default function AdvancesPage() {
     const pendingAdvances = activeAdvances.filter(a => a.status === 'pending').length;
     
     doc.setFontSize(14);
-    doc.text('Resumen de Anticipos', 20, 70);
+    doc.text('Resumen de Anticipos', 20, 75);
     
     const summaryData = [
       ['Concepto', 'Valor'],
@@ -205,7 +249,7 @@ export default function AdvancesPage() {
     ];
     
     (doc as any).autoTable({
-      startY: 80,
+      startY: 85,
       head: [summaryData[0]],
       body: summaryData.slice(1),
       theme: 'grid',
@@ -238,49 +282,67 @@ export default function AdvancesPage() {
     doc.save(`anticipos-clientes-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     const activeAdvances: Advance[] = filteredAdvances.filter(a => a.status !== 'cancelled');
-    const totalAmount = activeAdvances.reduce((sum, advance) => sum + advance.amount, 0);
-    const totalApplied = activeAdvances.reduce((sum, advance) => sum + advance.appliedAmount, 0);
-    const totalBalance = activeAdvances.reduce((sum, advance) => sum + advance.balance, 0);
-    const pendingAdvances = activeAdvances.filter(a => a.status === 'pending').length;
-    
-    const csvContent = [
-      ['Reporte de Anticipos de Clientes'],
-      [`Fecha de generación: ${new Date().toLocaleDateString()}`],
-      [`Estado: ${statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter)}`],
-      [''],
-      ['RESUMEN'],
-      ['Total Anticipos', `RD$ ${totalAmount.toLocaleString()}`],
-      ['Total Aplicado', `RD$ ${totalApplied.toLocaleString()}`],
-      ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
-      ['Anticipos Pendientes', pendingAdvances.toString()],
-      ['Total de Anticipos', activeAdvances.length.toString()],
-      [''],
-      ['DETALLE DE ANTICIPOS'],
-      ['Anticipo', 'Cliente', 'Fecha', 'Monto', 'Aplicado', 'Saldo', 'Método Pago', 'Referencia', 'Estado'],
-      ...activeAdvances.map((advance: Advance) => [
-        advance.advanceNumber,
-        advance.customerName,
-        advance.date,
-        advance.amount,
-        advance.appliedAmount,
-        advance.balance,
-        getPaymentMethodName(advance.paymentMethod),
-        advance.reference,
-        getStatusName(advance.status)
-      ])
-    ].map(row => row.join(',')).join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `anticipos-clientes-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+
+    if (!activeAdvances.length) {
+      alert('No hay anticipos para exportar con los filtros actuales.');
+      return;
+    }
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de anticipos:', error);
+    }
+
+    const rows = activeAdvances.map((advance) => ({
+      advanceNumber: advance.advanceNumber,
+      customerName: advance.customerName,
+      date: advance.date,
+      amount: advance.amount,
+      appliedAmount: advance.appliedAmount,
+      balance: advance.balance,
+      status: getStatusName(advance.status),
+    }));
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const todayLocal = new Date().toLocaleDateString();
+
+    const headers = [
+      { key: 'advanceNumber', title: 'Anticipo' },
+      { key: 'customerName', title: 'Cliente' },
+      { key: 'date', title: 'Fecha' },
+      { key: 'amount', title: 'Monto' },
+      { key: 'appliedAmount', title: 'Aplicado' },
+      { key: 'balance', title: 'Saldo' },
+      { key: 'status', title: 'Estado' },
+    ];
+
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      `anticipos-clientes-${todayIso}`,
+      'Anticipos',
+      [18, 28, 14, 16, 16, 16, 16],
+      {
+        title: `Anticipos de Clientes - ${todayLocal}`,
+        companyName,
+      },
+    );
   };
 
   const handleNewAdvance = () => {
     setSelectedAdvance(null);
+    setSelectedCustomerId('');
     setShowAdvanceModal(true);
   };
 
@@ -469,6 +531,11 @@ export default function AdvancesPage() {
     const targetInvoice = invoices.find((inv) => inv.id === invoiceId);
     if (!targetInvoice) {
       alert('La factura seleccionada no es válida');
+      return;
+    }
+
+    if (targetInvoice.customerId !== selectedAdvance.customerId) {
+      alert('La factura seleccionada no pertenece al mismo cliente del anticipo');
       return;
     }
 
@@ -746,6 +813,8 @@ export default function AdvancesPage() {
                     <select 
                       required
                       name="customer_id"
+                      value={selectedCustomerId}
+                      onChange={(e) => setSelectedCustomerId(e.target.value)}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar cliente</option>
@@ -768,6 +837,36 @@ export default function AdvancesPage() {
                     />
                   </div>
                 </div>
+                
+                {selectedCustomer && (
+                  <div className="mt-2 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    <p className="text-sm font-medium text-gray-700 mb-1">Datos del Cliente</p>
+                    {selectedCustomer.document && (
+                      <p className="text-sm text-gray-600">
+                        <span className="font-semibold">Documento: </span>
+                        {selectedCustomer.document}
+                      </p>
+                    )}
+                    {selectedCustomer.phone && (
+                      <p className="text-sm text-gray-600">
+                        <span className="font-semibold">Teléfono: </span>
+                        {selectedCustomer.phone}
+                      </p>
+                    )}
+                    {selectedCustomer.email && (
+                      <p className="text-sm text-gray-600">
+                        <span className="font-semibold">Email: </span>
+                        {selectedCustomer.email}
+                      </p>
+                    )}
+                    {selectedCustomer.address && (
+                      <p className="text-sm text-gray-600">
+                        <span className="font-semibold">Dirección: </span>
+                        {selectedCustomer.address}
+                      </p>
+                    )}
+                  </div>
+                )}
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -881,11 +980,17 @@ export default function AdvancesPage() {
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar factura</option>
-                    {invoices.map((inv) => (
-                      <option key={inv.id} value={inv.id}>
-                        {inv.invoiceNumber} - RD$ {inv.totalAmount.toLocaleString()}
-                      </option>
-                    ))}
+                    {invoices
+                      .filter(
+                        (inv) =>
+                          inv.customerId === selectedAdvance.customerId &&
+                          inv.totalAmount > inv.paidAmount,
+                      )
+                      .map((inv) => (
+                        <option key={inv.id} value={inv.id}>
+                          {inv.invoiceNumber} - RD$ {inv.totalAmount.toLocaleString()}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 

@@ -279,55 +279,128 @@ export default function ReceiptsPage() {
       console.error('Error obteniendo información de la empresa para Excel de recibos de cobro:', error);
     }
 
-    const rows = filteredReceipts.map((receipt) => ({
-      receiptNumber: receipt.receiptNumber,
-      customerName: receipt.customerName,
-      customerDocument: customers.find((c) => c.id === receipt.customerId)?.document || '',
-      customerPhone: customers.find((c) => c.id === receipt.customerId)?.phone || '',
-      customerEmail: customers.find((c) => c.id === receipt.customerId)?.email || '',
-      customerAddress: customers.find((c) => c.id === receipt.customerId)?.address || '',
-      date: receipt.date,
-      amount: receipt.amount,
-      paymentMethod: getPaymentMethodName(receipt.paymentMethod),
-      reference: receipt.reference,
-      concept: receipt.concept,
-      status: getStatusName(receipt.status),
-    }));
-
-    if (!rows.length) {
+    if (!filteredReceipts.length) {
       alert('No hay recibos para exportar con los filtros actuales.');
       return;
     }
 
-    const todayIso = new Date().toISOString().split('T')[0];
-    const todayLocal = new Date().toLocaleDateString();
+    const totalAmount = filteredReceipts.reduce((sum, receipt) => sum + receipt.amount, 0);
+    const activeReceipts = filteredReceipts.filter((r) => r.status === 'active').length;
+    const cancelledReceipts = filteredReceipts.filter((r) => r.status === 'cancelled').length;
 
-    const headers = [
-      { key: 'receiptNumber', title: 'Recibo' },
-      { key: 'customerName', title: 'Cliente' },
-      { key: 'customerDocument', title: 'Documento' },
-      { key: 'customerPhone', title: 'Teléfono' },
-      { key: 'customerEmail', title: 'Email' },
-      { key: 'customerAddress', title: 'Dirección' },
-      { key: 'date', title: 'Fecha' },
-      { key: 'amount', title: 'Monto' },
-      { key: 'paymentMethod', title: 'Método' },
-      { key: 'reference', title: 'Referencia' },
-      { key: 'concept', title: 'Concepto' },
-      { key: 'status', title: 'Estado' },
+    const todayIso = new Date().toISOString().split('T')[0];
+    const todayLocal = new Date().toLocaleDateString('es-DO');
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Recibos de Cobro');
+
+    // Encabezado principal
+    worksheet.mergeCells('A1:L1');
+    worksheet.getCell('A1').value = companyName;
+    worksheet.getCell('A1').font = { bold: true, size: 16 } as any;
+    worksheet.getCell('A1').alignment = { horizontal: 'center' } as any;
+
+    worksheet.mergeCells('A2:L2');
+    worksheet.getCell('A2').value = 'Reporte de Recibos de Cobro';
+    worksheet.getCell('A2').font = { bold: true, size: 12 } as any;
+    worksheet.getCell('A2').alignment = { horizontal: 'center' } as any;
+
+    worksheet.getCell('A3').value = `Fecha de generación: ${todayLocal}`;
+    worksheet.getCell('A4').value = `Estado: ${statusFilter === 'all' ? 'Todos' : statusFilter}`;
+    worksheet.getCell('A5').value = `Método de pago: ${paymentMethodFilter === 'all' ? 'Todos' : getPaymentMethodName(paymentMethodFilter)}`;
+
+    // Resumen de recibos
+    worksheet.addRow([]);
+    const resumenTitleRow = worksheet.addRow(['RESUMEN DE RECIBOS']);
+    resumenTitleRow.font = { bold: true } as any;
+
+    const resumenStartRow = resumenTitleRow.number + 1;
+    worksheet.getCell(`A${resumenStartRow}`).value = 'Total Recibido';
+    worksheet.getCell(`B${resumenStartRow}`).value = totalAmount;
+
+    worksheet.getCell(`A${resumenStartRow + 1}`).value = 'Recibos Activos';
+    worksheet.getCell(`B${resumenStartRow + 1}`).value = activeReceipts;
+
+    worksheet.getCell(`A${resumenStartRow + 2}`).value = 'Recibos Anulados';
+    worksheet.getCell(`B${resumenStartRow + 2}`).value = cancelledReceipts;
+
+    worksheet.getCell(`A${resumenStartRow + 3}`).value = 'Total de Recibos';
+    worksheet.getCell(`B${resumenStartRow + 3}`).value = filteredReceipts.length;
+
+    // Formato numérico RD$ para total recibido
+    const totalCell = worksheet.getCell(`B${resumenStartRow}`);
+    totalCell.numFmt = '#,##0.00';
+
+    worksheet.addRow([]);
+
+    // Detalle de recibos
+    const detalleTitleRow = worksheet.addRow(['DETALLE DE RECIBOS']);
+    detalleTitleRow.font = { bold: true } as any;
+
+    const headerRow = worksheet.addRow([
+      'Recibo',
+      'Cliente',
+      'Documento',
+      'Teléfono',
+      'Email',
+      'Dirección',
+      'Fecha',
+      'Monto',
+      'Método',
+      'Referencia',
+      'Concepto',
+      'Estado',
+    ]);
+    headerRow.font = { bold: true } as any;
+
+    filteredReceipts.forEach((receipt) => {
+      const customer = customers.find((c) => c.id === receipt.customerId);
+      const customerDocument = customer?.document || '';
+      const customerPhone = customer?.phone || '';
+      const customerEmail = customer?.email || '';
+      const customerAddress = customer?.address || '';
+
+      worksheet.addRow([
+        receipt.receiptNumber,
+        receipt.customerName,
+        customerDocument,
+        customerPhone,
+        customerEmail,
+        customerAddress,
+        receipt.date,
+        receipt.amount,
+        getPaymentMethodName(receipt.paymentMethod),
+        receipt.reference,
+        receipt.concept,
+        getStatusName(receipt.status),
+      ]);
+    });
+
+    // Anchos de columnas
+    worksheet.columns = [
+      { width: 16 },
+      { width: 28 },
+      { width: 20 },
+      { width: 16 },
+      { width: 28 },
+      { width: 40 },
+      { width: 14 },
+      { width: 16 },
+      { width: 18 },
+      { width: 24 },
+      { width: 32 },
+      { width: 14 },
     ];
 
-    exportToExcelWithHeaders(
-      rows,
-      headers,
-      `recibos-cobro-${todayIso}`,
-      'Recibos',
-      [16, 28, 20, 16, 28, 40, 14, 16, 18, 24, 32, 14],
-      {
-        title: `Recibos de Cobro - ${todayLocal}`,
-        companyName,
-      },
-    );
+    // Formato numérico para la columna de monto
+    const amountColumn = worksheet.getColumn(8);
+    (amountColumn as any).numFmt = '#,##0.00';
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    saveAs(blob, `recibos-cobro-${todayIso}.xlsx`);
   };
 
   const handleNewReceipt = () => {
