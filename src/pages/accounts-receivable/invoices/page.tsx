@@ -182,21 +182,37 @@ export default function InvoicesPage() {
 
   const exportToPDF = () => {
     const doc = new jsPDF();
-    
-    doc.setFontSize(20);
-    doc.text('Reporte de Facturas por Cobrar', 20, 20);
-    
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const title = 'Reporte de Facturas por Cobrar';
+    const dateStr = new Date().toLocaleDateString('es-DO');
+    const statusText = statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter);
+
+    // Encabezado: nombre de empresa, título y filtros
+    doc.setFontSize(18);
+    doc.setTextColor(40, 40, 40);
+    doc.text(companyName, pageWidth / 2, 18, { align: 'center' } as any);
+
     doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
-    doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : statusFilter}`, 20, 50);
-    
+    doc.text(title, pageWidth / 2, 26, { align: 'center' } as any);
+
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Fecha de generación: ${dateStr}`, 20, 36);
+    doc.text(`Estado: ${statusText}`, 20, 44);
+
     const totalAmount = filteredInvoices.reduce((sum, inv) => sum + inv.amount, 0);
     const totalBalance = filteredInvoices.reduce((sum, inv) => sum + inv.balance, 0);
     const totalPaid = filteredInvoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
-    
+
     doc.setFontSize(14);
-    doc.text('Resumen Financiero', 20, 70);
-    
+    doc.text('Resumen Financiero', 20, 60);
+
     const summaryData = [
       ['Concepto', 'Monto'],
       ['Total Facturado', `RD$ ${totalAmount.toLocaleString()}`],
@@ -204,19 +220,20 @@ export default function InvoicesPage() {
       ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
       ['Número de Facturas', filteredInvoices.length.toString()]
     ];
-    
+
     (doc as any).autoTable({
-      startY: 80,
+      startY: 70,
+
       head: [summaryData[0]],
       body: summaryData.slice(1),
       theme: 'grid',
       headStyles: { fillColor: [59, 130, 246] },
       styles: { fontSize: 10 }
     });
-    
+
     doc.setFontSize(14);
     doc.text('Detalle de Facturas', 20, (doc as any).lastAutoTable.finalY + 20);
-    
+
     const invoiceData = filteredInvoices.map(invoice => [
       invoice.invoiceNumber,
       invoice.customerName,
@@ -252,11 +269,17 @@ export default function InvoicesPage() {
     const totalAmount = filteredInvoices.reduce((sum, inv) => sum + inv.amount, 0);
     const totalBalance = filteredInvoices.reduce((sum, inv) => sum + inv.balance, 0);
     const totalPaid = filteredInvoices.reduce((sum, inv) => sum + inv.paidAmount, 0);
-    
+    const headerCompanyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
     const csvContent = [
+      [headerCompanyName],
       ['Reporte de Facturas por Cobrar'],
-      [`Fecha de generación: ${new Date().toLocaleDateString()}`],
+      [`Fecha de generación: ${new Date().toLocaleDateString('es-DO')}`],
       [`Estado: ${statusFilter === 'all' ? 'Todos' : statusFilter}`],
+
       [''],
       ['RESUMEN FINANCIERO'],
       ['Total Facturado', `RD$ ${totalAmount.toLocaleString()}`],

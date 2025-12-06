@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { taxService } from '../../../services/database';
+import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
 
@@ -23,12 +23,26 @@ export default function Report623Page() {
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [foreignPayments, setForeignPayments] = useState<Report623Data[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   useEffect(() => {
     // Set current month as default
     const now = new Date();
     const currentPeriod = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
     setSelectedPeriod(currentPeriod);
+  }, []);
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        console.error('Error cargando información de la empresa para Reporte 623', error);
+      }
+    };
+
+    loadCompany();
   }, []);
 
   const generateReport = async () => {
@@ -61,8 +75,29 @@ export default function Report623Page() {
       'Impuesto Retenido': payment.tax_withheld
     }));
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerRows: (string | number)[][] = [];
+
+    headerRows.push([companyName]);
+    if (companyRnc) {
+      headerRows.push([`RNC: ${companyRnc}`]);
+    }
+    headerRows.push(['Reporte 623 - Pagos al Exterior']);
+    headerRows.push([`Período: ${selectedPeriod}`]);
+    headerRows.push([]);
+
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(excelData);
+    const tableStartRow = headerRows.length + 1;
+    const ws = XLSX.utils.json_to_sheet(excelData as any, { origin: `A${tableStartRow}` } as any);
 
     ws['!cols'] = [
       { wch: 30 },
@@ -76,12 +111,16 @@ export default function Report623Page() {
       { wch: 18 }
     ];
 
+    XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
+
     XLSX.utils.book_append_sheet(wb, ws, 'Reporte 623');
     XLSX.writeFile(wb, `reporte_623_${selectedPeriod}.xlsx`);
   };
 
   const exportToCSV = () => {
     if (foreignPayments.length === 0) return;
+
+    const separator = ';';
 
     const headers = [
       'Beneficiario',
@@ -95,8 +134,31 @@ export default function Report623Page() {
       'Método Pago'
     ];
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerLines: string[] = [
+      ['Empresa', companyName].join(separator),
+    ];
+
+    if (companyRnc) {
+      headerLines.push(['RNC', companyRnc].join(separator));
+    }
+
+    headerLines.push(['Reporte', 'Reporte 623 - Pagos al Exterior'].join(separator));
+    headerLines.push(['Período', selectedPeriod].join(separator));
+    headerLines.push('');
+
     const csvContent = [
-      headers.join(','),
+      ...headerLines,
+      headers.join(separator),
       ...foreignPayments.map(payment => [
         `"${payment.beneficiary_name}"`,
         `"${payment.beneficiary_country}"`,
@@ -107,7 +169,7 @@ export default function Report623Page() {
         payment.exchange_rate,
         payment.tax_withheld,
         `"${payment.payment_method}"`
-      ].join(','))
+      ].join(separator))
     ].join('\n');
 
     const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');

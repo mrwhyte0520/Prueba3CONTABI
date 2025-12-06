@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { taxService } from '../../../services/database';
+import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
 
@@ -29,12 +29,26 @@ export default function Report607Page() {
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   useEffect(() => {
     // Set current month as default
     const now = new Date();
     const currentPeriod = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
     setSelectedPeriod(currentPeriod);
+  }, []);
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        console.error('Error cargando información de la empresa para Reporte 607', error);
+      }
+    };
+
+    loadCompany();
   }, []);
 
   const generateReport = async () => {
@@ -55,6 +69,8 @@ export default function Report607Page() {
   const exportToCSV = () => {
     if (reportData.length === 0) return;
 
+    const separator = ';';
+
     const headers = [
       'RNC/Cédula',
       'Tipo ID',
@@ -73,8 +89,31 @@ export default function Report607Page() {
       'Propina Legal 2'
     ];
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerLines: string[] = [
+      ['Empresa', companyName].join(separator),
+    ];
+
+    if (companyRnc) {
+      headerLines.push(['RNC', companyRnc].join(separator));
+    }
+
+    headerLines.push(['Reporte', 'Reporte 607 - Ventas y Servicios'].join(separator));
+    headerLines.push(['Período', selectedPeriod].join(separator));
+    headerLines.push('');
+
     const csvContent = [
-      headers.join(','),
+      ...headerLines,
+      headers.join(separator),
       ...reportData.map(row => [
         row.rnc_cedula,
         row.tipo_identificacion,
@@ -91,7 +130,7 @@ export default function Report607Page() {
         row.impuesto_selectivo_consumo,
         row.otros_impuestos_tasas,
         row.monto_propina_legal_2
-      ].join(','))
+      ].join(separator))
     ].join('\n');
 
     const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
@@ -127,8 +166,27 @@ export default function Report607Page() {
       'Propina Legal 2': row.monto_propina_legal_2,
     }));
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerRows: (string | number)[][] = [];
+
+    headerRows.push([companyName]);
+    if (companyRnc) {
+      headerRows.push([`RNC: ${companyRnc}`]);
+    }
+    headerRows.push(['Reporte 607 - Ventas y Servicios']);
+    headerRows.push([`Período: ${selectedPeriod}`]);
+    headerRows.push([]);
+
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(excelData);
 
     const colWidths = [
       { wch: 15 }, // RNC/Cédula
@@ -147,7 +205,11 @@ export default function Report607Page() {
       { wch: 22 }, // Otros Impuestos/Tasas
       { wch: 18 }, // Propina Legal 2
     ];
+    const tableStartRow = headerRows.length + 1;
+    const ws = XLSX.utils.json_to_sheet(excelData as any, { origin: `A${tableStartRow}` } as any);
     (ws as any)['!cols'] = colWidths;
+
+    XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
 
     XLSX.utils.book_append_sheet(wb, ws, 'Reporte 607');
     XLSX.writeFile(wb, `reporte_607_${selectedPeriod}.xlsx`);

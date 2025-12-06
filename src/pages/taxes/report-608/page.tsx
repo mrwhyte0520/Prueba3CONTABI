@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { taxService } from '../../../services/database';
+import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
 
@@ -23,12 +23,26 @@ export default function Report608Page() {
   const [reportPeriod, setReportPeriod] = useState('');
   const [cancelledDocuments, setCancelledDocuments] = useState<Report608Data[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   useEffect(() => {
     // Set current month as default
     const now = new Date();
     const currentPeriod = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
     setSelectedPeriod(currentPeriod);
+  }, []);
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        console.error('Error cargando información de la empresa para Reporte 608', error);
+      }
+    };
+
+    loadCompany();
   }, []);
 
   const formatPeriodLabel = (period: string) => {
@@ -84,8 +98,29 @@ export default function Report608Page() {
       'Motivo': doc.reason
     }));
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerRows: (string | number)[][] = [];
+
+    headerRows.push([companyName]);
+    if (companyRnc) {
+      headerRows.push([`RNC: ${companyRnc}`]);
+    }
+    headerRows.push(['Reporte 608 - Documentos Cancelados']);
+    headerRows.push([`Período: ${reportPeriod || selectedPeriod}`]);
+    headerRows.push([]);
+
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(excelData);
+    const tableStartRow = headerRows.length + 1;
+    const ws = XLSX.utils.json_to_sheet(excelData as any, { origin: `A${tableStartRow}` } as any);
 
     ws['!cols'] = [
       { wch: 20 },
@@ -98,12 +133,16 @@ export default function Report608Page() {
       { wch: 30 }
     ];
 
+    XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
+
     XLSX.utils.book_append_sheet(wb, ws, 'Reporte 608');
     XLSX.writeFile(wb, `reporte_608_${selectedPeriod}.xlsx`);
   };
 
   const exportToCSV = () => {
     if (cancelledDocuments.length === 0) return;
+
+    const separator = ';';
 
     const headers = [
       'NCF',
@@ -116,8 +155,31 @@ export default function Report608Page() {
       'Motivo'
     ];
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerLines: string[] = [
+      ['Empresa', companyName].join(separator),
+    ];
+
+    if (companyRnc) {
+      headerLines.push(['RNC', companyRnc].join(separator));
+    }
+
+    headerLines.push(['Reporte', 'Reporte 608 - Documentos Cancelados'].join(separator));
+    headerLines.push(['Período', reportPeriod || selectedPeriod].join(separator));
+    headerLines.push('');
+
     const csvContent = [
-      headers.join(','),
+      ...headerLines,
+      headers.join(separator),
       ...cancelledDocuments.map(doc => [
         doc.ncf,
         doc.document_type,
@@ -127,7 +189,7 @@ export default function Report608Page() {
         doc.tax_amount,
         doc.customer_rnc,
         `"${doc.reason}"`
-      ].join(','))
+      ].join(separator))
     ].join('\n');
 
     const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');

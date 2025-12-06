@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { taxService } from '../../../services/database';
+import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
 
@@ -11,12 +11,26 @@ export default function ReportIR17Page() {
   const [reportPeriod, setReportPeriod] = useState('');
   const [withholdingData, setWithholdingData] = useState<any[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   useEffect(() => {
     // Establecer el mes actual como período por defecto
     const now = new Date();
     const currentPeriod = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
     setSelectedPeriod(currentPeriod);
+  }, []);
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        console.error('Error cargando información de la empresa para Reporte IR-17', error);
+      }
+    };
+
+    loadCompany();
   }, []);
 
   const formatPeriodLabel = (period: string) => {
@@ -73,8 +87,29 @@ export default function ReportIR17Page() {
       'Monto Neto': item.net_amount
     }));
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerRows: (string | number)[][] = [];
+
+    headerRows.push([companyName]);
+    if (companyRnc) {
+      headerRows.push([`RNC: ${companyRnc}`]);
+    }
+    headerRows.push(['Reporte IR-17 - Retenciones ISR']);
+    headerRows.push([`Período: ${reportPeriod || selectedPeriod}`]);
+    headerRows.push([]);
+
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(excelData);
+    const tableStartRow = headerRows.length + 1;
+    const ws = XLSX.utils.json_to_sheet(excelData as any, { origin: `A${tableStartRow}` } as any);
 
     ws['!cols'] = [
       { wch: 15 },
@@ -88,12 +123,16 @@ export default function ReportIR17Page() {
       { wch: 15 }
     ];
 
+    XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
+
     XLSX.utils.book_append_sheet(wb, ws, 'Reporte IR-17');
     XLSX.writeFile(wb, `reporte_ir17_${selectedPeriod}.xlsx`);
   };
 
   const exportToCSV = () => {
     if (withholdingData.length === 0) return;
+
+    const separator = ';';
 
     const headers = [
       'RNC Proveedor',
@@ -107,8 +146,31 @@ export default function ReportIR17Page() {
       'Número Factura'
     ];
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerLines: string[] = [
+      ['Empresa', companyName].join(separator),
+    ];
+
+    if (companyRnc) {
+      headerLines.push(['RNC', companyRnc].join(separator));
+    }
+
+    headerLines.push(['Reporte', 'Reporte IR-17 - Retenciones ISR'].join(separator));
+    headerLines.push(['Período', reportPeriod || selectedPeriod].join(separator));
+    headerLines.push('');
+
     const csvContent = [
-      headers.join(','),
+      ...headerLines,
+      headers.join(separator),
       ...withholdingData.map(item => [
         item.supplier_rnc,
         `"${item.supplier_name}"`,
@@ -119,7 +181,7 @@ export default function ReportIR17Page() {
         item.net_amount,
         `"${item.service_type}"`,
         item.invoice_number
-      ].join(','))
+      ].join(separator))
     ].join('\n');
 
     const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');

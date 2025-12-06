@@ -1,7 +1,7 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
-import { taxService } from '../../../services/database';
+import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
 
@@ -43,6 +43,7 @@ export default function Report606Page() {
   const [summary, setSummary] = useState<Report606Summary | null>(null);
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   const months = [
     { value: '01', label: 'Enero' },
@@ -61,6 +62,19 @@ export default function Report606Page() {
 
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, idx) => String(currentYear - idx));
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        console.error('Error cargando información de la empresa para Reporte 606', error);
+      }
+    };
+
+    loadCompany();
+  }, []);
 
   const generateReport = async () => {
     const period = `${selectedYear}-${selectedMonth}`;
@@ -98,6 +112,8 @@ export default function Report606Page() {
   const exportToCSV = () => {
     if (reportData.length === 0) return;
 
+    const separator = ';';
+
     const headers = [
       'RNC/Cédula',
       'Tipo ID',
@@ -119,8 +135,31 @@ export default function Report606Page() {
       'Forma Pago'
     ];
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerLines: string[] = [
+      ['Empresa', companyName].join(separator),
+    ];
+
+    if (companyRnc) {
+      headerLines.push(['RNC', companyRnc].join(separator));
+    }
+
+    headerLines.push(['Reporte', 'Reporte 606 - Compras y Servicios'].join(separator));
+    headerLines.push(['Período', selectedPeriod].join(separator));
+    headerLines.push('');
+
     const csvContent = [
-      headers.join(','),
+      ...headerLines,
+      headers.join(separator),
       ...reportData.map(row => [
         row.rnc_cedula,
         row.tipo_identificacion,
@@ -140,7 +179,7 @@ export default function Report606Page() {
         Number(row.otros_impuestos ?? 0).toFixed(2),
         Number(row.monto_propina_legal ?? 0).toFixed(2),
         row.forma_pago
-      ].join(','))
+      ].join(separator))
     ].join('\n');
 
     const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
@@ -176,12 +215,34 @@ export default function Report606Page() {
       'Forma Pago': row.forma_pago
     }));
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerRows: (string | number)[][] = [];
+
+    headerRows.push([companyName]);
+    if (companyRnc) {
+      headerRows.push([`RNC: ${companyRnc}`]);
+    }
+    headerRows.push(['Reporte 606 - Compras y Servicios']);
+    headerRows.push([`Período: ${selectedPeriod}`]);
+    headerRows.push([]);
+
     // Crear libro de trabajo
     const wb = XLSX.utils.book_new();
-    
-    // Crear hoja de datos
-    const ws = XLSX.utils.json_to_sheet(excelData);
-    
+
+    const tableStartRow = headerRows.length + 1;
+    const ws = XLSX.utils.json_to_sheet(excelData as any, { origin: `A${tableStartRow}` } as any);
+
+    XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
+
     // Configurar ancho de columnas
     const colWidths = [
       { wch: 15 }, // RNC/Cédula
@@ -217,7 +278,18 @@ export default function Report606Page() {
         { 'Concepto': 'Total Retenciones', 'Valor': summary.totalRetention }
       ];
       
-      const summaryWs = XLSX.utils.json_to_sheet(summaryData);
+      const summaryHeaderRows: (string | number)[][] = [];
+
+      summaryHeaderRows.push([companyName]);
+      if (companyRnc) {
+        summaryHeaderRows.push([`RNC: ${companyRnc}`]);
+      }
+      summaryHeaderRows.push(['Reporte 606 - Resumen']);
+      summaryHeaderRows.push([`Período: ${selectedPeriod}`]);
+      summaryHeaderRows.push([]);
+
+      const summaryWs = XLSX.utils.json_to_sheet(summaryData as any, { origin: `A${summaryHeaderRows.length + 1}` } as any);
+      XLSX.utils.sheet_add_aoa(summaryWs, summaryHeaderRows, { origin: 'A1' });
       summaryWs['!cols'] = [{ wch: 25 }, { wch: 20 }];
       XLSX.utils.book_append_sheet(wb, summaryWs, 'Resumen');
     }

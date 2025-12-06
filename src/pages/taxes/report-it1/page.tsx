@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { taxService } from '../../../services/database';
+import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -39,6 +39,7 @@ export default function ReportIT1Page() {
   const [generating, setGenerating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedYear, setSelectedYear] = useState('');
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   useEffect(() => {
     // Set current month as default
@@ -49,6 +50,12 @@ export default function ReportIT1Page() {
     
     loadDashboardData();
     loadHistoricalData();
+
+    const loadCompany = async () => {
+      const info = await settingsService.getCompanyInfo();
+      setCompanyInfo(info);
+    };
+    loadCompany();
   }, []);
 
   const loadDashboardData = async () => {
@@ -117,13 +124,43 @@ export default function ReportIT1Page() {
       { 'Campo': 'Fecha de Generación', 'Valor': new Date(reportData.generated_date).toLocaleDateString('es-DO') }
     ];
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerRows: (string | number)[][] = [];
+
+    headerRows.push([companyName]);
+    if (companyRnc) {
+      headerRows.push([`RNC: ${companyRnc}`]);
+    }
+    headerRows.push(['Declaración Jurada del ITBIS (IT-1)']);
+    headerRows.push([
+      `Período: ${new Date(reportData.period + '-01').toLocaleDateString('es-DO', {
+        year: 'numeric',
+        month: 'long',
+      })}`,
+    ]);
+    headerRows.push([]);
+
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(excelData);
+    const tableStartRow = headerRows.length + 1;
+    const ws = XLSX.utils.json_to_sheet(excelData as any, { origin: `A${tableStartRow}` } as any);
 
     ws['!cols'] = [
       { wch: 40 },
       { wch: 20 }
     ];
+
+    (ws as any);
+    (ws as any);
+    XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
 
     XLSX.utils.book_append_sheet(wb, ws, 'Declaración IT-1');
     XLSX.writeFile(wb, `declaracion_it1_${reportData.period}.xlsx`);
@@ -131,17 +168,44 @@ export default function ReportIT1Page() {
 
   const exportToCSV = () => {
     if (!reportData) return;
-    
+    const separator = ';';
+
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerLines: string[] = [
+      ['Empresa', companyName].join(separator),
+    ];
+
+    if (companyRnc) {
+      headerLines.push(['RNC', companyRnc].join(separator));
+    }
+
+    headerLines.push(['Reporte', 'Declaración Jurada del ITBIS (IT-1)'].join(separator));
+    headerLines.push([
+      'Período',
+      new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }),
+    ].join(separator));
+    headerLines.push('');
+
     const csvContent = [
-      ['Campo', 'Valor'],
-      ['Período', new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })],
-      ['Total Ventas Gravadas', `RD$ ${reportData.total_sales.toLocaleString('es-DO')}`],
-      ['ITBIS Cobrado', `RD$ ${reportData.itbis_collected.toLocaleString('es-DO')}`],
-      ['Total Compras Gravadas', `RD$ ${reportData.total_purchases.toLocaleString('es-DO')}`],
-      ['ITBIS Pagado', `RD$ ${reportData.itbis_paid.toLocaleString('es-DO')}`],
-      ['ITBIS Neto a Pagar', `RD$ ${reportData.net_itbis_due.toLocaleString('es-DO')}`],
-      ['Fecha de Generación', new Date(reportData.generated_date).toLocaleDateString('es-DO')]
-    ].map(row => row.join(',')).join('\n');
+      ...headerLines,
+      ['Campo', 'Valor'].join(separator),
+      ['Período', new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })].join(separator),
+      ['Total Ventas Gravadas', `RD$ ${reportData.total_sales.toLocaleString('es-DO')}`].join(separator),
+      ['ITBIS Cobrado', `RD$ ${reportData.itbis_collected.toLocaleString('es-DO')}`].join(separator),
+      ['Total Compras Gravadas', `RD$ ${reportData.total_purchases.toLocaleString('es-DO')}`].join(separator),
+      ['ITBIS Pagado', `RD$ ${reportData.itbis_paid.toLocaleString('es-DO')}`].join(separator),
+      ['ITBIS Neto a Pagar', `RD$ ${reportData.net_itbis_due.toLocaleString('es-DO')}`].join(separator),
+      ['Fecha de Generación', new Date(reportData.generated_date).toLocaleDateString('es-DO')].join(separator),
+    ].join('\n');
 
     const csvForExcel = '\uFEFF' + csvContent.replace(/\n/g, '\r\n');
     const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
@@ -157,23 +221,31 @@ export default function ReportIT1Page() {
 
   const exportToPDF = () => {
     if (!reportData) return;
-
     const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
 
-    // Encabezado
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    // Encabezado con nombre de la empresa
     doc.setFontSize(18);
-    doc.text('Declaración Jurada del ITBIS (IT-1)', 14, 20);
+    doc.text(companyName, pageWidth / 2, 18, { align: 'center' } as any);
+
+    doc.setFontSize(14);
+    doc.text('Declaración Jurada del ITBIS (IT-1)', pageWidth / 2, 26, { align: 'center' } as any);
 
     doc.setFontSize(12);
     doc.text(
       `Período: ${new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}`,
       14,
-      30,
+      36,
     );
     doc.text(
       `Generado el: ${new Date(reportData.generated_date).toLocaleDateString('es-DO')}`,
       14,
-      38,
+      44,
     );
 
     // Sección I - Ventas

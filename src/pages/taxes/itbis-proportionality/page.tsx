@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { taxService } from '../../../services/database';
+import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -27,6 +27,7 @@ export default function ItbisProportionalityPage() {
   const [data, setData] = useState<ItbisProportionalityData | null>(null);
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
   const months = [
     { value: '01', label: 'Enero' },
@@ -45,6 +46,19 @@ export default function ItbisProportionalityPage() {
 
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, idx) => String(currentYear - idx));
+
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        setCompanyInfo(info);
+      } catch (error) {
+        console.error('Error cargando información de la empresa para Proporcionalidad ITBIS', error);
+      }
+    };
+
+    loadCompany();
+  }, []);
 
   const formatCurrency = (value: number) => {
     return `RD$ ${Number(value || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -110,13 +124,36 @@ export default function ItbisProportionalityPage() {
       { 'Concepto': 'Proporcionalidad No Admitida', 'Valor': data.nonAdmittedProportionality },
     ];
 
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerRows: (string | number)[][] = [];
+
+    headerRows.push([companyName]);
+    if (companyRnc) {
+      headerRows.push([`RNC: ${companyRnc}`]);
+    }
+    headerRows.push(['Proporcionalidad del ITBIS']);
+    headerRows.push([`Período: ${getMonthLabel(data.period)}`]);
+    headerRows.push([]);
+
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(excelData);
+    const tableStartRow = headerRows.length + 1;
+    const ws = XLSX.utils.json_to_sheet(excelData as any, { origin: `A${tableStartRow}` } as any);
 
     ws['!cols'] = [
       { wch: 40 },
       { wch: 20 }
     ];
+
+    XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
 
     XLSX.utils.book_append_sheet(wb, ws, 'Proporcionalidad ITBIS');
     XLSX.writeFile(wb, `proporcionalidad_itbis_${data.period}.xlsx`);
@@ -126,20 +163,41 @@ export default function ItbisProportionalityPage() {
     if (!data) return;
 
     const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
 
-    // Título
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    // Encabezado con nombre de la empresa
     doc.setFontSize(18);
-    doc.text('Proporcionalidad del ITBIS', 14, 20);
-    
+    doc.text(companyName, pageWidth / 2, 18, { align: 'center' } as any);
+
+    if (companyRnc) {
+      doc.setFontSize(10);
+      doc.text(`RNC: ${companyRnc}`, pageWidth / 2, 24, { align: 'center' } as any);
+    }
+
+    // Título del reporte
+    const titleY = companyRnc ? 32 : 28;
+    doc.setFontSize(14);
+    doc.text('Proporcionalidad del ITBIS', pageWidth / 2, titleY, { align: 'center' } as any);
+
     doc.setFontSize(12);
-    doc.text(`Período: ${getMonthLabel(data.period)}`, 14, 30);
+    doc.text(`Período: ${getMonthLabel(data.period)}`, 14, titleY + 10);
     
     // Ventas del Período
     doc.setFontSize(14);
-    doc.text('Ventas del Período', 14, 45);
+    doc.text('Ventas del Período', 14, 50);
     
     (doc as any).autoTable({
-      startY: 50,
+      startY: 55,
       head: [['Concepto', 'Valor']],
       body: [
         ['Total de las Ventas', formatCurrency(data.totalSales)],

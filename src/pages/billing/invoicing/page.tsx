@@ -664,9 +664,15 @@ export default function InvoicingPage() {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Facturas');
 
+    const headerCompanyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
     // Encabezados
-    worksheet.addRow(['FACTURAS']);
-    worksheet.addRow([`Generado el: ${new Date().toLocaleDateString()}`]);
+    worksheet.addRow([headerCompanyName]);
+    worksheet.addRow(['REPORTE DE FACTURAS']);
+    worksheet.addRow([`Generado el: ${new Date().toLocaleDateString('es-DO')}`]);
     worksheet.addRow([]);
 
     // Encabezados de la tabla
@@ -718,7 +724,7 @@ export default function InvoicingPage() {
     // Formato de moneda
     const currencyColumns = ['E', 'F', 'G'];
     currencyColumns.forEach(col => {
-      for (let i = 5; i <= filteredInvoices.length + 4; i++) {
+      for (let i = 6; i <= filteredInvoices.length + 5; i++) {
         const cell = worksheet.getCell(`${col}${i}`);
         cell.numFmt = '#,##0.00';
       }
@@ -734,18 +740,27 @@ export default function InvoicingPage() {
 
   const exportToPdf = () => {
     const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
     const title = 'REPORTE DE FACTURAS';
-    const date = `Generado el: ${new Date().toLocaleDateString()}`;
-    
-    // Título
+    const date = `Generado el: ${new Date().toLocaleDateString('es-DO')}`;
+
+    // Encabezado: nombre de la empresa y título del reporte
     doc.setFontSize(18);
-    doc.text(title, 14, 22);
-    
+    doc.setTextColor(40, 40, 40);
+    doc.text(companyName, pageWidth / 2, 18, { align: 'center' } as any);
+
+    doc.setFontSize(12);
+    doc.text(title, pageWidth / 2, 26, { align: 'center' } as any);
+
     // Fecha
     doc.setFontSize(10);
     doc.setTextColor(100);
-    doc.text(date, 14, 30);
-    
+    doc.text(date, 14, 34);
+
     // Datos de la tabla
     const headers = [
       'N° Factura',

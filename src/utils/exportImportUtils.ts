@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { settingsService } from '../services/database';
 
 export const exportToExcel = (data: any[], fileName: string) => {
   try {
@@ -138,7 +139,7 @@ export const exportToPdf = async (
   data: any[],
   columns: any[],
   fileName: string,
-  companyName: string = 'ContaBi',
+  companyName: string = 'ContaBi', // aquí suele llegar el título del reporte
   orientation: 'p' | 'l' = 'p',
 ) => {
   try {
@@ -161,20 +162,45 @@ export const exportToPdf = async (
     // Omitir el logo por ahora para simplificar
     console.log('Iniciando generación de PDF...');
     
-    // Configurar estilos para el título
+    // Resolver nombre de la empresa desde configuración
+    let resolvedCompanyName: string | undefined = undefined;
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info.name || (info as any).company_name)) {
+        resolvedCompanyName = info.name || (info as any).company_name;
+      }
+    } catch (error) {
+      // Si falla, usamos el valor recibido o el default
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para PDF:', error);
+    }
+
+    const mainTitle = resolvedCompanyName || 'ContaBi';
+    const reportTitle = companyName && companyName !== mainTitle ? companyName : '';
+
+    // Configurar estilos para títulos
     doc.setFontSize(18);
     doc.setTextColor(40, 40, 40);
     doc.setFont('helvetica', 'bold');
+
+    // Título principal: nombre de la empresa (centrado)
+    doc.text(mainTitle, pageWidth / 2, 18, { align: 'center' } as any);
+
+    // Subtítulo: nombre del reporte si se envió
+    if (reportTitle) {
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'normal');
+      doc.text(reportTitle, pageWidth / 2, 26, { align: 'center' } as any);
+      startY = 38;
+    } else {
+      startY = 30;
+    }
     
-    // Posicionar el título centrado
-    const title = companyName || 'Reporte de Cotizaciones';
-    doc.text(title, 14, 20);
-    
-    // Línea divisoria
+    // Línea divisoria debajo del encabezado
     doc.setDrawColor(200, 200, 200);
     doc.setLineWidth(0.5);
-    doc.line(14, 25, pageWidth - 14, 25);
-    
+    doc.line(14, startY - 5, pageWidth - 14, startY - 5);
+
     // Fecha de generación
     doc.setFontSize(10);
     doc.setTextColor(100);
@@ -186,15 +212,9 @@ export const exportToPdf = async (
       hour: '2-digit',
       minute: '2-digit'
     });
-    doc.text(`Generado el: ${date}`, 14, 35);
-    
-    startY = 45; // Posición inicial para la tabla
+    doc.text(`Generado el: ${date}`, 14, startY - 10);
 
     // Preparar datos para la tabla
-    console.log('Preparando datos para la tabla...');
-    console.log('Columnas:', columns);
-    console.log('Datos de ejemplo:', data[0]);
-    
     const tableData = data.map(item => 
       columns.map(col => {
         const value = item[col.key];
