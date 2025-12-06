@@ -4,7 +4,8 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, creditDebitNotesService, accountingSettingsService, journalEntriesService, chartAccountsService } from '../../../services/database';
+import { customersService, invoicesService, creditDebitNotesService, accountingSettingsService, journalEntriesService, chartAccountsService, settingsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface DebitNote {
   id: string;
@@ -163,15 +164,33 @@ export default function DebitNotesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const exportToPDF = () => {
+  const exportToPDF = async () => {
     const doc = new jsPDF();
-    
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[DebitNotes] Error obteniendo información de la empresa para PDF de notas de débito:', error);
+    }
+
+    doc.setFontSize(16);
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' } as any);
+
     doc.setFontSize(20);
-    doc.text('Reporte de Notas de Débito', 20, 20);
+    doc.text('Reporte de Notas de Débito', 20, 30);
     
     doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 40);
-    doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter)}`, 20, 50);
+    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 45);
+    doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter)}`, 20, 55);
     
     // Estadísticas (excluyendo canceladas)
     const activeNotes = filteredNotes.filter(n => n.status !== 'cancelled');
@@ -181,7 +200,7 @@ export default function DebitNotesPage() {
     const pendingNotes = activeNotes.filter(n => n.status === 'pending').length;
     
     doc.setFontSize(14);
-    doc.text('Resumen de Notas de Débito', 20, 70);
+    doc.text('Resumen de Notas de Débito', 20, 75);
     
     const summaryData = [
       ['Concepto', 'Valor'],
@@ -193,7 +212,7 @@ export default function DebitNotesPage() {
     ];
     
     (doc as any).autoTable({
-      startY: 80,
+      startY: 85,
       head: [summaryData[0]],
       body: summaryData.slice(1),
       theme: 'grid',
@@ -227,45 +246,66 @@ export default function DebitNotesPage() {
     doc.save(`notas-debito-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     const activeNotes = filteredNotes.filter(n => n.status !== 'cancelled');
-    const totalAmount = activeNotes.reduce((sum, note) => sum + note.amount, 0);
-    const totalApplied = activeNotes.reduce((sum, note) => sum + note.appliedAmount, 0);
-    const totalBalance = activeNotes.reduce((sum, note) => sum + note.balance, 0);
-    const pendingNotes = activeNotes.filter(n => n.status === 'pending').length;
-    
-    const csvContent = [
-      ['Reporte de Notas de Débito'],
-      [`Fecha de generación: ${new Date().toLocaleDateString()}`],
-      [`Estado: ${statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter)}`],
-      [''],
-      ['RESUMEN'],
-      ['Total Notas de Débito', `RD$ ${totalAmount.toLocaleString()}`],
-      ['Total Aplicado', `RD$ ${totalApplied.toLocaleString()}`],
-      ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
-      ['Notas Pendientes', pendingNotes.toString()],
-      ['Total de Notas', activeNotes.length.toString()],
-      [''],
-      ['DETALLE DE NOTAS DE DÉBITO'],
-      ['Nota', 'Cliente', 'Fecha', 'Monto', 'Aplicado', 'Saldo', 'Motivo', 'Concepto', 'Estado'],
-      ...activeNotes.map(note => [
-        note.noteNumber,
-        note.customerName,
-        note.date,
-        note.amount,
-        note.appliedAmount,
-        note.balance,
-        note.reason,
-        note.concept,
-        getStatusName(note.status)
-      ])
-    ].map(row => row.join(',')).join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `notas-debito-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+
+    if (!activeNotes.length) {
+      alert('No hay notas de débito para exportar con los filtros actuales.');
+      return;
+    }
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de notas de débito:', error);
+    }
+
+    const rows = activeNotes.map(note => ({
+      noteNumber: note.noteNumber,
+      customerName: note.customerName,
+      date: note.date,
+      amount: note.amount,
+      appliedAmount: note.appliedAmount,
+      balance: note.balance,
+      reason: note.reason,
+      concept: note.concept,
+      status: getStatusName(note.status),
+    }));
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const todayLocal = new Date().toLocaleDateString();
+
+    const headers = [
+      { key: 'noteNumber', title: 'Nota' },
+      { key: 'customerName', title: 'Cliente' },
+      { key: 'date', title: 'Fecha' },
+      { key: 'amount', title: 'Monto' },
+      { key: 'appliedAmount', title: 'Aplicado' },
+      { key: 'balance', title: 'Saldo' },
+      { key: 'reason', title: 'Motivo' },
+      { key: 'concept', title: 'Concepto' },
+      { key: 'status', title: 'Estado' },
+    ];
+
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      `notas-debito-${todayIso}`,
+      'Notas de Débito',
+      [16, 26, 14, 16, 16, 16, 26, 26, 16],
+      {
+        title: `Notas de Débito - ${todayLocal}`,
+        companyName,
+      },
+    );
   };
 
   const handleNewNote = () => {

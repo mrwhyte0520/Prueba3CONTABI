@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { invoicesService, salesRepsService, storesService } from '../../../services/database';
+import { invoicesService, salesRepsService, storesService, settingsService } from '../../../services/database';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface CommissionRow {
   salesRepId: string;
@@ -125,18 +126,36 @@ export default function CommissionReportPage() {
   const totalSalesAll = rows.reduce((sum, r) => sum + r.totalSales, 0);
   const totalCommissionAll = rows.reduce((sum, r) => sum + r.commissionAmount, 0);
 
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     if (!rows || rows.length === 0) return;
 
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para PDF de comisión:', error);
+    }
+
     const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    doc.setFontSize(16);
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' } as any);
 
     const title = 'Reporte de Comisión por Vendedor';
     doc.setFontSize(14);
-    doc.text(title, 14, 18);
+    doc.text(title, 14, 24);
 
     const periodText = `Período: ${fromDate} a ${toDate}`;
     doc.setFontSize(10);
-    doc.text(periodText, 14, 24);
+    doc.text(periodText, 14, 30);
 
     const headers = [
       ['Vendedor', 'Tiendas', '# Facturas', 'Ventas (RD$)', '% Comisión', 'Comisión (RD$)'],
@@ -155,12 +174,63 @@ export default function CommissionReportPage() {
     doc.autoTable({
       head: headers,
       body,
-      startY: 30,
+      startY: 38,
       styles: { fontSize: 8 },
     });
 
     const fileName = `reporte_comision_${fromDate}_a_${toDate}.pdf`;
     doc.save(fileName);
+  };
+
+  const handleExportExcel = async () => {
+    if (!rows || rows.length === 0) return;
+
+    const data = rows.map((row) => ({
+      salesRepName: row.salesRepName,
+      stores: row.storeNames.length > 0 ? row.storeNames.join(', ') : 'Sin tienda',
+      invoiceCount: row.invoiceCount,
+      totalSales: row.totalSales,
+      commissionRate: row.commissionRate,
+      commissionAmount: row.commissionAmount,
+    }));
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de comisión:', error);
+    }
+
+    const headers = [
+      { key: 'salesRepName', title: 'Vendedor' },
+      { key: 'stores', title: 'Tiendas' },
+      { key: 'invoiceCount', title: '# Facturas' },
+      { key: 'totalSales', title: 'Ventas (RD$)' },
+      { key: 'commissionRate', title: '% Comisión' },
+      { key: 'commissionAmount', title: 'Comisión (RD$)' },
+    ];
+
+    const fileBase = `reporte-comision-${fromDate}-a-${toDate}`;
+    const title = `Reporte de Comisión por Vendedor (${fromDate} a ${toDate})`;
+
+    exportToExcelWithHeaders(
+      data,
+      headers,
+      fileBase,
+      'Comisiones',
+      [26, 32, 14, 18, 16, 18],
+      {
+        title,
+        companyName,
+      },
+    );
   };
 
   return (
@@ -241,6 +311,15 @@ export default function CommissionReportPage() {
             >
               <i className="ri-file-pdf-line" />
               <span>Exportar a PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              disabled={rows.length === 0}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed text-sm font-medium flex items-center space-x-2"
+            >
+              <i className="ri-file-excel-line" />
+              <span>Exportar a Excel</span>
             </button>
           </div>
         </div>
