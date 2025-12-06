@@ -96,15 +96,43 @@ export const exportToExcelWithHeaders = (
 
     const ws = utils.aoa_to_sheet(aoa);
 
+    // Si hay título, unir y centrar la primera fila sobre todas las columnas
+    if (options?.title || options?.companyName) {
+      const totalColumns = headers.length || 1;
+      const merges: any[] = (ws as any)['!merges'] || [];
+      merges.push({
+        s: { r: 0, c: 0 },
+        e: { r: 0, c: totalColumns - 1 },
+      });
+      (ws as any)['!merges'] = merges;
+
+      const cell = (ws as any)['A1'];
+      if (cell) {
+        const existingStyle = (cell as any).s || {};
+        (cell as any).s = {
+          ...existingStyle,
+          alignment: {
+            ...(existingStyle.alignment || {}),
+            horizontal: 'center',
+            vertical: 'center',
+          },
+          font: {
+            ...(existingStyle.font || {}),
+            bold: true,
+          },
+        };
+      }
+    }
+
     if (columnWidths && columnWidths.length) {
-      ws['!cols'] = columnWidths.map(w => ({ wch: w }));
+      (ws as any)['!cols'] = columnWidths.map(w => ({ wch: w }));
     } else {
-      ws['!cols'] = headers.map(h => ({ wch: Math.max(12, h.title.length + 2) }));
+      (ws as any)['!cols'] = headers.map(h => ({ wch: Math.max(12, h.title.length + 2) }));
     }
 
     const wb = utils.book_new();
     utils.book_append_sheet(wb, ws, sheetName);
-    writeFile(wb, `${fileName}.xlsx`);
+    writeFile(wb, `${fileName}.xlsx`, { cellStyles: true as any });
   } catch (error) {
     console.error('Error al exportar a Excel con cabeceras:', error);
     throw error;

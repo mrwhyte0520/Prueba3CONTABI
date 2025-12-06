@@ -736,74 +736,75 @@ export default function FinancialStatementsPage() {
         console.error('No se pudo obtener el nombre de la empresa para el Balance:', err);
       }
 
-      const rows: any[] = [];
+      const titleRows: any[] = [];
+      const dataRows: any[] = [];
 
       // Encabezado (solo texto en la primera columna)
-      rows.push([companyName || '', '', '', null]);
-      rows.push(['ESTADO DE SITUACION FINANCIERA', '', '', null]);
-      rows.push([periodDates.asOfDateLabel.toUpperCase(), '', '', null]);
-      rows.push(['VALORES EN DOP', '', '', null]);
-      rows.push(['', '', '', null]);
+      titleRows.push([companyName || '', '', '', null]);
+      titleRows.push(['ESTADO DE SITUACION FINANCIERA', '', '', null]);
+      titleRows.push([periodDates.asOfDateLabel.toUpperCase(), '', '', null]);
+      titleRows.push(['VALORES EN DOP', '', '', null]);
+      titleRows.push(['', '', '', null]);
 
       // ACTIVOS
-      rows.push(['ACTIVOS', '', '', null]);
-      rows.push(['ACTIVOS CORRIENTES', '', '', null]);
-      addRowIfNotZero(rows, 'Efectivo en Caja y Bancos', efectivoCajaBancos);
-      addRowIfNotZero(rows, 'Cuentas por Cobrar Clientes', cxcClientes);
-      addRowIfNotZero(rows, 'Otras Cuentas por Cobrar', otrasCxc);
-      addRowIfNotZero(rows, 'Inventarios', inventarios);
-      addRowIfNotZero(rows, 'Gastos Pagados por Anticipado', gastosPagadosAnticipado);
-      addRowIfNotZero(rows, 'Anticipos sobre la Renta Pagados', anticiposISR);
-      rows.push(['  Total Activos Corrientes', '', '', totals.totalCurrentAssets]);
-      rows.push(['', '', '', null]);
+      dataRows.push(['ACTIVOS', '', '', null]);
+      dataRows.push(['ACTIVOS CORRIENTES', '', '', null]);
+      addRowIfNotZero(dataRows, 'Efectivo en Caja y Bancos', efectivoCajaBancos);
+      addRowIfNotZero(dataRows, 'Cuentas por Cobrar Clientes', cxcClientes);
+      addRowIfNotZero(dataRows, 'Otras Cuentas por Cobrar', otrasCxc);
+      addRowIfNotZero(dataRows, 'Inventarios', inventarios);
+      addRowIfNotZero(dataRows, 'Gastos Pagados por Anticipado', gastosPagadosAnticipado);
+      addRowIfNotZero(dataRows, 'Anticipos sobre la Renta Pagados', anticiposISR);
+      dataRows.push(['  Total Activos Corrientes', '', '', totals.totalCurrentAssets]);
+      dataRows.push(['', '', '', null]);
 
       // ACTIVOS FIJOS - solo agregar si tiene saldo
       if (Math.abs(activosFijos) >= 0.01) {
-        rows.push(['ACTIVOS FIJOS', '', '', null]);
-        addRowIfNotZero(rows, 'Activos Fijos', activosFijos);
-        rows.push(['', '', '', null]);
+        dataRows.push(['ACTIVOS FIJOS', '', '', null]);
+        addRowIfNotZero(dataRows, 'Activos Fijos', activosFijos);
+        dataRows.push(['', '', '', null]);
       }
 
       // OTROS ACTIVOS - solo agregar si tiene saldo
       if (Math.abs(totals.totalNonCurrentAssets) >= 0.01) {
-        rows.push(['OTROS ACTIVOS', '', '', null]);
-        addRowIfNotZero(rows, 'Inversiones en Otras Compañías', invAcciones);
-        addRowIfNotZero(rows, 'Certificados Bancarios y Títulos Financieros', invCertificados);
-        addRowIfNotZero(rows, 'Fianzas y Depósitos', fianzasDepositos);
-        addRowIfNotZero(rows, 'Licencias y Softwares', licenciasSoftware);
-        addRowIfNotZero(rows, 'Otros Activos', otrosActivos);
-        rows.push(['  Total Otros Activos', '', '', totals.totalNonCurrentAssets]);
-        rows.push(['', '', '', null]);
+        dataRows.push(['OTROS ACTIVOS', '', '', null]);
+        addRowIfNotZero(dataRows, 'Inversiones en Otras Compañías', invAcciones);
+        addRowIfNotZero(dataRows, 'Certificados Bancarios y Títulos Financieros', invCertificados);
+        addRowIfNotZero(dataRows, 'Fianzas y Depósitos', fianzasDepositos);
+        addRowIfNotZero(dataRows, 'Licencias y Softwares', licenciasSoftware);
+        addRowIfNotZero(dataRows, 'Otros Activos', otrosActivos);
+        dataRows.push(['  Total Otros Activos', '', '', totals.totalNonCurrentAssets]);
+        dataRows.push(['', '', '', null]);
       }
 
-      rows.push(['TOTAL ACTIVOS', '', '', totals.totalAssets]);
-      rows.push(['', '', '', null]);
+      dataRows.push(['TOTAL ACTIVOS', '', '', totals.totalAssets]);
+      dataRows.push(['', '', '', null]);
 
       // PASIVOS Y PATRIMONIO
-      rows.push(['PASIVO Y PATRIMONIO DE LOS SOCIOS', '', '', null]);
+      dataRows.push(['PASIVO Y PATRIMONIO DE LOS SOCIOS', '', '', null]);
       // PASIVOS CIRCULANTES - solo agregar si tiene saldo
       if (Math.abs(pasivosCorrientes) >= 0.01) {
-        rows.push(['PASIVOS CIRCULANTES', '', '', null]);
-        addRowIfNotZero(rows, 'Cuentas por Pagar Proveedores', cppProveedores);
-        addRowIfNotZero(rows, 'Acumulaciones y Provisiones por Pagar', acumulacionesPorPagar);
-        addRowIfNotZero(rows, 'Préstamos por Pagar a Corto Plazo', prestamosCortoPlazo);
-        addRowIfNotZero(rows, 'Otras Cuentas por Pagar', otrasCxPCorrientes);
-        rows.push(['  Total Pasivos Corrientes', '', '', pasivosCorrientes]);
-        rows.push(['', '', '', null]);
+        dataRows.push(['PASIVOS CIRCULANTES', '', '', null]);
+        addRowIfNotZero(dataRows, 'Cuentas por Pagar Proveedores', cppProveedores);
+        addRowIfNotZero(dataRows, 'Acumulaciones y Provisiones por Pagar', acumulacionesPorPagar);
+        addRowIfNotZero(dataRows, 'Préstamos por Pagar a Corto Plazo', prestamosCortoPlazo);
+        addRowIfNotZero(dataRows, 'Otras Cuentas por Pagar', otrasCxPCorrientes);
+        dataRows.push(['  Total Pasivos Corrientes', '', '', pasivosCorrientes]);
+        dataRows.push(['', '', '', null]);
       }
 
       // PASIVOS A LARGO PLAZO - solo agregar si tiene saldo
       if (Math.abs(pasivosLargoPlazo) >= 0.01) {
-        rows.push(['PASIVOS A LARGO PLAZO', '', '', null]);
-        addRowIfNotZero(rows, 'Pasivos a Largo Plazo', pasivosLargoPlazo);
-        rows.push(['  Total Pasivos a Largo Plazo', '', '', pasivosLargoPlazo]);
-        rows.push(['', '', '', null]);
+        dataRows.push(['PASIVOS A LARGO PLAZO', '', '', null]);
+        addRowIfNotZero(dataRows, 'Pasivos a Largo Plazo', pasivosLargoPlazo);
+        dataRows.push(['  Total Pasivos a Largo Plazo', '', '', pasivosLargoPlazo]);
+        dataRows.push(['', '', '', null]);
       }
 
       // TOTAL PASIVOS - solo agregar si tiene saldo
       if (Math.abs(totals.totalLiabilities) >= 0.01) {
-        rows.push(['TOTAL PASIVOS', '', '', totals.totalLiabilities]);
-        rows.push(['', '', '', null]);
+        dataRows.push(['TOTAL PASIVOS', '', '', totals.totalLiabilities]);
+        dataRows.push(['', '', '', null]);
       }
 
       // PATRIMONIO - solo agregar si tiene saldo
@@ -811,20 +812,20 @@ export default function FinancialStatementsPage() {
         Math.abs(patrimonioTotal) >= 0.01 ||
         Math.abs(beneficiosPeriodoActual) >= 0.01
       ) {
-        rows.push(['PATRIMONIO', '', '', null]);
-        addRowIfNotZero(rows, 'Capital Suscrito y Pagado', capitalSuscrito);
-        addRowIfNotZero(rows, 'Reservas (incluye Reserva Legal)', reservas);
-        addRowIfNotZero(rows, 'Beneficios o Pérdidas Acumuladas', resultadosAcumulados);
-        addRowIfNotZero(rows, 'Beneficios del período actual', beneficiosPeriodoActual);
-        rows.push(['  Total Patrimonio', '', '', patrimonioConResultado]);
-        rows.push(['', '', '', null]);
+        dataRows.push(['PATRIMONIO', '', '', null]);
+        addRowIfNotZero(dataRows, 'Capital Suscrito y Pagado', capitalSuscrito);
+        addRowIfNotZero(dataRows, 'Reservas (incluye Reserva Legal)', reservas);
+        addRowIfNotZero(dataRows, 'Beneficios o Pérdidas Acumuladas', resultadosAcumulados);
+        addRowIfNotZero(dataRows, 'Beneficios del período actual', beneficiosPeriodoActual);
+        dataRows.push(['  Total Patrimonio', '', '', patrimonioConResultado]);
+        dataRows.push(['', '', '', null]);
       }
 
-      rows.push(['TOTAL PASIVOS Y PATRIMONIO', '', '', totalLiabilitiesAndEquity]);
+      dataRows.push(['TOTAL PASIVOS Y PATRIMONIO', '', '', totalLiabilitiesAndEquity]);
 
       // Construir archivo Excel usando ExcelJS para poder centrar el título
       const headerRow = ['', '', '', 'Monto'];
-      const allRows = [headerRow, ...rows];
+      const allRows = [...titleRows, headerRow, ...dataRows];
 
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet('Balance');
@@ -845,7 +846,7 @@ export default function FinancialStatementsPage() {
       // Centrar y negrita para las primeras filas de título (empresa, título, fecha, moneda)
       const titleRowCount = 4;
       for (let i = 0; i < titleRowCount; i++) {
-        const excelRowIndex = 2 + i; // fila 1 es la cabecera de columnas
+        const excelRowIndex = 1 + i;
         ws.mergeCells(excelRowIndex, 1, excelRowIndex, 4);
         const cell = ws.getRow(excelRowIndex).getCell(1);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -908,7 +909,7 @@ export default function FinancialStatementsPage() {
         ['', '', ''],
       ];
 
-      const allRows = [headerRow, ...titleRows, ...dataRows];
+      const allRows = [...titleRows, headerRow, ...dataRows];
 
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet('Resultados');
@@ -924,7 +925,7 @@ export default function FinancialStatementsPage() {
 
       const titleRowCount = 3;
       for (let i = 0; i < titleRowCount; i++) {
-        const excelRowIndex = 2 + i;
+        const excelRowIndex = 1 + i;
         ws.mergeCells(excelRowIndex, 1, excelRowIndex, 3);
         const cell = ws.getRow(excelRowIndex).getCell(1);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -979,7 +980,7 @@ export default function FinancialStatementsPage() {
         ['', '', ''],
       ];
 
-      const allRows = [headerRow, ...titleRows, ...dataRows];
+      const allRows = [...titleRows, headerRow, ...dataRows];
 
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet('Gastos');
@@ -995,7 +996,7 @@ export default function FinancialStatementsPage() {
 
       const titleRowCount = 3;
       for (let i = 0; i < titleRowCount; i++) {
-        const excelRowIndex = 2 + i;
+        const excelRowIndex = 1 + i;
         ws.mergeCells(excelRowIndex, 1, excelRowIndex, 3);
         const cell = ws.getRow(excelRowIndex).getCell(1);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1048,7 +1049,7 @@ export default function FinancialStatementsPage() {
         ['', ''],
       ];
 
-      const allRows = [headerRow, ...titleRows, ...dataRows];
+      const allRows = [...titleRows, headerRow, ...dataRows];
 
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet('Costos de Ventas');
@@ -1063,7 +1064,7 @@ export default function FinancialStatementsPage() {
 
       const titleRowCount = 3;
       for (let i = 0; i < titleRowCount; i++) {
-        const excelRowIndex = 2 + i;
+        const excelRowIndex = 1 + i;
         ws.mergeCells(excelRowIndex, 1, excelRowIndex, 2);
         const cell = ws.getRow(excelRowIndex).getCell(1);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -1107,7 +1108,7 @@ export default function FinancialStatementsPage() {
         ['', '', ''],
       ];
 
-      const allRows = [headerRow, ...titleRows, ...dataRows];
+      const allRows = [...titleRows, headerRow, ...dataRows];
 
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet('Flujo');
@@ -1123,7 +1124,7 @@ export default function FinancialStatementsPage() {
 
       const titleRowCount = 3;
       for (let i = 0; i < titleRowCount; i++) {
-        const excelRowIndex = 2 + i;
+        const excelRowIndex = 1 + i;
         ws.mergeCells(excelRowIndex, 1, excelRowIndex, 3);
         const cell = ws.getRow(excelRowIndex).getCell(1);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };

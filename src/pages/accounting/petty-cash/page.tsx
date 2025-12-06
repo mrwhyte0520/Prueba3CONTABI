@@ -330,6 +330,205 @@ const PettyCashPage: React.FC = () => {
     }, 0);
   };
 
+  const categoryOptions: { value: string; label: string }[] = (categories || [])
+    .map((cat: any) => ({
+      value: String(cat.name || ''),
+      label: String(cat.name || ''),
+    }))
+    .filter((opt) => opt.value.trim().length > 0);
+
+  const reimbursementReceiptOptions: string[] = Array.from(
+    new Set(
+      (expenses || [])
+        .map((e) => e.receipt)
+        .filter((r): r is string => typeof r === 'string' && r.trim().length > 0),
+    ),
+  );
+
+  const handleApproveExpense = async (expenseId: string) => {
+    if (!user) return;
+    const expense = expenses.find((e) => e.id === expenseId);
+    if (!expense) return;
+
+    if (!window.confirm('¿Desea aprobar este desembolso de caja chica?')) return;
+
+    try {
+      const approver =
+        (user as any)?.full_name ||
+        (user as any)?.email ||
+        String((user as any)?.id || '');
+
+      const updated = await pettyCashService.approveExpense(user.id, expenseId, approver || null);
+
+      setExpenses((prev) =>
+        prev.map((e) =>
+          e.id === expenseId
+            ? {
+                ...e,
+                status: 'approved',
+                approvedBy: updated.approved_by || approver || e.approvedBy,
+              }
+            : e,
+        ),
+      );
+
+      // Refrescar fondos para reflejar el nuevo saldo
+      const fundsData = await pettyCashService.getFunds(user.id);
+      const mappedFunds: PettyCashFund[] = (fundsData || []).map((f: any) => ({
+        id: f.id,
+        name: f.name,
+        location: f.location || '',
+        custodian: f.custodian || '',
+        initialAmount: Number(f.initial_amount) || 0,
+        currentBalance: Number(f.current_balance) || 0,
+        status: (f.status as 'active' | 'inactive') || 'active',
+        createdAt: f.created_at ? String(f.created_at).split('T')[0] : '',
+        pettyCashAccountId: f.petty_cash_account_id || undefined,
+        bankAccountId: f.bank_account_id || undefined,
+      }));
+      setFunds(mappedFunds);
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error approving petty cash expense:', error);
+      alert('Error al aprobar el desembolso de caja chica');
+    }
+  };
+
+  const handleRejectExpense = async (expenseId: string) => {
+    if (!user) return;
+    const expense = expenses.find((e) => e.id === expenseId);
+    if (!expense) return;
+
+    if (!window.confirm('¿Desea rechazar este desembolso de caja chica?')) return;
+
+    try {
+      const approver =
+        (user as any)?.full_name ||
+        (user as any)?.email ||
+        String((user as any)?.id || '');
+
+      const updated = await pettyCashService.rejectExpense(user.id, expenseId, approver || null);
+
+      setExpenses((prev) =>
+        prev.map((e) =>
+          e.id === expenseId
+            ? {
+                ...e,
+                status: 'rejected',
+                approvedBy: updated.approved_by || approver || e.approvedBy,
+              }
+            : e,
+        ),
+      );
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error rejecting petty cash expense:', error);
+      alert('Error al rechazar el desembolso de caja chica');
+    }
+  };
+
+  const handleCreateExpense = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!user) return;
+
+    const formData = new FormData(event.currentTarget);
+    const fundId = String(formData.get('fundId') || '').trim();
+    const date =
+      String(formData.get('date') || '').trim() || new Date().toISOString().split('T')[0];
+    const description = String(formData.get('description') || '').trim();
+    const category = String(formData.get('category') || '').trim();
+    const amount = parseFloat(String(formData.get('amount') || '0')) || 0;
+    const receipt = String(formData.get('receipt') || '').trim();
+    const ncf = String(formData.get('ncf') || '').trim();
+    const supplierId = String(formData.get('supplierId') || '').trim();
+    const itbisRaw = String(formData.get('itbis') || '').trim();
+    const expenseAccountId = String(formData.get('expenseAccountId') || '').trim();
+
+    if (!fundId) {
+      alert('Debe seleccionar un fondo de caja chica.');
+      return;
+    }
+    if (!description || !category || !receipt || !expenseAccountId) {
+      alert('Debe completar todos los campos requeridos del desembolso.');
+      return;
+    }
+    if (ncf && !supplierId) {
+      alert('Si indica un NCF debe seleccionar un proveedor.');
+      return;
+    }
+
+    let supplierTaxId: string | null = null;
+    let supplierName: string | null = null;
+    if (supplierId) {
+      const supplierRow = suppliers.find((s: any) => s.id === supplierId);
+      if (supplierRow) {
+        supplierTaxId = supplierRow.tax_id || null;
+        supplierName = (supplierRow.name || supplierRow.legal_name || '') || null;
+      }
+    }
+
+    const itbis = itbisRaw.length > 0 ? parseFloat(itbisRaw) || 0 : null;
+
+    try {
+      const created = await pettyCashService.createExpense(user.id, {
+        fund_id: fundId,
+        expense_date: date,
+        description,
+        category,
+        amount,
+        receipt_number: receipt,
+        status: 'pending',
+        expense_account_id: expenseAccountId,
+        ncf: ncf || null,
+        itbis,
+        supplier_tax_id: supplierTaxId,
+        supplier_name: supplierName,
+      });
+
+      const mapped: PettyCashExpense = {
+        id: created.id,
+        fundId: created.fund_id,
+        date: created.expense_date,
+        description: created.description,
+        category: created.category || '',
+        amount: Number(created.amount) || amount,
+        receipt: created.receipt_number || receipt,
+        approvedBy: created.approved_by || '',
+        status: (created.status as 'pending' | 'approved' | 'rejected') || 'pending',
+        expenseAccountId: created.expense_account_id || expenseAccountId,
+        ncf: created.ncf || ncf || undefined,
+        itbis: created.itbis != null ? Number(created.itbis) : itbis,
+        supplierTaxId: created.supplier_tax_id || supplierTaxId || undefined,
+        supplierName: created.supplier_name || supplierName || undefined,
+      };
+
+      setExpenses((prev) => [mapped, ...prev]);
+
+      // Recargar fondos para reflejar el nuevo saldo si la lógica de backend los actualiza
+      const fundsData = await pettyCashService.getFunds(user.id);
+      const mappedFunds: PettyCashFund[] = (fundsData || []).map((f: any) => ({
+        id: f.id,
+        name: f.name,
+        location: f.location || '',
+        custodian: f.custodian || '',
+        initialAmount: Number(f.initial_amount) || 0,
+        currentBalance: Number(f.current_balance) || 0,
+        status: (f.status as 'active' | 'inactive') || 'active',
+        createdAt: f.created_at ? String(f.created_at).split('T')[0] : '',
+        pettyCashAccountId: f.petty_cash_account_id || undefined,
+        bankAccountId: f.bank_account_id || undefined,
+      }));
+      setFunds(mappedFunds);
+
+      setShowExpenseModal(false);
+      setSelectedSupplierTaxId('');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error creating petty cash expense:', error);
+      alert('Error al registrar el desembolso de caja chica');
+    }
+  };
+
   const downloadExcel = () => {
     try {
       const today = new Date().toISOString().split('T')[0];
@@ -350,7 +549,7 @@ const PettyCashPage: React.FC = () => {
           { key: 'createdAt', title: 'Creado' },
         ];
 
-        const rows = funds.map(f => ({
+        const rows = funds.map((f) => ({
           name: f.name,
           location: f.location,
           custodian: f.custodian,
@@ -358,9 +557,16 @@ const PettyCashPage: React.FC = () => {
           totalReplenishments: totalReimbursementsByFund[f.id] || 0,
           fundTotal: (f.initialAmount || 0) + (totalReimbursementsByFund[f.id] || 0),
           totalExpenses: totalExpensesByFund[f.id] || 0,
-          theoreticalCash: ((f.initialAmount || 0) + (totalReimbursementsByFund[f.id] || 0)) - (totalExpensesByFund[f.id] || 0),
+          theoreticalCash:
+            (f.initialAmount || 0) +
+            (totalReimbursementsByFund[f.id] || 0) -
+            (totalExpensesByFund[f.id] || 0),
           currentBalance: f.currentBalance || 0,
-          difference: (f.currentBalance || 0) - (((f.initialAmount || 0) + (totalReimbursementsByFund[f.id] || 0)) - (totalExpensesByFund[f.id] || 0)),
+          difference:
+            (f.currentBalance || 0) -
+            ((f.initialAmount || 0) +
+              (totalReimbursementsByFund[f.id] || 0) -
+              (totalExpensesByFund[f.id] || 0)),
           status: f.status === 'active' ? 'Activo' : 'Inactivo',
           createdAt: f.createdAt,
         }));
@@ -370,7 +576,8 @@ const PettyCashPage: React.FC = () => {
           headers,
           `caja_chica_fondos_${today}`,
           'Fondos',
-          [24, 18, 18, 16, 18, 18, 18, 16, 12, 14]
+          [24, 18, 18, 16, 18, 18, 18, 16, 12, 14],
+          { title: 'Fondos de Caja Chica' },
         );
         return;
       }
@@ -388,18 +595,19 @@ const PettyCashPage: React.FC = () => {
           { key: 'itbis', title: 'ITBIS' },
         ];
 
-        const fundNameById = new Map(funds.map(f => [f.id, f.name] as const));
-        const rows = expenses.map(e => ({
+        const fundNameById = new Map(funds.map((f) => [f.id, f.name] as const));
+        const rows = expenses.map((e) => ({
           date: e.date,
           fund: fundNameById.get(e.fundId) || e.fundId || '',
           description: e.description,
           category: e.category,
           amount: e.amount || 0,
-          status: e.status === 'approved'
-            ? 'Aprobado'
-            : e.status === 'pending'
-            ? 'Pendiente'
-            : 'Rechazado',
+          status:
+            e.status === 'approved'
+              ? 'Aprobado'
+              : e.status === 'pending'
+              ? 'Pendiente'
+              : 'Rechazado',
           approvedBy: e.approvedBy || 'N/A',
           ncf: e.ncf || '',
           itbis: e.itbis || 0,
@@ -410,7 +618,8 @@ const PettyCashPage: React.FC = () => {
           headers,
           `caja_chica_gastos_${today}`,
           'Gastos',
-          [12, 22, 40, 18, 14, 12, 18, 12, 12]
+          [12, 22, 40, 18, 14, 12, 18, 12, 12],
+          { title: 'Gastos de Caja Chica' },
         );
         return;
       }
@@ -423,8 +632,8 @@ const PettyCashPage: React.FC = () => {
           { key: 'description', title: 'Descripción' },
         ];
 
-        const fundNameById = new Map(funds.map(f => [f.id, f.name] as const));
-        const rows = reimbursements.map(r => ({
+        const fundNameById = new Map(funds.map((f) => [f.id, f.name] as const));
+        const rows = reimbursements.map((r) => ({
           date: r.date,
           fund: fundNameById.get(r.fundId) || r.fundId || '',
           amount: r.amount || 0,
@@ -436,14 +645,45 @@ const PettyCashPage: React.FC = () => {
           headers,
           `caja_chica_reposiciones_${today}`,
           'Reposiciones',
-          [12, 22, 14, 40]
+          [12, 22, 14, 40],
+          { title: 'Reposiciones de Caja Chica' },
         );
         return;
       }
 
-      // Reembolsos u otras pestañas (si se agregan)
+      if (activeTab === 'categories') {
+        const headers = [
+          { key: 'name', title: 'Nombre' },
+          { key: 'description', title: 'Descripción' },
+          { key: 'status', title: 'Estado' },
+        ];
+
+        const rows = (categories || []).map((cat: any) => ({
+          name: cat.name,
+          description: cat.description || '',
+          status: cat.is_active ? 'Activa' : 'Inactiva',
+        }));
+
+        if (!rows.length) {
+          alert('No hay categorías configuradas para exportar.');
+          return;
+        }
+
+        exportToExcelWithHeaders(
+          rows,
+          headers,
+          `caja_chica_categorias_${today}`,
+          'Categorías',
+          [24, 40, 14],
+          { title: 'Categorías de Caja Chica' },
+        );
+        return;
+      }
+
+      // Otras pestañas sin exportación definida
       alert('No hay datos para exportar en esta pestaña.');
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error('Error downloading Excel:', error);
       alert('Error al descargar el archivo');
     }
