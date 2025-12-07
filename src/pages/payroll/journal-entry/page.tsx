@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
-import { chartAccountsService, journalEntriesService } from '../../../services/database';
+import { chartAccountsService, journalEntriesService, resolveTenantId } from '../../../services/database';
 
 interface PayrollPeriod {
   id: string;
@@ -44,11 +44,18 @@ export default function PayrollJournalEntryPage() {
   const loadPeriods = async () => {
     if (!user) return;
     try {
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        setPeriods([]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('payroll_periods')
         .select('*')
-        .eq('user_id', user.id)
-        .in('status', ['cerrado', 'pagado'])
+        .eq('user_id', tenantId)
+        // Soportar tanto estados en inglés como en español por compatibilidad
+        .in('status', ['closed', 'paid', 'cerrado', 'pagado'])
         .order('start_date', { ascending: false });
       
       if (error) throw error;

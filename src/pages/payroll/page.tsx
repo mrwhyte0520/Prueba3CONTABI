@@ -1,8 +1,9 @@
 
-import { useState, useEffect } from 'react';
-import { useAuth } from '../../hooks/useAuth';
-import { departmentsService, positionsService, employeesService, payrollService, taxService, settingsService } from '../../services/database';
-import { exportToExcelWithHeaders } from '../../utils/exportImportUtils';
+ import { useState, useEffect } from 'react';
+ import { useAuth } from '../../hooks/useAuth';
+ import { supabase } from '../../lib/supabase';
+ import { departmentsService, positionsService, employeesService, payrollService, taxService, settingsService, resolveTenantId } from '../../services/database';
+ import { exportToExcelWithHeaders } from '../../utils/exportImportUtils';
 
 interface Employee {
   id: string;
@@ -122,18 +123,30 @@ export default function PayrollPage() {
         emergency_phone: e.emergency_phone || undefined,
       }));
 
-      const mappedPeriods: PayrollPeriod[] = (periods || []).map((p: any) => ({
-        id: p.id,
-        period_name: p.period_name || p.name || '',
-        start_date: p.start_date || new Date().toISOString().slice(0, 10),
-        end_date: p.end_date || new Date().toISOString().slice(0, 10),
-        pay_date: p.pay_date || new Date().toISOString().slice(0, 10),
-        status: (p.status as 'open' | 'processing' | 'closed' | 'paid') || 'open',
-        total_gross: Number(p.total_gross) || 0,
-        total_deductions: Number(p.total_deductions) || 0,
-        total_net: Number(p.total_net) || 0,
-        employee_count: Number(p.employee_count) || 0,
-      }));
+      const mappedPeriods: PayrollPeriod[] = (periods || []).map((p: any) => {
+        const rawStatus = (p.status ?? 'open') as string;
+        const normalized: PayrollPeriod['status'] = (() => {
+          const value = String(rawStatus).toLowerCase();
+          if (value === 'open' || value === 'abierto' || value === 'draft') return 'open';
+          if (value === 'processing' || value === 'procesando' || value === 'calculated') return 'processing';
+          if (value === 'closed' || value === 'cerrado') return 'closed';
+          if (value === 'paid' || value === 'pagado') return 'paid';
+          return 'open';
+        })();
+
+        return {
+          id: p.id,
+          period_name: p.period_name || p.name || '',
+          start_date: p.start_date || new Date().toISOString().slice(0, 10),
+          end_date: p.end_date || new Date().toISOString().slice(0, 10),
+          pay_date: p.pay_date || new Date().toISOString().slice(0, 10),
+          status: normalized,
+          total_gross: Number(p.total_gross) || 0,
+          total_deductions: Number(p.total_deductions) || 0,
+          total_net: Number(p.total_net) || 0,
+          employee_count: Number(p.employee_count) || 0,
+        };
+      });
 
       setEmployees(mappedEmployees);
       setDepartments(depts || []);
@@ -321,6 +334,7 @@ export default function PayrollPage() {
           start_date: formData.start_date || new Date().toISOString().slice(0, 10),
           end_date: formData.end_date || new Date().toISOString().slice(0, 10),
           pay_date: formData.pay_date || new Date().toISOString().slice(0, 10),
+          // Guardamos en la base en inglés para cumplir con el constraint de status
           status: 'open',
           total_gross: 0,
           total_deductions: 0,
@@ -335,7 +349,7 @@ export default function PayrollPage() {
           start_date: created.start_date || payload.start_date,
           end_date: created.end_date || payload.end_date,
           pay_date: created.pay_date || payload.pay_date,
-          status: (created.status as 'open' | 'processing' | 'closed' | 'paid') || 'open',
+          status: 'open',
           total_gross: Number(created.total_gross) || 0,
           total_deductions: Number(created.total_deductions) || 0,
           total_net: Number(created.total_net) || 0,
@@ -499,7 +513,50 @@ export default function PayrollPage() {
     if (!confirm('¿Está seguro de que desea procesar esta nómina?')) return;
 
     try {
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        alert('No se pudo determinar la empresa del usuario.');
+        return;
+      }
+
       const activeEmployees = employees.filter(emp => emp.status === 'active');
+
+      if (activeEmployees.length === 0) {
+        alert('No hay empleados activos para procesar.');
+        return;
+      }
+
+      const budgetViolations: { departmentName: string; payroll: number; budget: number }[] = [];
+
+      departments.forEach(dept => {
+        const deptEmployees = activeEmployees.filter(emp => emp.department_id === dept.id);
+        if (deptEmployees.length === 0) return;
+
+        const deptPayroll = deptEmployees.reduce(
+          (sum, emp) => sum + (Number(emp.salary) || 0),
+          0
+        );
+        const budget = Number((dept as any).budget) || 0;
+
+        if (budget > 0 && deptPayroll > budget) {
+          budgetViolations.push({
+            departmentName: dept.name,
+            payroll: deptPayroll,
+            budget,
+          });
+        }
+      });
+
+      if (budgetViolations.length > 0) {
+        const details = budgetViolations
+          .map(v => `${v.departmentName}: nómina RD$ ${v.payroll.toLocaleString('es-DO')} vs presupuesto RD$ ${v.budget.toLocaleString('es-DO')}`)
+          .join('\n');
+        alert(
+          `La nómina calculada supera el presupuesto de uno o más departamentos:\n\n${details}\n\nAjuste salarios, asignaciones o presupuestos antes de procesar.`
+        );
+        return;
+      }
+
       const entries = activeEmployees.map(emp => {
         const gross = Number(emp.salary) || 0;
 
@@ -524,7 +581,7 @@ export default function PayrollPage() {
         const deductions = baseSalary * (employeeRate / 100);
         const net = gross - deductions;
         return {
-          user_id: user.id,
+          user_id: tenantId,
           payroll_period_id: periodId,
           employee_id: emp.id,
           gross_salary: gross,
@@ -548,6 +605,19 @@ export default function PayrollPage() {
       const total_deductions = entries.reduce((sum, e) => sum + (e.deductions || 0), 0);
       const total_net = entries.reduce((sum, e) => sum + (e.net_salary || 0), 0);
       const employee_count = activeEmployees.length;
+
+      // Actualizar el período en la base de datos para que al recargar mantenga el estado
+      await supabase
+        .from('payroll_periods')
+        .update({
+          status: 'processing',
+          total_gross,
+          total_deductions,
+          total_net,
+          employee_count,
+        })
+        .eq('id', periodId)
+        .eq('user_id', tenantId);
 
       setPayrollPeriods(prev => prev.map(period => 
         period.id === periodId

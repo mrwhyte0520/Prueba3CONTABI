@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
+import { resolveTenantId } from '../../../services/database';
 
 interface OtherDeduction {
   id: string;
@@ -45,16 +46,23 @@ export default function OtherDeductionsPage() {
   const loadData = async () => {
     if (!user) return;
     try {
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        setDeductions([]);
+        setEmployees([]);
+        return;
+      }
+
       const [deductionsData, employeesData] = await Promise.all([
         supabase
           .from('other_deductions')
           .select('*')
-          .eq('user_id', user.id)
+          .eq('user_id', tenantId)
           .order('created_at', { ascending: false }),
         supabase
           .from('employees')
           .select('id, first_name, last_name, employee_code')
-          .eq('user_id', user.id)
+          .eq('user_id', tenantId)
           .eq('status', 'active')
       ]);
 
@@ -70,9 +78,15 @@ export default function OtherDeductionsPage() {
     if (!user) return;
 
     try {
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        alert('No se pudo determinar la empresa del usuario.');
+        return;
+      }
+
       const deductionData = {
         ...formData,
-        user_id: user.id,
+        user_id: tenantId,
         is_one_time: true,
         status: 'pendiente'
       };

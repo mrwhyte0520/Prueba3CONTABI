@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
-import { payrollService, employeesService, taxService } from '../../../services/database';
+import { payrollService, employeesService, taxService, resolveTenantId, departmentsService } from '../../../services/database';
 
 interface PayrollPeriod {
   id: string;
@@ -11,7 +11,7 @@ interface PayrollPeriod {
   start_date: string;
   end_date: string;
   pay_date: string;
-  status: 'abierto' | 'procesando' | 'cerrado' | 'pagado';
+  status: 'open' | 'processing' | 'closed' | 'paid';
   total_gross: number;
   total_deductions: number;
   total_net: number;
@@ -25,6 +25,15 @@ export default function PayrollProcessPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<PayrollPeriod | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const normalizeStatus = (status: string): PayrollPeriod['status'] => {
+    const value = (status || '').toString().toLowerCase();
+    if (value === 'open' || value === 'abierto' || value === 'draft') return 'open';
+    if (value === 'processing' || value === 'procesando' || value === 'calculated') return 'processing';
+    if (value === 'closed' || value === 'cerrado') return 'closed';
+    if (value === 'paid' || value === 'pagado') return 'paid';
+    return 'open';
+  };
+
   useEffect(() => {
     loadPeriods();
   }, [user]);
@@ -33,14 +42,26 @@ export default function PayrollProcessPage() {
     if (!user) return;
     setLoading(true);
     try {
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        setPeriods([]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('payroll_periods')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('start_date', { ascending: false });
       
       if (error) throw error;
-      if (data) setPeriods(data);
+      if (data) {
+        const mapped = (data as any[]).map((p) => ({
+          ...p,
+          status: normalizeStatus(p.status as string),
+        }));
+        setPeriods(mapped as PayrollPeriod[]);
+      }
     } catch (error) {
       console.error('Error loading periods:', error);
     } finally {
@@ -52,8 +73,15 @@ export default function PayrollProcessPage() {
     if (!confirm('¿Desea procesar esta nómina? Esta acción calculará los salarios de todos los empleados activos incluyendo deducciones y ausencias.')) return;
     
     setLoading(true);
+    let tenantId: string | null = null;
     try {
       if (!user) return;
+
+      tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        alert('No se pudo determinar la empresa del usuario.');
+        return;
+      }
 
       // Obtener el período
       const period = periods.find(p => p.id === periodId);
@@ -62,11 +90,14 @@ export default function PayrollProcessPage() {
         return;
       }
 
-      // Actualizar estado a procesando
-      await supabase
+      // Actualizar estado a processing en la base de datos
+      const { error: statusError } = await supabase
         .from('payroll_periods')
-        .update({ status: 'procesando' })
-        .eq('id', periodId);
+        .update({ status: 'processing' })
+        .eq('id', periodId)
+        .eq('user_id', tenantId);
+
+      if (statusError) throw statusError;
 
       // Obtener empleados activos
       const employees = await employeesService.getAll(user.id);
@@ -75,6 +106,37 @@ export default function PayrollProcessPage() {
       if (activeEmployees.length === 0) {
         alert('No hay empleados activos para procesar');
         return;
+      }
+
+      const departments = await departmentsService.getAll(user.id);
+      const budgetViolations: { departmentName: string; payroll: number; budget: number }[] = [];
+
+      (departments || []).forEach((dept: any) => {
+        const deptEmployees = activeEmployees.filter((e: any) => e.department_id === dept.id);
+        if (deptEmployees.length === 0) return;
+
+        const deptPayroll = deptEmployees.reduce(
+          (sum: number, e: any) => sum + (Number(e.salary) || 0),
+          0
+        );
+        const budget = Number(dept.budget) || 0;
+
+        if (budget > 0 && deptPayroll > budget) {
+          budgetViolations.push({
+            departmentName: dept.name || 'Sin nombre',
+            payroll: deptPayroll,
+            budget,
+          });
+        }
+      });
+
+      if (budgetViolations.length > 0) {
+        const details = budgetViolations
+          .map(v => `${v.departmentName}: nómina RD$ ${v.payroll.toLocaleString('es-DO')} vs presupuesto RD$ ${v.budget.toLocaleString('es-DO')}`)
+          .join('\n');
+        throw new Error(
+          `La nómina calculada supera el presupuesto de uno o más departamentos:\n\n${details}\n\nAjuste salarios o presupuestos antes de procesar.`
+        );
       }
 
       // Obtener configuración TSS
@@ -111,17 +173,20 @@ export default function PayrollProcessPage() {
       const totalDeductions = payrollEntries.reduce((sum, e) => sum + e.deductions, 0);
       const totalNet = payrollEntries.reduce((sum, e) => sum + e.net_salary, 0);
 
-      // Actualizar período con totales
-      await supabase
+      // Actualizar período con totales y estado processing
+      const { error: totalsError } = await supabase
         .from('payroll_periods')
         .update({
-          status: 'procesando',
+          status: 'processing',
           total_gross: totalGross,
           total_deductions: totalDeductions,
           total_net: totalNet,
           employee_count: activeEmployees.length
         })
-        .eq('id', periodId);
+        .eq('id', periodId)
+        .eq('user_id', tenantId);
+
+      if (totalsError) throw totalsError;
       
       alert(`Nómina procesada exitosamente:\n\n${activeEmployees.length} empleados\nSalario bruto total: RD$ ${totalGross.toLocaleString('es-DO')}\nDeducciones totales: RD$ ${totalDeductions.toLocaleString('es-DO')}\nSalario neto total: RD$ ${totalNet.toLocaleString('es-DO')}`);
       await loadPeriods();
@@ -129,11 +194,18 @@ export default function PayrollProcessPage() {
       console.error('Error processing payroll:', error);
       alert('Error al procesar la nómina: ' + (error as Error).message);
       
-      // Revertir estado si hubo error
-      await supabase
-        .from('payroll_periods')
-        .update({ status: 'abierto' })
-        .eq('id', periodId);
+      // Revertir estado a open si hubo error (mejor esfuerzo)
+      try {
+        if (tenantId) {
+          await supabase
+            .from('payroll_periods')
+            .update({ status: 'open' })
+            .eq('id', periodId)
+            .eq('user_id', tenantId);
+        }
+      } catch (rollbackError) {
+        console.error('Error reverting payroll period status:', rollbackError);
+      }
     } finally {
       setLoading(false);
     }
@@ -143,10 +215,18 @@ export default function PayrollProcessPage() {
     if (!confirm('¿Está seguro de cerrar este período de nómina? No podrá realizar cambios después.')) return;
     
     try {
+      if (!user) return;
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        alert('No se pudo determinar la empresa del usuario.');
+        return;
+      }
+
       await supabase
         .from('payroll_periods')
-        .update({ status: 'cerrado' })
-        .eq('id', periodId);
+        .update({ status: 'closed' })
+        .eq('id', periodId)
+        .eq('user_id', tenantId);
       
       alert('Período cerrado correctamente');
       await loadPeriods();
@@ -160,10 +240,18 @@ export default function PayrollProcessPage() {
     if (!confirm('¿Confirmar que se ha realizado el pago de esta nómina?')) return;
     
     try {
+      if (!user) return;
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        alert('No se pudo determinar la empresa del usuario.');
+        return;
+      }
+
       await supabase
         .from('payroll_periods')
-        .update({ status: 'pagado' })
-        .eq('id', periodId);
+        .update({ status: 'paid' })
+        .eq('id', periodId)
+        .eq('user_id', tenantId);
       
       alert('Nómina marcada como pagada');
       await loadPeriods();
@@ -174,13 +262,30 @@ export default function PayrollProcessPage() {
   };
 
   const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      abierto: 'bg-blue-100 text-blue-800',
-      procesando: 'bg-yellow-100 text-yellow-800',
-      cerrado: 'bg-purple-100 text-purple-800',
-      pagado: 'bg-green-100 text-green-800'
+    const normalized = normalizeStatus(status);
+    const colors: Record<PayrollPeriod['status'], string> = {
+      open: 'bg-blue-100 text-blue-800',
+      processing: 'bg-yellow-100 text-yellow-800',
+      closed: 'bg-purple-100 text-purple-800',
+      paid: 'bg-green-100 text-green-800'
     };
-    return colors[status] || 'bg-gray-100 text-gray-800';
+    return colors[normalized] || 'bg-gray-100 text-gray-800';
+  };
+
+  const getStatusLabel = (status: string) => {
+    const normalized = normalizeStatus(status);
+    switch (normalized) {
+      case 'open':
+        return 'Abierto';
+      case 'processing':
+        return 'Procesando';
+      case 'closed':
+        return 'Cerrado';
+      case 'paid':
+        return 'Pagado';
+      default:
+        return status;
+    }
   };
 
   return (
@@ -220,8 +325,8 @@ export default function PayrollProcessPage() {
                     Fecha de pago: {new Date(period.pay_date).toLocaleDateString('es-DO')}
                   </p>
                 </div>
-                <span className={`px-4 py-2 rounded-full text-sm font-medium capitalize ${getStatusColor(period.status)}`}>
-                  {period.status}
+                <span className={`px-4 py-2 rounded-full text-sm font-medium ${getStatusColor(period.status)}`}>
+                  {getStatusLabel(period.status)}
                 </span>
               </div>
 
@@ -251,7 +356,7 @@ export default function PayrollProcessPage() {
               </div>
 
               <div className="flex gap-2">
-                {period.status === 'abierto' && (
+                {period.status === 'open' && (
                   <button
                     onClick={() => processPeriod(period.id)}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
@@ -260,7 +365,7 @@ export default function PayrollProcessPage() {
                     Procesar Nómina
                   </button>
                 )}
-                {period.status === 'procesando' && (
+                {period.status === 'processing' && (
                   <button
                     onClick={() => closePeriod(period.id)}
                     className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700"
@@ -269,7 +374,7 @@ export default function PayrollProcessPage() {
                     Cerrar Período
                   </button>
                 )}
-                {period.status === 'cerrado' && (
+                {period.status === 'closed' && (
                   <button
                     onClick={() => markAsPaid(period.id)}
                     className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
