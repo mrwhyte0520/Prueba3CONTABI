@@ -74,21 +74,25 @@ export default function PayrollJournalEntryPage() {
       if (!period) return;
 
       // Generar asientos contables para la nómina
+      // Usamos códigos alineados con el catálogo base:
+      // 6101 - Sueldos y Salarios (gasto)
+      // 2102 - Retenciones TSS por Pagar (pasivo)
+      // 2101 - Nómina por Pagar (pasivo)
       const entries = [
         {
-          account: '6210 - Sueldos y Salarios',
+          account: '6101 - Sueldos y Salarios',
           debit: period.total_gross,
           credit: 0,
           description: `Registro de sueldos - ${period.period_name}`
         },
         {
-          account: '2310 - Retenciones TSS por Pagar',
+          account: '2102 - Retenciones TSS por Pagar',
           debit: 0,
           credit: period.total_deductions,
           description: `Retenciones TSS - ${period.period_name}`
         },
         {
-          account: '2105 - Nómina por Pagar',
+          account: '2101 - Nómina por Pagar',
           debit: 0,
           credit: period.total_net,
           description: `Nómina neta por pagar - ${period.period_name}`

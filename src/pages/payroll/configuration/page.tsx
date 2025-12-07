@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-
+import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { exportToExcelStyled } from '../../../utils/exportImportUtils';
-import { settingsService } from '../../../services/database';
+import { settingsService, chartAccountsService } from '../../../services/database';
+import { useAuth } from '../../../hooks/useAuth';
 
 interface PayrollConfig {
   id?: string;
@@ -23,6 +24,10 @@ interface PayrollConfig {
   backup_frequency: 'daily' | 'weekly' | 'monthly';
   auto_calculate_taxes: boolean;
   auto_generate_reports: boolean;
+  payroll_payable_account_id?: string;
+  tss_payable_account_id?: string;
+  other_deductions_payable_account_id?: string;
+  salary_expense_account_id?: string;
 }
 
 interface TaxBracket {
@@ -34,8 +39,10 @@ interface TaxBracket {
 }
 
 export default function PayrollConfigurationPage() {
+  const { user } = useAuth();
   const [config, setConfig] = useState<PayrollConfig | null>(null);
   const [taxBrackets, setTaxBrackets] = useState<TaxBracket[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
   const [showModal, setShowModal] = useState(false);
@@ -44,7 +51,18 @@ export default function PayrollConfigurationPage() {
 
   useEffect(() => {
     loadConfiguration();
-  }, []);
+    loadAccounts();
+  }, [user]);
+
+  const loadAccounts = async () => {
+    if (!user) return;
+    try {
+      const data = await chartAccountsService.getAll(user.id);
+      setAccounts(data || []);
+    } catch (error) {
+      console.error('Error loading accounts:', error);
+    }
+  };
 
   const loadConfiguration = async () => {
     setLoading(true);
@@ -85,6 +103,10 @@ export default function PayrollConfigurationPage() {
           backup_frequency: (data.backup_frequency as PayrollConfig['backup_frequency']) || 'weekly',
           auto_calculate_taxes: data.auto_calculate_taxes ?? true,
           auto_generate_reports: data.auto_generate_reports ?? true,
+          payroll_payable_account_id: data.payroll_payable_account_id || undefined,
+          tss_payable_account_id: data.tss_payable_account_id || undefined,
+          other_deductions_payable_account_id: data.other_deductions_payable_account_id || undefined,
+          salary_expense_account_id: data.salary_expense_account_id || undefined,
         };
         setConfig(normalized);
       } else {
@@ -107,6 +129,10 @@ export default function PayrollConfigurationPage() {
           backup_frequency: 'weekly',
           auto_calculate_taxes: true,
           auto_generate_reports: true,
+          payroll_payable_account_id: undefined,
+          tss_payable_account_id: undefined,
+          other_deductions_payable_account_id: undefined,
+          salary_expense_account_id: undefined,
         });
       }
 
@@ -154,6 +180,10 @@ export default function PayrollConfigurationPage() {
         backup_frequency: config.backup_frequency,
         auto_calculate_taxes: config.auto_calculate_taxes,
         auto_generate_reports: config.auto_generate_reports,
+        payroll_payable_account_id: config.payroll_payable_account_id || null,
+        tss_payable_account_id: config.tss_payable_account_id || null,
+        other_deductions_payable_account_id: config.other_deductions_payable_account_id || null,
+        salary_expense_account_id: config.salary_expense_account_id || null,
       };
 
       const saved = await settingsService.savePayrollSettings(payload);
@@ -273,6 +303,10 @@ export default function PayrollConfigurationPage() {
           ['Cálculo Automático de Impuestos', (config.auto_calculate_taxes ? 'Sí' : 'No')],
           ['Generación Automática de Reportes', (config.auto_generate_reports ? 'Sí' : 'No')],
           ['Frecuencia de Respaldo', config.backup_frequency],
+          ['Cuenta Nómina por Pagar', getAccountDisplay(config.payroll_payable_account_id)],
+          ['Cuenta Retenciones TSS por Pagar', getAccountDisplay(config.tss_payable_account_id)],
+          ['Cuenta Otras Deducciones por Pagar', getAccountDisplay(config.other_deductions_payable_account_id)],
+          ['Cuenta Gastos de Sueldos y Salarios', getAccountDisplay(config.salary_expense_account_id)],
         ];
         generalPairs.forEach(([k, v]) => rows.push({ section: 'General', key: k, value: v ?? '', from: '', to: '', rate: '', fixed: '' }));
       }
@@ -323,7 +357,7 @@ export default function PayrollConfigurationPage() {
             <input
               type="text"
               value={config?.company_name || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, company_name: e.target.value} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, company_name: e.target.value } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -332,7 +366,7 @@ export default function PayrollConfigurationPage() {
             <input
               type="text"
               value={config?.tax_id || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, tax_id: e.target.value} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, tax_id: e.target.value } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -340,7 +374,7 @@ export default function PayrollConfigurationPage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
             <select
               value={config?.currency || 'DOP'}
-              onChange={(e) => setConfig(prev => prev ? {...prev, currency: e.target.value} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, currency: e.target.value } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="DOP">Peso Dominicano (DOP)</option>
@@ -352,7 +386,7 @@ export default function PayrollConfigurationPage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Frecuencia de Pago</label>
             <select
               value={config?.pay_frequency || 'monthly'}
-              onChange={(e) => setConfig(prev => prev ? {...prev, pay_frequency: e.target.value as any} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, pay_frequency: e.target.value as any } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="weekly">Semanal</option>
@@ -365,7 +399,7 @@ export default function PayrollConfigurationPage() {
             <input
               type="date"
               value={config?.fiscal_year_start || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, fiscal_year_start: e.target.value} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, fiscal_year_start: e.target.value } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -375,7 +409,7 @@ export default function PayrollConfigurationPage() {
               type="number" min="0"
               step="0.01"
               value={config?.min_wage || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, min_wage: parseFloat(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, min_wage: parseFloat(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -391,7 +425,7 @@ export default function PayrollConfigurationPage() {
               type="number" min="0"
               step="0.01"
               value={config?.social_security_rate || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, social_security_rate: parseFloat(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, social_security_rate: parseFloat(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -401,7 +435,7 @@ export default function PayrollConfigurationPage() {
               type="number" min="0"
               step="0.01"
               value={config?.income_tax_rate || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, income_tax_rate: parseFloat(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, income_tax_rate: parseFloat(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -411,7 +445,7 @@ export default function PayrollConfigurationPage() {
               type="number" min="0"
               step="0.01"
               value={config?.christmas_bonus_rate || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, christmas_bonus_rate: parseFloat(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, christmas_bonus_rate: parseFloat(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -421,7 +455,7 @@ export default function PayrollConfigurationPage() {
               type="number" min="0"
               step="0.01"
               value={config?.overtime_rate || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, overtime_rate: parseFloat(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, overtime_rate: parseFloat(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -431,7 +465,7 @@ export default function PayrollConfigurationPage() {
               type="number" min="0"
               step="0.01"
               value={config?.night_shift_rate || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, night_shift_rate: parseFloat(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, night_shift_rate: parseFloat(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -441,7 +475,7 @@ export default function PayrollConfigurationPage() {
               type="number" min="0"
               step="0.01"
               value={config?.sunday_rate || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, sunday_rate: parseFloat(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, sunday_rate: parseFloat(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -451,7 +485,7 @@ export default function PayrollConfigurationPage() {
               type="number" min="0"
               step="0.01"
               value={config?.holiday_rate || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, holiday_rate: parseFloat(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, holiday_rate: parseFloat(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -460,7 +494,7 @@ export default function PayrollConfigurationPage() {
             <input
               type="number" min="0"
               value={config?.vacation_days || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, vacation_days: parseInt(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, vacation_days: parseInt(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -469,7 +503,7 @@ export default function PayrollConfigurationPage() {
             <input
               type="number" min="0"
               value={config?.sick_days || ''}
-              onChange={(e) => setConfig(prev => prev ? {...prev, sick_days: parseInt(e.target.value)} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, sick_days: parseInt(e.target.value) } : null)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -488,7 +522,7 @@ export default function PayrollConfigurationPage() {
               <input
                 type="checkbox"
                 checked={config?.auto_calculate_taxes || false}
-                onChange={(e) => setConfig(prev => prev ? {...prev, auto_calculate_taxes: e.target.checked} : null)}
+                onChange={(e) => setConfig(prev => prev ? { ...prev, auto_calculate_taxes: e.target.checked } : null)}
                 className="sr-only peer"
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
@@ -503,7 +537,7 @@ export default function PayrollConfigurationPage() {
               <input
                 type="checkbox"
                 checked={config?.auto_generate_reports || false}
-                onChange={(e) => setConfig(prev => prev ? {...prev, auto_generate_reports: e.target.checked} : null)}
+                onChange={(e) => setConfig(prev => prev ? { ...prev, auto_generate_reports: e.target.checked } : null)}
                 className="sr-only peer"
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
@@ -513,7 +547,7 @@ export default function PayrollConfigurationPage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Frecuencia de Respaldo</label>
             <select
               value={config?.backup_frequency || 'weekly'}
-              onChange={(e) => setConfig(prev => prev ? {...prev, backup_frequency: e.target.value as any} : null)}
+              onChange={(e) => setConfig(prev => prev ? { ...prev, backup_frequency: e.target.value as any } : null)}
               className="w-full md:w-1/3 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="daily">Diario</option>
@@ -611,7 +645,7 @@ export default function PayrollConfigurationPage() {
           <div>
             <h4 className="text-sm font-medium text-blue-800">Información sobre Tramos Fiscales</h4>
             <p className="text-sm text-blue-700 mt-1">
-              Los tramos fiscales se utilizan para calcular el Impuesto Sobre la Renta (ISR) de forma progresiva. 
+              Los tramos fiscales se utilizan para calcular el Impuesto Sobre la Renta (ISR) de forma progresiva.
               Cada tramo tiene un rango de ingresos, una tasa de impuesto y un monto fijo que se suma al cálculo.
             </p>
           </div>
@@ -619,6 +653,154 @@ export default function PayrollConfigurationPage() {
       </div>
     </div>
   );
+
+  const renderAccountingConfig = () => {
+    const liabilityAccounts = accounts.filter(acc => acc.type === 'liability' && acc.allowPosting);
+    const expenseAccounts = accounts.filter(acc => acc.type === 'expense' && acc.allowPosting);
+
+    const getAccountDisplay = (accountId: string | undefined) => {
+      if (!accountId) return 'Ninguna';
+      const account = accounts.find(a => a.id === accountId);
+      return account ? `${account.code} - ${account.name}` : 'No encontrada';
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Cuentas de Pasivos (Nómina)</h3>
+          <p className="text-sm text-gray-600 mb-6">
+            Seleccione las cuentas del catálogo contable donde se registrarán los pasivos de nómina.
+            Estas cuentas deben ser de tipo Pasivo (código 2.x) y permitir movimientos.
+          </p>
+          <div className="grid grid-cols-1 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <i className="ri-money-dollar-circle-line mr-2"></i>
+                Nómina por Pagar
+              </label>
+              <select
+                value={config?.payroll_payable_account_id || ''}
+                onChange={(e) => setConfig(prev => prev ? { ...prev, payroll_payable_account_id: e.target.value || undefined } : null)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Seleccionar Cuenta --</option>
+                {liabilityAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.code} - {acc.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Cuenta para registrar salarios netos pendientes de pago (ej: 2101 - Salarios por Pagar)
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <i className="ri-shield-check-line mr-2"></i>
+                Retenciones TSS por Pagar
+              </label>
+              <select
+                value={config?.tss_payable_account_id || ''}
+                onChange={(e) => setConfig(prev => prev ? { ...prev, tss_payable_account_id: e.target.value || undefined } : null)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Seleccionar Cuenta --</option>
+                {liabilityAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.code} - {acc.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Cuenta para retenciones de AFP, SFS y SRL (ej: 2102 - Retenciones TSS por Pagar)
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <i className="ri-subtract-line mr-2"></i>
+                Otras Deducciones por Pagar
+              </label>
+              <select
+                value={config?.other_deductions_payable_account_id || ''}
+                onChange={(e) => setConfig(prev => prev ? { ...prev, other_deductions_payable_account_id: e.target.value || undefined } : null)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Seleccionar Cuenta --</option>
+                {liabilityAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.code} - {acc.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Cuenta para otras deducciones a empleados (ej: 2103 - Otras Deducciones por Pagar)
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Cuentas de Gastos (Nómina)</h3>
+          <p className="text-sm text-gray-600 mb-6">
+            Seleccione las cuentas del catálogo contable donde se registrarán los gastos de nómina.
+            Estas cuentas deben ser de tipo Gasto (código 6.x) y permitir movimientos.
+          </p>
+          <div className="grid grid-cols-1 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <i className="ri-user-line mr-2"></i>
+                Gastos de Sueldos y Salarios
+              </label>
+              <select
+                value={config?.salary_expense_account_id || ''}
+                onChange={(e) => setConfig(prev => prev ? { ...prev, salary_expense_account_id: e.target.value || undefined } : null)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Seleccionar Cuenta --</option>
+                {expenseAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.code} - {acc.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Cuenta para gastos de sueldos y salarios brutos (ej: 6101 - Sueldos y Salarios)
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-start">
+            <i className="ri-information-line text-blue-500 mt-1 mr-3"></i>
+            <div>
+              <h4 className="text-sm font-medium text-blue-800">Información sobre Cuentas Contables</h4>
+              <p className="text-sm text-blue-700 mt-1">
+                Al configurar estas cuentas, el sistema generará automáticamente asientos contables al procesar la nómina:
+              </p>
+              <ul className="text-sm text-blue-700 mt-2 space-y-1 list-disc list-inside">
+                <li><strong>Débito:</strong> Gastos de Sueldos y Salarios (gasto)</li>
+                <li><strong>Crédito:</strong> Nómina por Pagar + Retenciones TSS + Otras Deducciones (pasivos)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            onClick={handleSaveConfig}
+            disabled={loading}
+            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap disabled:opacity-50"
+          >
+            {loading ? 'Guardando...' : 'Guardar Configuración'}
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const renderModal = () => {
     if (!showModal) return null;
@@ -645,7 +827,7 @@ export default function PayrollConfigurationPage() {
                 type="number" min="0"
                 step="0.01"
                 value={formData.min_amount || ''}
-                onChange={(e) => setFormData({...formData, min_amount: parseFloat(e.target.value)})}
+                onChange={(e) => setFormData({ ...formData, min_amount: parseFloat(e.target.value) })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
@@ -656,7 +838,7 @@ export default function PayrollConfigurationPage() {
                 type="number" min="0"
                 step="0.01"
                 value={formData.max_amount === Infinity ? '' : formData.max_amount || ''}
-                onChange={(e) => setFormData({...formData, max_amount: e.target.value ? parseFloat(e.target.value) : Infinity})}
+                onChange={(e) => setFormData({ ...formData, max_amount: e.target.value ? parseFloat(e.target.value) : Infinity })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Dejar vacío para 'En adelante'"
               />
@@ -667,7 +849,7 @@ export default function PayrollConfigurationPage() {
                 type="number" min="0"
                 step="0.01"
                 value={formData.rate || ''}
-                onChange={(e) => setFormData({...formData, rate: parseFloat(e.target.value)})}
+                onChange={(e) => setFormData({ ...formData, rate: parseFloat(e.target.value) })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
@@ -678,7 +860,7 @@ export default function PayrollConfigurationPage() {
                 type="number" min="0"
                 step="0.01"
                 value={formData.fixed_amount || ''}
-                onChange={(e) => setFormData({...formData, fixed_amount: parseFloat(e.target.value)})}
+                onChange={(e) => setFormData({ ...formData, fixed_amount: parseFloat(e.target.value) })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
@@ -714,52 +896,56 @@ export default function PayrollConfigurationPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Configuración de Nóminas</h1>
-          <p className="text-gray-600">Configurar parámetros generales del sistema de nómina</p>
+    <DashboardLayout>
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Configuración de Nóminas</h1>
+            <p className="text-gray-600">Configurar parámetros generales del sistema de nómina</p>
+          </div>
+          <button
+            onClick={() => window.REACT_APP_NAVIGATE('/payroll')}
+            className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 transition-colors"
+          >
+            <i className="ri-arrow-left-line"></i>
+            <span>Volver a Nóminas</span>
+          </button>
         </div>
-        <button
-          onClick={() => window.REACT_APP_NAVIGATE('/payroll')}
-          className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 transition-colors"
-        >
-          <i className="ri-arrow-left-line"></i>
-          <span>Volver a Nóminas</span>
-        </button>
-      </div>
 
-      {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8">
-          {[
-            { id: 'general', name: 'Configuración General', icon: 'ri-settings-line' },
-            { id: 'tax-brackets', name: 'Tramos Fiscales', icon: 'ri-percent-line' }
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
-                activeTab === tab.id
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <i className={`${tab.icon} mr-2`}></i>
-              {tab.name}
-            </button>
-          ))}
-        </nav>
-      </div>
+        {/* Tabs */}
+        <div className="border-b border-gray-200">
+          <nav className="-mb-px flex space-x-8">
+            {[
+              { id: 'general', name: 'Configuración General', icon: 'ri-settings-line' },
+              { id: 'tax-brackets', name: 'Tramos Fiscales', icon: 'ri-percent-line' },
+              { id: 'accounting', name: 'Cuentas Contables', icon: 'ri-book-line' }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`py-2 px-1 border-b-2 font-medium text-sm whitespace-nowrap ${
+                  activeTab === tab.id
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <i className={`${tab.icon} mr-2`}></i>
+                {tab.name}
+              </button>
+            ))}
+          </nav>
+        </div>
 
-      {/* Tab Content */}
-      <div className="mt-6">
-        {activeTab === 'general' && renderGeneralConfig()}
-        {activeTab === 'tax-brackets' && renderTaxBrackets()}
-      </div>
+        {/* Tab Content */}
+        <div className="mt-6">
+          {activeTab === 'general' && renderGeneralConfig()}
+          {activeTab === 'tax-brackets' && renderTaxBrackets()}
+          {activeTab === 'accounting' && renderAccountingConfig()}
+        </div>
 
-      {/* Modal */}
-      {renderModal()}
-    </div>
+        {/* Modal */}
+        {renderModal()}
+      </div>
+    </DashboardLayout>
   );
 }

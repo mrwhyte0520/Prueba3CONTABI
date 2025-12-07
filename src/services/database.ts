@@ -11199,12 +11199,37 @@ export const settingsService = {
       // Evitar conflicto con la PK de payroll_settings
       delete payload.id;
 
-      const { data, error } = await supabase
+      // Buscar si ya existe un registro de configuración para este tenant
+      const { data: existing, error: existingError } = await supabase
         .from('payroll_settings')
-        .upsert(payload, { onConflict: 'user_id' })
-        .select()
-        .single();
+        .select('id')
+        .eq('user_id', tenantId)
+        .limit(1)
+        .maybeSingle();
 
+      if (existingError && (existingError as any).code !== 'PGRST116') {
+        throw existingError;
+      }
+
+      let result;
+      if (existing?.id) {
+        // Actualizar registro existente
+        result = await supabase
+          .from('payroll_settings')
+          .update(payload)
+          .eq('id', existing.id)
+          .select()
+          .single();
+      } else {
+        // Crear nuevo registro
+        result = await supabase
+          .from('payroll_settings')
+          .insert(payload)
+          .select()
+          .single();
+      }
+
+      const { data, error } = result;
       if (error) throw error;
       return data;
     } catch (error) {
