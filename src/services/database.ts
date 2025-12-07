@@ -3929,10 +3929,13 @@ export const warehouseEntriesService = {
       if (!userId) throw new Error('userId required');
       if (!id) throw new Error('warehouse entry id required');
 
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
       const { data: entry, error: entryError } = await supabase
         .from('warehouse_entries')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('id', id)
         .maybeSingle();
 
@@ -5277,8 +5280,8 @@ export const payrollService = {
         // Total de deducciones
         const totalDeductions = periodicDeductionsTotal + otherDeductionsTotal + absenceDeduction + tssDeductions;
 
-        // Salario neto
-        const netSalary = grossSalary - totalDeductions;
+        // Salario neto (no permitir valores negativos)
+        const netSalary = Math.max(0, grossSalary - totalDeductions);
 
         payrollEntries.push({
           user_id: tenantId,
@@ -8436,57 +8439,6 @@ export const customerPaymentsService = {
         `)
         .single();
       if (error) throw error;
-      
-      // Best-effort: crear asiento contable automático
-      try {
-        const settings = await accountingSettingsService.get(data.user_id);
-        const arAccountId = settings?.ar_account_id;
-        const amount = Number(data.amount) || 0;
-
-        // Intentar usar la cuenta contable del banco específico del pago
-        let bankChartAccountId: string | null = null;
-        if (data.bank_account_id) {
-          const { data: bankAccount, error: bankError } = await supabase
-            .from('bank_accounts')
-            .select('chart_account_id')
-            .eq('id', data.bank_account_id)
-            .maybeSingle();
-          if (!bankError && bankAccount?.chart_account_id) {
-            bankChartAccountId = bankAccount.chart_account_id as string;
-          }
-        }
-
-        if (arAccountId && bankChartAccountId && amount > 0) {
-          const lines: any[] = [
-            {
-              account_id: bankChartAccountId,
-              description: 'Cobro de cliente - Banco',
-              debit_amount: amount,
-              credit_amount: 0,
-              line_number: 1,
-            },
-            {
-              account_id: arAccountId,
-              description: 'Cobro de cliente - Cuentas por Cobrar',
-              debit_amount: 0,
-              credit_amount: amount,
-              line_number: 2,
-            },
-          ];
-
-          const entryPayload = {
-            entry_number: String(data.invoice_id || `COBRO-${data.id}`),
-            entry_date: String(data.payment_date),
-            description: `Cobro de cliente ${data.invoice_id ? 'factura ' + data.invoice_id : ''}`.trim(),
-            reference: data.id ? String(data.id) : null,
-            status: 'posted' as const,
-          };
-
-          await journalEntriesService.createWithLines(data.user_id, entryPayload, lines);
-        }
-      } catch (jeError) {
-        console.error('Error creating journal entry for customer payment:', jeError);
-      }
       
       // Best-effort: crear solicitud de autorización para pago de cliente
       try {

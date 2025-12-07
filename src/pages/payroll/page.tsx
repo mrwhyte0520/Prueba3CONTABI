@@ -579,7 +579,7 @@ export default function PayrollPage() {
         }
 
         const deductions = baseSalary * (employeeRate / 100);
-        const net = gross - deductions;
+        const net = Math.max(0, gross - deductions);
         return {
           user_id: tenantId,
           payroll_period_id: periodId,

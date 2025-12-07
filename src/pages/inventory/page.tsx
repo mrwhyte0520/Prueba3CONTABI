@@ -435,8 +435,9 @@ export default function InventoryPage() {
       } else if (modalType === 'movement') {
         if (user) {
           const movementDate = formData.movement_date || new Date().toISOString().split('T')[0];
-          const quantity = formData.quantity || 0;
-          const unitCost = formData.unit_cost || 0;
+          const rawQuantity = Number(formData.quantity) || 0;
+          const quantity = Number.isFinite(rawQuantity) ? Math.round(rawQuantity) : 0;
+          const unitCost = Number(formData.unit_cost) || 0;
           const totalCost = quantity * unitCost;
 
           // No enviar account_id a la tabla inventory_movements (solo se usa para el asiento)
@@ -444,9 +445,33 @@ export default function InventoryPage() {
 
           const createdMovement = await inventoryService.createMovement(user!.id, {
             ...movementRest,
+            quantity,
             movement_date: movementDate,
             total_cost: totalCost,
           });
+
+          // Actualizar stock actual del producto afectado de forma coherente con el movimiento
+          try {
+            const item = items.find((it) => String(it.id) === String(formData.item_id));
+            if (item && formData.movement_type) {
+              const currentStock = Number(item.current_stock ?? 0) || 0;
+              let newStock = currentStock;
+
+              if (formData.movement_type === 'entry' || formData.movement_type === 'adjustment') {
+                newStock = currentStock + quantity;
+              } else if (formData.movement_type === 'exit') {
+                newStock = currentStock - quantity;
+              }
+
+              if (newStock < 0) newStock = 0;
+
+              await inventoryService.updateItem(item.id, {
+                current_stock: newStock,
+              });
+            }
+          } catch (stockError) {
+            console.error('Error updating current stock for manual inventory movement', stockError);
+          }
 
           // Best-effort: registrar asiento contable del movimiento de inventario
           try {
