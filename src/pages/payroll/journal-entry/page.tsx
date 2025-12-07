@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
-import { chartAccountsService, journalEntriesService, resolveTenantId } from '../../../services/database';
+import { chartAccountsService, journalEntriesService, resolveTenantId, settingsService } from '../../../services/database';
 
 interface PayrollPeriod {
   id: string;
@@ -67,37 +67,88 @@ export default function PayrollJournalEntryPage() {
   };
 
   const generateJournalEntries = async () => {
-    if (!selectedPeriod) return;
-    
+    if (!selectedPeriod || !user?.id) return;
+
     setLoading(true);
     try {
       const period = periods.find(p => p.id === selectedPeriod);
       if (!period) return;
 
-      // Generar asientos contables para la nómina
-      // Usamos códigos alineados con el catálogo base:
-      // 6101 - Sueldos y Salarios (gasto)
-      // 2102 - Retenciones TSS por Pagar (pasivo)
-      // 2101 - Nómina por Pagar (pasivo)
-      const entries = [
+      // Cargar configuración de nómina y catálogo de cuentas
+      const [settings, accounts] = await Promise.all([
+        settingsService.getPayrollSettings(),
+        chartAccountsService.getAll(user.id),
+      ]);
+
+      const accountsById = new Map<string, any>();
+      const accountsByCode = new Map<string, any>();
+      (accounts || []).forEach((acc: any) => {
+        if (acc.id) {
+          accountsById.set(String(acc.id), acc);
+        }
+        if (acc.code) {
+          accountsByCode.set(String(acc.code), acc);
+        }
+      });
+
+      const fallbackAccounts = {
+        salary: { code: '6101', name: 'Sueldos y Salarios' },
+        tss: { code: '2102', name: 'Retenciones TSS por Pagar' },
+        payroll: { code: '2101', name: 'Nómina por Pagar' },
+      } as const;
+
+      const resolveAccount = (
+        id: string | null | undefined,
+        fallbackKey: keyof typeof fallbackAccounts,
+      ) => {
+        if (id) {
+          const acc = accountsById.get(String(id));
+          if (acc?.code && acc?.name) {
+            return { code: String(acc.code), name: String(acc.name) };
+          }
+        }
+
+        const fb = fallbackAccounts[fallbackKey];
+        const accByCode = accountsByCode.get(fb.code);
+        if (accByCode?.code && accByCode?.name) {
+          return { code: String(accByCode.code), name: String(accByCode.name) };
+        }
+
+        return fb;
+      };
+
+      const salaryAcc = resolveAccount(
+        (settings as any)?.salary_expense_account_id,
+        'salary',
+      );
+      const tssAcc = resolveAccount(
+        (settings as any)?.tss_payable_account_id,
+        'tss',
+      );
+      const payrollAcc = resolveAccount(
+        (settings as any)?.payroll_payable_account_id,
+        'payroll',
+      );
+
+      const entries: PayrollJournalEntry[] = [
         {
-          account: '6101 - Sueldos y Salarios',
+          account: `${salaryAcc.code} - ${salaryAcc.name}`,
           debit: period.total_gross,
           credit: 0,
-          description: `Registro de sueldos - ${period.period_name}`
+          description: `Registro de sueldos - ${period.period_name}`,
         },
         {
-          account: '2102 - Retenciones TSS por Pagar',
+          account: `${tssAcc.code} - ${tssAcc.name}`,
           debit: 0,
           credit: period.total_deductions,
-          description: `Retenciones TSS - ${period.period_name}`
+          description: `Retenciones TSS - ${period.period_name}`,
         },
         {
-          account: '2101 - Nómina por Pagar',
+          account: `${payrollAcc.code} - ${payrollAcc.name}`,
           debit: 0,
           credit: period.total_net,
-          description: `Nómina neta por pagar - ${period.period_name}`
-        }
+          description: `Nómina neta por pagar - ${period.period_name}`,
+        },
       ];
 
       setJournalEntries(entries);
