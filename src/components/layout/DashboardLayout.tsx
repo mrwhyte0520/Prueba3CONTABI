@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { usePlans } from '../../hooks/usePlans';
-import { customersService, invoicesService, inventoryService, resolveTenantId } from '../../services/database';
+import { customersService, invoicesService, inventoryService, resolveTenantId, settingsService } from '../../services/database';
 import { supabase } from '../../lib/supabase';
 
 interface DashboardLayoutProps {
@@ -53,18 +53,36 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     const loadProfile = async () => {
       try {
         if (!profilePanelOpen || !user?.id) return;
+
         const { data, error } = await supabase
           .from('users')
           .select('*')
           .eq('id', user.id)
           .single();
         if (error || !data) return;
+
+        let companyFromSettings: string | undefined;
+        try {
+          const info = await settingsService.getCompanyInfo();
+          if (info && (info as any)) {
+            const resolvedName =
+              (info as any).name ||
+              (info as any).company_name ||
+              (info as any).legal_name;
+            if (resolvedName) {
+              companyFromSettings = String(resolvedName);
+            }
+          }
+        } catch (e) {
+          console.error('Error obteniendo información de la empresa para Mi Perfil:', e);
+        }
+
         setUserProfile(prev => ({
           ...prev,
           email: data.email || user.email || prev.email,
           fullName: data.full_name || prev.fullName || (user.email?.split('@')[0] ?? ''),
           phone: data.phone || prev.phone,
-          company: data.company || prev.company,
+          company: data.company || companyFromSettings || prev.company,
           position: data.position || prev.position,
           address: data.address || prev.address,
           city: data.city || prev.city,

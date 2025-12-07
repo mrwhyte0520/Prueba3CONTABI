@@ -4,6 +4,7 @@ import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../lib/supabase';
 import { usePlans } from '../../hooks/usePlans';
+import { settingsService } from '../../services/database';
 
 export default function ProfilePage() {
   const { user } = useAuth();
@@ -116,11 +117,27 @@ export default function ProfilePage() {
       if (error) throw error;
 
       if (data) {
+        let companyFromSettings: string | undefined;
+        try {
+          const info = await settingsService.getCompanyInfo();
+          if (info && (info as any)) {
+            const resolvedName =
+              (info as any).name ||
+              (info as any).company_name ||
+              (info as any).legal_name;
+            if (resolvedName) {
+              companyFromSettings = String(resolvedName);
+            }
+          }
+        } catch (e) {
+          console.error('Error obteniendo información de la empresa en ProfilePage:', e);
+        }
+
         setProfileData({
           email: data.email || user?.email || '',
           fullName: data.full_name || '',
           phone: data.phone || '',
-          company: data.company || '',
+          company: data.company || companyFromSettings || '',
           position: data.position || '',
           address: data.address || '',
           city: data.city || '',
