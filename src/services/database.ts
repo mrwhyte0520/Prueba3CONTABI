@@ -9264,6 +9264,7 @@ export const taxService = {
         .from('petty_cash_expenses')
         .select('*')
         .eq('user_id', tenantId)
+        .eq('status', 'approved')
         .gte('expense_date', startDate)
         .lte('expense_date', endDate);
 
@@ -9668,6 +9669,9 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return;
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return;
+
       const [yearStr, monthStr] = period.split('-');
       const year = Number(yearStr);
       const month = Number(monthStr);
@@ -9678,7 +9682,7 @@ export const taxService = {
       const { data: docs, error: fdErr } = await supabase
         .from('fiscal_documents')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .eq('status', 'cancelled')
         .gte('cancelled_date', startDate)
         .lte('cancelled_date', endDate);
@@ -9686,7 +9690,7 @@ export const taxService = {
       if (fdErr) throw fdErr;
 
       const rows = (docs || []).map((doc: any) => ({
-        user_id: user.id,
+        user_id: tenantId,
         period,
         cancellation_date: doc.cancelled_date || doc.issue_date,
         tipo_comprobante: doc.document_type || 'NCF',
@@ -9701,7 +9705,7 @@ export const taxService = {
         .from('report_608_data')
         .delete()
         .eq('period', period)
-        .eq('user_id', user.id);
+        .eq('user_id', tenantId);
       if (delErr) throw delErr;
 
       if (rows.length > 0) {
@@ -9723,12 +9727,15 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return [];
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return [];
+
       await this.buildReport608(period);
       const { data, error } = await supabase
         .from('report_608_data')
         .select('*')
         .eq('period', period)
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('cancellation_date');
 
       if (error) throw error;
@@ -9748,11 +9755,16 @@ export const taxService = {
         return { totalAmount: 0, totalTax: 0 };
       }
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        return { totalAmount: 0, totalTax: 0 };
+      }
+
       const { data, error } = await supabase
         .from('report_608_data')
         .select('amount, tax_amount')
         .eq('period', period)
-        .eq('user_id', user.id);
+        .eq('user_id', tenantId);
 
       if (error) throw error;
 
@@ -9827,6 +9839,9 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return;
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return;
+
       const [yearStr, monthStr] = period.split('-');
       const year = Number(yearStr);
       const month = Number(monthStr);
@@ -9851,7 +9866,7 @@ export const taxService = {
           `*,
            suppliers (name, tax_id)`
         )
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .gte('payment_date', startDate)
         .lte('payment_date', endDate)
         .in('status', ['completed', 'Completado']);
@@ -9865,7 +9880,7 @@ export const taxService = {
         const net = gross - withheld;
 
         return {
-          user_id: user.id,
+          user_id: tenantId,
           period,
           supplier_rnc: p.suppliers?.tax_id || null,
           supplier_name: p.suppliers?.name || null,
@@ -9883,7 +9898,7 @@ export const taxService = {
         .from('report_ir17_data')
         .delete()
         .eq('period', period)
-        .eq('user_id', user.id);
+        .eq('user_id', tenantId);
       if (delErr) throw delErr;
 
       if (rows.length > 0) {
@@ -9906,12 +9921,15 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return [];
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return [];
+
       await this.buildReportIR17(period);
       const { data, error } = await supabase
         .from('report_ir17_data')
         .select('*')
         .eq('period', period)
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('payment_date');
 
       if (error) throw error;
@@ -9931,11 +9949,16 @@ export const taxService = {
         return { totalGross: 0, totalWithheld: 0, totalNet: 0, count: 0 };
       }
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        return { totalGross: 0, totalWithheld: 0, totalNet: 0, count: 0 };
+      }
+
       const { data, error } = await supabase
         .from('report_ir17_data')
         .select('gross_amount, withheld_amount, net_amount')
         .eq('period', period)
-        .eq('user_id', user.id);
+        .eq('user_id', tenantId);
 
       if (error) throw error;
 
@@ -10124,10 +10147,13 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return [];
 
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) return [];
+
       let query = supabase
         .from('report_it1_data')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', tenantId)
         .order('period', { ascending: false });
 
       if (year) {
