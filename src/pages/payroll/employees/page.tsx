@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { departmentsService, positionsService, employeesService, employeeTypesService, salaryTypesService } from '../../../services/database';
@@ -793,226 +794,228 @@ export default function EmployeesPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Gestión de Empleados</h1>
-          <p className="text-gray-600">Administrar información completa de empleados</p>
-        </div>
-        <div className="flex space-x-3">
-          <button
-            onClick={() => window.REACT_APP_NAVIGATE('/payroll')}
-            className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 transition-colors"
-          >
-            <i className="ri-arrow-left-line"></i>
-            <span>Volver a Nóminas</span>
-          </button>
-          <button
-            onClick={() => handleOpenModal('create')}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
-          >
-            <i className="ri-add-line mr-2"></i>
-            Agregar Empleado
-          </button>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow p-4">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+    <DashboardLayout>
+      <div className="space-y-6 px-4 sm:px-6 lg:px-8 pt-4">
+        <div className="flex justify-between items-center">
           <div>
-            <input
-              type="text"
-              placeholder="Buscar empleados..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+            <h1 className="text-2xl font-bold text-gray-900">Gestión de Empleados</h1>
+            <p className="text-gray-600">Administrar información completa de empleados</p>
           </div>
-          <div>
-            <select
-              value={filterDepartment}
-              onChange={(e) => setFilterDepartment(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">Todos los departamentos</option>
-              {departments.map(dept => (
-                <option key={dept.id} value={dept.id}>{dept.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">Todos los estados</option>
-              <option value="active">Activo</option>
-              <option value="inactive">Inactivo</option>
-              <option value="suspended">Suspendido</option>
-            </select>
-          </div>
-          <div>
+          <div className="flex space-x-3">
             <button
-              onClick={exportToExcel}
-              className="w-full bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+              onClick={() => window.REACT_APP_NAVIGATE('/payroll')}
+              className="inline-flex items-center space-x-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-medium shadow-sm hover:bg-gray-50 hover:border-gray-400 transition-colors"
             >
-              <i className="ri-download-line mr-2"></i>
-              Exportar
+              <i className="ri-arrow-left-line"></i>
+              <span>Volver a Nóminas</span>
+            </button>
+            <button
+              onClick={() => handleOpenModal('create')}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+            >
+              <i className="ri-add-line mr-2"></i>
+              Agregar Empleado
             </button>
           </div>
-          <div className="text-sm text-gray-600 flex items-center">
-            Mostrando {filteredEmployees.length} de {employees.length} empleados
-          </div>
         </div>
-      </div>
 
-      {/* Bulk Actions */}
-      {selectedEmployees.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-blue-800 font-medium">
-              {selectedEmployees.length} empleado(s) seleccionado(s)
-            </span>
-            <div className="flex space-x-2">
-              <button
-                onClick={() => handleBulkAction('activar')}
-                className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 transition-colors"
+        {/* Filters */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div>
+              <input
+                type="text"
+                placeholder="Buscar empleados..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <select
+                value={filterDepartment}
+                onChange={(e) => setFilterDepartment(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                Activar
-              </button>
-              <button
-                onClick={() => handleBulkAction('suspender')}
-                className="bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 transition-colors"
+                <option value="">Todos los departamentos</option>
+                {departments.map(dept => (
+                  <option key={dept.id} value={dept.id}>{dept.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                Suspender
-              </button>
+                <option value="">Todos los estados</option>
+                <option value="active">Activo</option>
+                <option value="inactive">Inactivo</option>
+                <option value="suspended">Suspendido</option>
+              </select>
+            </div>
+            <div>
               <button
-                onClick={() => handleBulkAction('desactivar')}
-                className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700 transition-colors"
+                onClick={exportToExcel}
+                className="w-full bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
               >
-                Desactivar
+                <i className="ri-download-line mr-2"></i>
+                Exportar
               </button>
+            </div>
+            <div className="text-sm text-gray-600 flex items-center">
+              Mostrando {filteredEmployees.length} de {employees.length} empleados
             </div>
           </div>
         </div>
-      )}
 
-      {/* Employees Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left">
-                  <input
-                    type="checkbox"
-                    checked={selectedEmployees.length === filteredEmployees.length && filteredEmployees.length > 0}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedEmployees(filteredEmployees.map(emp => emp.id));
-                      } else {
-                        setSelectedEmployees([]);
-                      }
-                    }}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Empleado</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contacto</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Departamento</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Posición</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Salario</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredEmployees.map((employee) => (
-                <tr key={employee.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
+        {/* Bulk Actions */}
+        {selectedEmployees.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-blue-800 font-medium">
+                {selectedEmployees.length} empleado(s) seleccionado(s)
+              </span>
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => handleBulkAction('activar')}
+                  className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 transition-colors"
+                >
+                  Activar
+                </button>
+                <button
+                  onClick={() => handleBulkAction('suspender')}
+                  className="bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 transition-colors"
+                >
+                  Suspender
+                </button>
+                <button
+                  onClick={() => handleBulkAction('desactivar')}
+                  className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700 transition-colors"
+                >
+                  Desactivar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Employees Table */}
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left">
                     <input
                       type="checkbox"
-                      checked={selectedEmployees.includes(employee.id)}
+                      checked={selectedEmployees.length === filteredEmployees.length && filteredEmployees.length > 0}
                       onChange={(e) => {
                         if (e.target.checked) {
-                          setSelectedEmployees(prev => [...prev, employee.id]);
+                          setSelectedEmployees(filteredEmployees.map(emp => emp.id));
                         } else {
-                          setSelectedEmployees(prev => prev.filter(id => id !== employee.id));
+                          setSelectedEmployees([]);
                         }
                       }}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {employee.employee_code}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">
-                        {employee.first_name} {employee.last_name}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {employee.identification}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{employee.email}</div>
-                    <div className="text-sm text-gray-500">{employee.phone}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {getDepartmentName(employee.department_id)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {getPositionTitle(employee.position_id)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    {employee.salary_type_id === '2' ? 
-                      `RD$${employee.base_salary}/h` : 
-                      `RD$${employee.base_salary.toLocaleString()}`}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      employee.status === 'active' ? 'bg-green-100 text-green-800' :
-                      employee.status === 'inactive' ? 'bg-red-100 text-red-800' :
-                      'bg-yellow-100 text-yellow-800'
-                    }`}>
-                      {employee.status === 'active' ? 'Activo' :
-                       employee.status === 'inactive' ? 'Inactivo' : 'Suspendido'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                    <button
-                      onClick={() => handleOpenModal('edit', employee)}
-                      className="text-blue-600 hover:text-blue-900"
-                    >
-                      <i className="ri-edit-line"></i>
-                    </button>
-                    <button
-                      onClick={() => handleOpenModal('details', employee)}
-                      className="text-green-600 hover:text-green-900"
-                    >
-                      <i className="ri-eye-line"></i>
-                    </button>
-                    <button
-                      onClick={() => handleDelete(employee.id)}
-                      className="text-red-600 hover:text-red-900"
-                    >
-                      <i className="ri-delete-bin-line"></i>
-                    </button>
-                  </td>
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Empleado</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contacto</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Departamento</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Posición</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Salario</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {filteredEmployees.map((employee) => (
+                  <tr key={employee.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={selectedEmployees.includes(employee.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedEmployees(prev => [...prev, employee.id]);
+                          } else {
+                            setSelectedEmployees(prev => prev.filter(id => id !== employee.id));
+                          }
+                        }}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {employee.employee_code}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">
+                          {employee.first_name} {employee.last_name}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {employee.identification}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{employee.email}</div>
+                      <div className="text-sm text-gray-500">{employee.phone}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {getDepartmentName(employee.department_id)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {getPositionTitle(employee.position_id)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {employee.salary_type_id === '2' ? 
+                        `RD$${employee.base_salary}/h` : 
+                        `RD$${employee.base_salary.toLocaleString()}`}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        employee.status === 'active' ? 'bg-green-100 text-green-800' :
+                        employee.status === 'inactive' ? 'bg-red-100 text-red-800' :
+                        'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {employee.status === 'active' ? 'Activo' :
+                         employee.status === 'inactive' ? 'Inactivo' : 'Suspendido'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                      <button
+                        onClick={() => handleOpenModal('edit', employee)}
+                        className="text-blue-600 hover:text-blue-900"
+                      >
+                        <i className="ri-edit-line"></i>
+                      </button>
+                      <button
+                        onClick={() => handleOpenModal('details', employee)}
+                        className="text-green-600 hover:text-green-900"
+                      >
+                        <i className="ri-eye-line"></i>
+                      </button>
+                      <button
+                        onClick={() => handleDelete(employee.id)}
+                        className="text-red-600 hover:text-red-900"
+                      >
+                        <i className="ri-delete-bin-line"></i>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
-      {/* Modal */}
-      {renderModal()}
-    </div>
+        {/* Modal */}
+        {renderModal()}
+      </div>
+    </DashboardLayout>
   );
 }

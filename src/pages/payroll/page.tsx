@@ -652,7 +652,7 @@ export default function PayrollPage() {
           </div>
           <button
             onClick={() => window.REACT_APP_NAVIGATE('/dashboard')}
-            className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 transition-colors"
+            className="inline-flex items-center space-x-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-medium shadow-sm hover:bg-gray-50 hover:border-gray-400 transition-colors"
           >
             <i className="ri-arrow-left-line"></i>
             <span>Volver al Inicio</span>
@@ -1840,7 +1840,7 @@ export default function PayrollPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 px-4 sm:px-6 lg:px-8 pt-4">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Gestión de Nómina</h1>
       </div>

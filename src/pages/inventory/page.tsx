@@ -3015,11 +3015,12 @@ export default function InventoryPage() {
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate('/dashboard')}
-            className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-medium shadow-sm hover:bg-gray-50 hover:border-gray-400 transition-colors"
           >
             <i className="ri-arrow-left-line text-lg"></i>
             <span>Volver al Inicio</span>
           </button>
+
           <div className="h-6 w-px bg-gray-300"></div>
           <h1 className="text-2xl font-bold text-gray-900">Gestión de Inventario</h1>
         </div>
