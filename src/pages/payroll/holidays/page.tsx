@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { holidaysService } from '../../../services/database';
 
 interface Holiday {
@@ -187,27 +188,40 @@ export default function HolidaysPage() {
     }
   };
 
-  const exportToCSV = () => {
-    const csvContent = [
-      ['Nombre', 'Fecha', 'Tipo', 'Pagado', 'Multiplicador', 'Descripción', 'Recurrente', 'Estado'].join(','),
-      ...filteredHolidays.map(holiday => [
-        holiday.name,
-        holiday.date,
-        holiday.type,
-        holiday.isPaid ? 'Sí' : 'No',
-        holiday.multiplier,
-        holiday.description,
-        holiday.isRecurring ? 'Sí' : 'No',
-        holiday.status
-      ].join(','))
-    ].join('\n');
+  const exportToCSV = async () => {
+    const today = new Date().toISOString().split('T')[0];
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'dias_feriados.csv';
-    a.click();
+    const rows = filteredHolidays.map(holiday => ({
+      name: holiday.name,
+      date: holiday.date,
+      type: getTypeLabel(holiday.type),
+      isPaid: holiday.isPaid ? 'Sí' : 'No',
+      multiplier: holiday.multiplier,
+      description: holiday.description,
+      isRecurring: holiday.isRecurring ? 'Sí' : 'No',
+      status: holiday.status === 'activo' ? 'Activo' : 'Inactivo',
+    }));
+
+    if (!rows.length) {
+      alert('No hay días feriados para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'name', title: 'Nombre', width: 24 },
+        { key: 'date', title: 'Fecha', width: 18 },
+        { key: 'type', title: 'Tipo', width: 16 },
+        { key: 'isPaid', title: 'Pagado', width: 10 },
+        { key: 'multiplier', title: 'Multiplicador', width: 14, numFmt: '0.0' },
+        { key: 'description', title: 'Descripción', width: 40 },
+        { key: 'isRecurring', title: 'Recurrente', width: 12 },
+        { key: 'status', title: 'Estado', width: 12 },
+      ],
+      `dias_feriados_${today}`,
+      'Días Feriados'
+    );
   };
 
   const getTypeColor = (type: Holiday['type']) => {

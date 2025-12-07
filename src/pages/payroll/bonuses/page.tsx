@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { bonusesService } from '../../../services/database';
 
 interface Bonus {
@@ -233,29 +234,46 @@ export default function PayrollBonusesPage() {
     }
   };
 
-  const exportToCSV = () => {
-    const csvContent = [
-      ['Nombre', 'Tipo', 'Monto/Porcentaje', 'Frecuencia', 'Categoría', 'Gravable', 'Afecta ISR', 'Afecta SS', 'Estado'].join(','),
-      ...filteredBonuses.map(bonus => [
-        bonus.name,
-        bonus.type,
-        bonus.type === 'fijo' ? `RD$${bonus.amount.toLocaleString()}` : 
-        bonus.type === 'porcentaje' ? `${bonus.percentage}%` : bonus.formula,
-        bonus.frequency,
-        bonus.category,
-        bonus.isTaxable ? 'Sí' : 'No',
-        bonus.affectsISR ? 'Sí' : 'No',
-        bonus.affectsSocialSecurity ? 'Sí' : 'No',
-        bonus.isActive ? 'Activo' : 'Inactivo'
-      ].join(','))
-    ].join('\n');
+  const exportToCSV = async () => {
+    const today = new Date().toISOString().split('T')[0];
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'bonificaciones.csv';
-    a.click();
+    const rows = filteredBonuses.map(bonus => ({
+      name: bonus.name,
+      type:
+        bonus.type === 'fijo' ? 'Monto Fijo' :
+        bonus.type === 'porcentaje' ? 'Porcentaje' : 'Fórmula',
+      value:
+        bonus.type === 'fijo' ? `RD$${bonus.amount.toLocaleString()}` :
+        bonus.type === 'porcentaje' ? `${bonus.percentage}%` : bonus.formula,
+      frequency: getFrequencyLabel(bonus.frequency),
+      category: getCategoryLabel(bonus.category),
+      taxable: bonus.isTaxable ? 'Sí' : 'No',
+      affectsISR: bonus.affectsISR ? 'Sí' : 'No',
+      affectsSS: bonus.affectsSocialSecurity ? 'Sí' : 'No',
+      status: bonus.isActive ? 'Activo' : 'Inactivo',
+    }));
+
+    if (!rows.length) {
+      alert('No hay bonificaciones para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'name', title: 'Nombre', width: 26 },
+        { key: 'type', title: 'Tipo', width: 16 },
+        { key: 'value', title: 'Monto/Porcentaje', width: 20 },
+        { key: 'frequency', title: 'Frecuencia', width: 16 },
+        { key: 'category', title: 'Categoría', width: 18 },
+        { key: 'taxable', title: 'Gravable', width: 12 },
+        { key: 'affectsISR', title: 'Afecta ISR', width: 14 },
+        { key: 'affectsSS', title: 'Afecta SS', width: 14 },
+        { key: 'status', title: 'Estado', width: 12 },
+      ],
+      `bonificaciones_${today}`,
+      'Bonificaciones'
+    );
   };
 
   const getCategoryColor = (category: Bonus['category']) => {

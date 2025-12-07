@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { commissionTypesService } from '../../../services/database';
 
 interface CommissionType {
@@ -201,31 +202,48 @@ export default function CommissionTypesPage() {
     }
   };
 
-  const exportToCSV = () => {
-    const headers = ['Nombre', 'Descripción', 'Tipo de Cálculo', 'Tasa/Monto', 'Basado en', 'Frecuencia', 'Estado'];
-    const csvData = filteredTypes.map(type => [
-      type.name,
-      type.description,
-      type.calculationType === 'percentage' ? 'Porcentaje' : 
-      type.calculationType === 'fixed' ? 'Monto Fijo' : 'Escalonado',
-      type.calculationType === 'percentage' ? `${type.rate}%` : `$${type.rate.toLocaleString()}`,
-      type.basedOn === 'sales' ? 'Ventas' : 
-      type.basedOn === 'profit' ? 'Utilidad' : 
-      type.basedOn === 'units' ? 'Unidades' : 'Ingresos',
-      type.paymentFrequency === 'monthly' ? 'Mensual' : 
-      type.paymentFrequency === 'quarterly' ? 'Trimestral' : 'Anual',
-      type.isActive ? 'Activo' : 'Inactivo'
-    ]);
+  const exportToCSV = async () => {
+    const today = new Date().toISOString().split('T')[0];
 
-    const csvContent = [headers, ...csvData]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
-      .join('\n');
+    const rows = filteredTypes.map(type => ({
+      name: type.name,
+      description: type.description,
+      calcType:
+        type.calculationType === 'percentage' ? 'Porcentaje' :
+        type.calculationType === 'fixed' ? 'Monto Fijo' : 'Escalonado',
+      rate:
+        type.calculationType === 'percentage'
+          ? `${type.rate}%`
+          : `$${type.rate.toLocaleString()}`,
+      basedOn:
+        type.basedOn === 'sales' ? 'Ventas' :
+        type.basedOn === 'profit' ? 'Utilidad' :
+        type.basedOn === 'units' ? 'Unidades' : 'Ingresos',
+      frequency:
+        type.paymentFrequency === 'monthly' ? 'Mensual' :
+        type.paymentFrequency === 'quarterly' ? 'Trimestral' : 'Anual',
+      status: type.isActive ? 'Activo' : 'Inactivo',
+    }));
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'tipos_comisiones.csv';
-    link.click();
+    if (!rows.length) {
+      alert('No hay tipos de comisiones para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'name', title: 'Nombre', width: 24 },
+        { key: 'description', title: 'Descripción', width: 40 },
+        { key: 'calcType', title: 'Tipo de Cálculo', width: 20 },
+        { key: 'rate', title: 'Tasa/Monto', width: 18 },
+        { key: 'basedOn', title: 'Basado en', width: 18 },
+        { key: 'frequency', title: 'Frecuencia', width: 16 },
+        { key: 'status', title: 'Estado', width: 12 },
+      ],
+      `tipos_comisiones_${today}`,
+      'Tipos de Comisiones'
+    );
   };
 
   const activeTypes = commissionTypes.filter(type => type.isActive).length;

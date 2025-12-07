@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { departmentsService, positionsService, employeesService, employeeTypesService, salaryTypesService } from '../../../services/database';
 
 interface Employee {
@@ -283,33 +284,48 @@ export default function EmployeesPage() {
     return salaryTypes.find(type => type.id === id)?.name || 'N/A';
   };
 
-  const exportToExcel = () => {
-    const csvContent = [
-      'Listado de Empleados',
-      `Generado: ${new Date().toLocaleDateString()}`,
-      '',
-      'Código,Nombre,Email,Teléfono,Identificación,Departamento,Posición,Tipo Empleado,Tipo Salario,Salario Base,Fecha Contratación,Estado',
-      ...filteredEmployees.map(emp => [
-        emp.employee_code,
-        `"${emp.first_name} ${emp.last_name}"`,
-        emp.email,
-        emp.phone,
-        emp.identification,
-        `"${getDepartmentName(emp.department_id)}"`,
-        `"${getPositionTitle(emp.position_id)}"`,
-        `"${getEmployeeTypeName(emp.employee_type_id)}"`,
-        `"${getSalaryTypeName(emp.salary_type_id)}"`,
-        emp.base_salary,
-        emp.hire_date,
-        emp.status
-      ].join(','))
-    ].join('\n');
+  const exportToExcel = async () => {
+    const today = new Date().toISOString().split('T')[0];
 
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `empleados_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+    const rows = filteredEmployees.map(emp => ({
+      code: emp.employee_code,
+      name: `${emp.first_name} ${emp.last_name}`,
+      email: emp.email,
+      phone: emp.phone,
+      identification: emp.identification,
+      department: getDepartmentName(emp.department_id),
+      position: getPositionTitle(emp.position_id),
+      employeeType: getEmployeeTypeName(emp.employee_type_id),
+      salaryType: getSalaryTypeName(emp.salary_type_id),
+      baseSalary: emp.base_salary || 0,
+      hireDate: emp.hire_date,
+      status: emp.status,
+    }));
+
+    if (!rows.length) {
+      alert('No hay empleados para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'code', title: 'Código', width: 14 },
+        { key: 'name', title: 'Nombre', width: 28 },
+        { key: 'email', title: 'Email', width: 26 },
+        { key: 'phone', title: 'Teléfono', width: 16 },
+        { key: 'identification', title: 'Identificación', width: 18 },
+        { key: 'department', title: 'Departamento', width: 22 },
+        { key: 'position', title: 'Posición', width: 22 },
+        { key: 'employeeType', title: 'Tipo Empleado', width: 18 },
+        { key: 'salaryType', title: 'Tipo Salario', width: 18 },
+        { key: 'baseSalary', title: 'Salario Base', width: 16, numFmt: '#,##0.00' },
+        { key: 'hireDate', title: 'Fecha Contratación', width: 16 },
+        { key: 'status', title: 'Estado', width: 12 },
+      ],
+      `empleados_${today}`,
+      'Empleados'
+    );
   };
 
   const handleBulkAction = (action: string) => {

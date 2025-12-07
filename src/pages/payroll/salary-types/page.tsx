@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { salaryTypesService } from '../../../services/database';
 
 interface SalaryType {
@@ -180,30 +181,47 @@ export default function SalaryTypesPage() {
     }
   };
 
-  const exportToExcel = () => {
-    const csvContent = [
-      ['Nombre', 'Descripción', 'Método de Cálculo', 'Monto Base', 'Tasa Comisión', 'Tasa Horas Extra', 'Tasa Turno Nocturno', 'Tasa Días Feriados', 'Estado', 'Fecha Creación'].join(','),
-      ...filteredTypes.map(type => [
-        type.name,
-        type.description,
-        type.calculation_method === 'fixed' ? 'Fijo' : 
+  const exportToExcel = async () => {
+    const today = new Date().toISOString().split('T')[0];
+
+    const rows = filteredTypes.map(type => ({
+      name: type.name,
+      description: type.description,
+      method:
+        type.calculation_method === 'fixed' ? 'Fijo' :
         type.calculation_method === 'hourly' ? 'Por Horas' :
         type.calculation_method === 'commission' ? 'Comisión' : 'Mixto',
-        type.base_amount.toLocaleString(),
-        type.commission_rate ? `${type.commission_rate}%` : 'N/A',
-        `${(type.overtime_rate * 100)}%`,
-        `${(type.night_shift_rate * 100)}%`,
-        `${(type.holiday_rate * 100)}%`,
-        type.is_active ? 'Activo' : 'Inactivo',
-        type.created_at
-      ].join(','))
-    ].join('\\n');
+      baseAmount: type.base_amount,
+      commissionRate: type.commission_rate ? `${type.commission_rate}%` : 'N/A',
+      overtimeRate: `${(type.overtime_rate * 100)}%`,
+      nightShiftRate: `${(type.night_shift_rate * 100)}%`,
+      holidayRate: `${(type.holiday_rate * 100)}%`,
+      status: type.is_active ? 'Activo' : 'Inactivo',
+      createdAt: type.created_at,
+    }));
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `tipos_salarios_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+    if (!rows.length) {
+      alert('No hay tipos de salario para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'name', title: 'Nombre', width: 22 },
+        { key: 'description', title: 'Descripción', width: 40 },
+        { key: 'method', title: 'Método de Cálculo', width: 20 },
+        { key: 'baseAmount', title: 'Monto Base', width: 16, numFmt: '#,##0.00' },
+        { key: 'commissionRate', title: 'Tasa Comisión', width: 16 },
+        { key: 'overtimeRate', title: 'Tasa Horas Extra', width: 18 },
+        { key: 'nightShiftRate', title: 'Tasa Turno Nocturno', width: 20 },
+        { key: 'holidayRate', title: 'Tasa Días Feriados', width: 20 },
+        { key: 'status', title: 'Estado', width: 12 },
+        { key: 'createdAt', title: 'Fecha Creación', width: 16 },
+      ],
+      `tipos_salarios_${today}`,
+      'Tipos de Salarios'
+    );
   };
 
   const getMethodLabel = (method: string) => {

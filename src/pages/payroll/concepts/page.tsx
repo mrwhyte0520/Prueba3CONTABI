@@ -1,6 +1,7 @@
 
 import { useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 
 interface PayrollConcept {
   id: string;
@@ -118,30 +119,57 @@ export default function PayrollConceptsPage() {
     ));
   };
 
-  const exportToExcel = () => {
-    const csvContent = [
-      ['Código', 'Nombre', 'Descripción', 'Tipo', 'Categoría', 'Tipo Cálculo', 'Valor', 'Gravable', 'Afecta SS', 'Obligatorio', 'Estado'].join(','),
-      ...filteredConcepts.map(concept => [
-        concept.code,
-        concept.name,
-        concept.description,
-        concept.type === 'income' ? 'Ingreso' : concept.type === 'deduction' ? 'Deducción' : 'Aporte',
-        concept.category,
-        concept.calculation_type === 'fixed' ? 'Fijo' : concept.calculation_type === 'percentage' ? 'Porcentaje' : 'Fórmula',
-        concept.calculation_type === 'fixed' ? `RD$${concept.amount?.toLocaleString()}` :
-        concept.calculation_type === 'percentage' ? `${concept.percentage}%` : concept.formula,
-        concept.is_taxable ? 'Sí' : 'No',
-        concept.affects_social_security ? 'Sí' : 'No',
-        concept.is_mandatory ? 'Sí' : 'No',
-        concept.is_active ? 'Activo' : 'Inactivo'
-      ].join(','))
-    ].join('\\n');
+  const exportToExcel = async () => {
+    const today = new Date().toISOString().split('T')[0];
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `conceptos_nomina_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+    const rows = filteredConcepts.map(concept => ({
+      code: concept.code,
+      name: concept.name,
+      description: concept.description,
+      type:
+        concept.type === 'income' ? 'Ingreso'
+        : concept.type === 'deduction' ? 'Deducción'
+        : 'Aporte',
+      category: concept.category,
+      calculationType:
+        concept.calculation_type === 'fixed' ? 'Fijo'
+        : concept.calculation_type === 'percentage' ? 'Porcentaje'
+        : 'Fórmula',
+      value:
+        concept.calculation_type === 'fixed'
+          ? `RD$${(concept.amount ?? 0).toLocaleString()}`
+          : concept.calculation_type === 'percentage'
+            ? `${concept.percentage ?? 0}%`
+            : concept.formula || '',
+      taxable: concept.is_taxable ? 'Sí' : 'No',
+      affectsSS: concept.affects_social_security ? 'Sí' : 'No',
+      mandatory: concept.is_mandatory ? 'Sí' : 'No',
+      status: concept.is_active ? 'Activo' : 'Inactivo',
+    }));
+
+    if (!rows.length) {
+      alert('No hay conceptos para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'code', title: 'Código', width: 14 },
+        { key: 'name', title: 'Nombre', width: 26 },
+        { key: 'description', title: 'Descripción', width: 40 },
+        { key: 'type', title: 'Tipo', width: 14 },
+        { key: 'category', title: 'Categoría', width: 18 },
+        { key: 'calculationType', title: 'Tipo Cálculo', width: 18 },
+        { key: 'value', title: 'Valor', width: 18 },
+        { key: 'taxable', title: 'Gravable', width: 12 },
+        { key: 'affectsSS', title: 'Afecta SS', width: 12 },
+        { key: 'mandatory', title: 'Obligatorio', width: 12 },
+        { key: 'status', title: 'Estado', width: 12 },
+      ],
+      `conceptos_nomina_${today}`,
+      'Conceptos'
+    );
   };
 
   const getTypeLabel = (type: string) => {

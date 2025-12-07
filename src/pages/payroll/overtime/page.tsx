@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { employeesService, overtimeService } from '../../../services/database';
 
 interface OvertimeRecord {
@@ -292,36 +293,49 @@ export default function OvertimePage() {
     }
   };
 
-  const exportToCSV = () => {
-    const headers = ['Empleado', 'Departamento', 'Fecha', 'Horas', 'Tipo', 'Tasa', 'Total', 'Estado'];
-    const csvData = filteredRecords.map(record => [
-      record.employeeName,
-      record.department,
-      record.date,
-      record.totalHours.toString(),
-      record.overtimeType === 'regular' ? 'Regular' : 
-      record.overtimeType === 'night' ? 'Nocturno' : 
-      record.overtimeType === 'holiday' ? 'Feriado' : 'Domingo',
-      `${record.overtimeRate}x`,
-      `$${record.totalAmount.toLocaleString()}`,
-      record.status === 'pending' ? 'Pendiente' : 
-      record.status === 'approved' ? 'Aprobado' : 
-      record.status === 'rejected' ? 'Rechazado' : 'Pagado'
-    ]);
+  const exportToCSV = async () => {
+    const today = new Date().toISOString().split('T')[0];
 
-    const csvContent = [headers, ...csvData]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
-      .join('\n');
+    const rows = filteredRecords.map(record => ({
+      employee: record.employeeName,
+      department: record.department,
+      date: record.date,
+      hours: record.totalHours,
+      type:
+        record.overtimeType === 'regular' ? 'Regular' :
+        record.overtimeType === 'night' ? 'Nocturno' :
+        record.overtimeType === 'holiday' ? 'Feriado' : 'Domingo',
+      rate: `${record.overtimeRate}x`,
+      total: record.totalAmount,
+      status:
+        record.status === 'pending' ? 'Pendiente' :
+        record.status === 'approved' ? 'Aprobado' :
+        record.status === 'rejected' ? 'Rechazado' : 'Pagado',
+    }));
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'horas_extras.csv';
-    link.click();
+    if (!rows.length) {
+      alert('No hay registros de horas extras para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'employee', title: 'Empleado', width: 26 },
+        { key: 'department', title: 'Departamento', width: 22 },
+        { key: 'date', title: 'Fecha', width: 14 },
+        { key: 'hours', title: 'Horas', width: 10, numFmt: '0.0' },
+        { key: 'type', title: 'Tipo', width: 16 },
+        { key: 'rate', title: 'Tasa', width: 10 },
+        { key: 'total', title: 'Total', width: 16, numFmt: '#,##0.00' },
+        { key: 'status', title: 'Estado', width: 14 },
+      ],
+      `horas_extras_${today}`,
+      'Horas Extras'
+    );
   };
 
   const pendingRecords = overtimeRecords.filter(r => r.status === 'pending').length;
-  const approvedRecords = overtimeRecords.filter(r => r.status === 'approved').length;
   const totalHours = overtimeRecords.reduce((sum, r) => sum + r.totalHours, 0);
   const totalAmount = overtimeRecords.filter(r => r.status === 'approved').reduce((sum, r) => sum + r.totalAmount, 0);
   const departments = [...new Set(overtimeRecords.map(r => r.department))];

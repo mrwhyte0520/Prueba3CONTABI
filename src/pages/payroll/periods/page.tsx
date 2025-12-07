@@ -1,6 +1,7 @@
 
 import { useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 
 interface PayrollPeriod {
   id: string;
@@ -101,33 +102,52 @@ export default function PayrollPeriodsPage() {
     ));
   };
 
-  const exportToExcel = () => {
-    const csvContent = [
-      ['Período', 'Tipo', 'Fecha Inicio', 'Fecha Fin', 'Fecha Pago', 'Estado', 'Empleados', 'Total Bruto', 'Deducciones', 'Total Neto'].join(','),
-      ...filteredPeriods.map(period => [
-        period.name,
-        period.period_type === 'monthly' ? 'Mensual' : 
+  const exportToExcel = async () => {
+    const today = new Date().toISOString().split('T')[0];
+
+    const rows = filteredPeriods.map(period => ({
+      name: period.name,
+      type:
+        period.period_type === 'monthly' ? 'Mensual' :
         period.period_type === 'biweekly' ? 'Quincenal' :
-        period.period_type === 'weekly' ? 'Semanal' : period.period_type,
-        period.start_date,
-        period.end_date,
-        period.pay_date,
+        period.period_type === 'weekly' ? 'Semanal' :
+        period.period_type === 'quarterly' ? 'Trimestral' : 'Anual',
+      startDate: period.start_date,
+      endDate: period.end_date,
+      payDate: period.pay_date,
+      status:
         period.status === 'draft' ? 'Borrador' :
         period.status === 'processing' ? 'Procesando' :
         period.status === 'calculated' ? 'Calculado' :
         period.status === 'paid' ? 'Pagado' : 'Cerrado',
-        period.total_employees.toString(),
-        `RD$${period.total_gross.toLocaleString()}`,
-        `RD$${period.total_deductions.toLocaleString()}`,
-        `RD$${period.total_net.toLocaleString()}`
-      ].join(','))
-    ].join('\\n');
+      totalEmployees: period.total_employees,
+      totalGross: period.total_gross,
+      totalDeductions: period.total_deductions,
+      totalNet: period.total_net,
+    }));
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `periodos_nomina_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+    if (!rows.length) {
+      alert('No hay períodos para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'name', title: 'Período', width: 22 },
+        { key: 'type', title: 'Tipo', width: 14 },
+        { key: 'startDate', title: 'Fecha Inicio', width: 16 },
+        { key: 'endDate', title: 'Fecha Fin', width: 16 },
+        { key: 'payDate', title: 'Fecha Pago', width: 16 },
+        { key: 'status', title: 'Estado', width: 14 },
+        { key: 'totalEmployees', title: 'Empleados', width: 12 },
+        { key: 'totalGross', title: 'Total Bruto', width: 16, numFmt: '#,##0.00' },
+        { key: 'totalDeductions', title: 'Deducciones', width: 16, numFmt: '#,##0.00' },
+        { key: 'totalNet', title: 'Total Neto', width: 16, numFmt: '#,##0.00' },
+      ],
+      `periodos_nomina_${today}`,
+      'Períodos'
+    );
   };
 
   const getStatusLabel = (status: string) => {

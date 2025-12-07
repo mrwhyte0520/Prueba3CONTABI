@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { employeesService, vacationsService } from '../../../services/database';
 
 interface VacationRequest {
@@ -311,34 +312,48 @@ export default function VacationsPage() {
     }
   };
 
-  const exportToCSV = () => {
-    const headers = ['Empleado', 'Departamento', 'Tipo', 'Fecha Inicio', 'Fecha Fin', 'Días', 'Estado', 'Motivo'];
-    const csvData = filteredRequests.map(request => [
-      request.employeeName,
-      request.department,
-      request.vacationType === 'annual' ? 'Anuales' : 
-      request.vacationType === 'sick' ? 'Enfermedad' : 
-      request.vacationType === 'maternity' ? 'Maternidad' : 
-      request.vacationType === 'paternity' ? 'Paternidad' : 
-      request.vacationType === 'personal' ? 'Personales' : 'Compensatorias',
-      request.startDate,
-      request.endDate,
-      request.totalDays.toString(),
-      request.status === 'pending' ? 'Pendiente' : 
-      request.status === 'approved' ? 'Aprobado' : 
-      request.status === 'rejected' ? 'Rechazado' : 'Tomado',
-      request.reason
-    ]);
+  const exportToCSV = async () => {
+    const today = new Date().toISOString().split('T')[0];
 
-    const csvContent = [headers, ...csvData]
-      .map(row => row.map(cell => `"${cell}"`).join(','))
-      .join('\n');
+    const rows = filteredRequests.map(request => ({
+      employee: request.employeeName,
+      department: request.department,
+      type:
+        request.vacationType === 'annual' ? 'Anuales' :
+        request.vacationType === 'sick' ? 'Enfermedad' :
+        request.vacationType === 'maternity' ? 'Maternidad' :
+        request.vacationType === 'paternity' ? 'Paternidad' :
+        request.vacationType === 'personal' ? 'Personales' : 'Compensatorias',
+      startDate: request.startDate,
+      endDate: request.endDate,
+      totalDays: request.totalDays,
+      status:
+        request.status === 'pending' ? 'Pendiente' :
+        request.status === 'approved' ? 'Aprobado' :
+        request.status === 'rejected' ? 'Rechazado' : 'Tomado',
+      reason: request.reason,
+    }));
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'solicitudes_vacaciones.csv';
-    link.click();
+    if (!rows.length) {
+      alert('No hay solicitudes para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'employee', title: 'Empleado', width: 26 },
+        { key: 'department', title: 'Departamento', width: 22 },
+        { key: 'type', title: 'Tipo', width: 18 },
+        { key: 'startDate', title: 'Fecha Inicio', width: 16 },
+        { key: 'endDate', title: 'Fecha Fin', width: 16 },
+        { key: 'totalDays', title: 'Días', width: 10 },
+        { key: 'status', title: 'Estado', width: 14 },
+        { key: 'reason', title: 'Motivo', width: 40 },
+      ],
+      `solicitudes_vacaciones_${today}`,
+      'Vacaciones'
+    );
   };
 
   const pendingRequests = vacationRequests.filter(r => r.status === 'pending').length;

@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 import { employeesService, royaltiesService } from '../../../services/database';
 
 interface Royalty {
@@ -286,28 +287,42 @@ export default function PayrollRoyaltiesPage() {
     }
   };
 
-  const exportToExcel = () => {
-    const csvContent = [
-      ['Empleado', 'Departamento', 'Tipo', 'Monto Base', 'Monto Calculado', 'Período', 'Estado'].join(','),
-      ...filteredRoyalties.map(royalty => [
-        royalty.employeeName,
-        royalty.department,
-        royalty.royaltyType === 'percentage' ? 'Porcentaje' : 
-        royalty.royaltyType === 'fixed' ? 'Monto Fijo' : 'Fórmula',
-        royalty.baseAmount,
-        royalty.calculatedAmount,
-        royalty.period === 'monthly' ? 'Mensual' : 
-        royalty.period === 'quarterly' ? 'Trimestral' : 'Anual',
-        royalty.isActive ? 'Activo' : 'Inactivo'
-      ].join(','))
-    ].join('\n');
+  const exportToExcel = async () => {
+    const today = new Date().toISOString().split('T')[0];
 
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'regalias.csv';
-    a.click();
+    const rows = filteredRoyalties.map(royalty => ({
+      employee: royalty.employeeName,
+      department: royalty.department,
+      type:
+        royalty.royaltyType === 'percentage' ? 'Porcentaje' :
+        royalty.royaltyType === 'fixed' ? 'Monto Fijo' : 'Fórmula',
+      baseAmount: royalty.baseAmount,
+      calculatedAmount: royalty.calculatedAmount,
+      period:
+        royalty.period === 'monthly' ? 'Mensual' :
+        royalty.period === 'quarterly' ? 'Trimestral' : 'Anual',
+      status: royalty.isActive ? 'Activo' : 'Inactivo',
+    }));
+
+    if (!rows.length) {
+      alert('No hay regalías para exportar.');
+      return;
+    }
+
+    await exportToExcelStyled(
+      rows,
+      [
+        { key: 'employee', title: 'Empleado', width: 26 },
+        { key: 'department', title: 'Departamento', width: 22 },
+        { key: 'type', title: 'Tipo', width: 16 },
+        { key: 'baseAmount', title: 'Monto Base', width: 16, numFmt: '#,##0.00' },
+        { key: 'calculatedAmount', title: 'Monto Calculado', width: 18, numFmt: '#,##0.00' },
+        { key: 'period', title: 'Período', width: 14 },
+        { key: 'status', title: 'Estado', width: 12 },
+      ],
+      `regalias_${today}`,
+      'Regalías'
+    );
   };
 
   const totalRoyalties = filteredRoyalties.reduce((sum, royalty) => sum + royalty.calculatedAmount, 0);
