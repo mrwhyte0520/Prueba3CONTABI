@@ -1,7 +1,8 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { departmentsService, positionsService, employeesService, payrollService, taxService } from '../../services/database';
+import { departmentsService, positionsService, employeesService, payrollService, taxService, settingsService } from '../../services/database';
+import { exportToExcelWithHeaders } from '../../utils/exportImportUtils';
 
 interface Employee {
   id: string;
@@ -426,18 +427,46 @@ export default function PayrollPage() {
     }
   };
 
-  const exportToExcel = (data: any[], filename: string) => {
-    const headers = Object.keys(data[0] || {});
-    const csvContent = [
-      headers.join(','),
-      ...data.map(row => headers.map(header => `"${row[header] || ''}"`).join(','))
-    ].join('\n');
+  const exportToExcel = async (data: any[], filename: string, title?: string) => {
+    if (!data || data.length === 0) {
+      alert('No hay datos para exportar.');
+      return;
+    }
 
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${filename}_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de nómina:', error);
+    }
+
+    const headersKeys = Object.keys(data[0] || {});
+    const headers = headersKeys.map((key) => ({ key, title: key }));
+
+    const fileBase = `${filename}_${new Date().toISOString().split('T')[0]}`;
+    const reportTitle = title || filename.replace(/_/g, ' ');
+
+    exportToExcelWithHeaders(
+      data,
+      headers,
+      fileBase,
+      'Reporte',
+      undefined,
+      {
+        title: reportTitle,
+        companyName,
+      },
+    );
   };
 
   const handleBulkAction = (action: string) => {
@@ -699,7 +728,7 @@ export default function PayrollPage() {
                 Posición: getPositionTitle(emp.position_id),
                 Salario: emp.salary,
                 Estado: emp.status
-              })), 'empleados')}
+              })), 'empleados', 'Reporte de Empleados')}
               className="flex items-center justify-center space-x-2 bg-purple-600 text-white px-4 py-3 rounded-lg hover:bg-purple-700 transition-colors"
             >
               <i className="ri-download-line"></i>
@@ -772,7 +801,7 @@ export default function PayrollPage() {
                 Salario: emp.salary,
                 'Fecha Contratación': emp.hire_date,
                 Estado: emp.status
-              })), 'empleados_filtrados')}
+              })), 'empleados_filtrados', 'Empleados (Filtros Aplicados)')}
               className="bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
             >
               <i className="ri-download-line"></i>
@@ -1117,7 +1146,7 @@ export default function PayrollPage() {
                   'Total Deducciones': period.total_deductions,
                   'Total Neto': period.total_net,
                   'Empleados': period.employee_count
-                }], `nomina_${period.period_name.replace(' ', '_')}`)}
+                }], `nomina_${period.period_name.replace(' ', '_')}`, `Nómina - ${period.period_name}`)}
                 className="bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 transition-colors"
               >
                 <i className="ri-download-line"></i>
@@ -1161,7 +1190,7 @@ export default function PayrollPage() {
               'Cuenta Bancaria': emp.bank_account || '',
               Identificación: emp.identification || '',
               Dirección: emp.address || ''
-            })), 'reporte_empleados')}
+            })), 'reporte_empleados', 'Reporte de Empleados')}
             className="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
           >
             <i className="ri-download-line mr-2"></i>

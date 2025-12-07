@@ -49,12 +49,26 @@ export default function PayrollConfigurationPage() {
   const loadConfiguration = async () => {
     setLoading(true);
     try {
-      const data = await settingsService.getPayrollSettings();
+      const [data, companyInfo] = await Promise.all([
+        settingsService.getPayrollSettings(),
+        settingsService.getCompanyInfo(),
+      ]);
+
+      const resolvedCompanyName = companyInfo
+        ? (companyInfo as any).name || (companyInfo as any).company_name || ''
+        : '';
+      const resolvedTaxId = companyInfo
+        ? (companyInfo as any).ruc || (companyInfo as any).tax_id || (companyInfo as any).rnc || ''
+        : '';
+      const resolvedCurrency = companyInfo
+        ? (companyInfo as any).currency || ''
+        : '';
+
       if (data) {
         const normalized: PayrollConfig = {
           id: data.id,
-          company_name: data.company_name || '',
-          tax_id: data.tax_id || '',
+          company_name: data.company_name || resolvedCompanyName || '',
+          tax_id: data.tax_id || resolvedTaxId || '',
           social_security_rate: Number(data.social_security_rate) || 0,
           income_tax_rate: Number(data.income_tax_rate) || 0,
           christmas_bonus_rate: Number(data.christmas_bonus_rate) || 0,
@@ -65,7 +79,7 @@ export default function PayrollConfigurationPage() {
           sunday_rate: Number(data.sunday_rate) || 1.5,
           holiday_rate: Number(data.holiday_rate) || 2.0,
           min_wage: Number(data.min_wage) || 0,
-          currency: data.currency || 'DOP',
+          currency: data.currency || resolvedCurrency || 'DOP',
           pay_frequency: (data.pay_frequency as PayrollConfig['pay_frequency']) || 'monthly',
           fiscal_year_start: data.fiscal_year_start || '',
           backup_frequency: (data.backup_frequency as PayrollConfig['backup_frequency']) || 'weekly',
@@ -75,8 +89,8 @@ export default function PayrollConfigurationPage() {
         setConfig(normalized);
       } else {
         setConfig({
-          company_name: '',
-          tax_id: '',
+          company_name: resolvedCompanyName || '',
+          tax_id: resolvedTaxId || '',
           social_security_rate: 0,
           income_tax_rate: 0,
           christmas_bonus_rate: 0,
@@ -87,7 +101,7 @@ export default function PayrollConfigurationPage() {
           sunday_rate: 1.5,
           holiday_rate: 2.0,
           min_wage: 0,
-          currency: 'DOP',
+          currency: resolvedCurrency || 'DOP',
           pay_frequency: 'monthly',
           fiscal_year_start: '',
           backup_frequency: 'weekly',
@@ -95,7 +109,7 @@ export default function PayrollConfigurationPage() {
           auto_generate_reports: true,
         });
       }
-      // Load tax brackets from Supabase
+
       const bracketsData = await settingsService.getPayrollTaxBrackets();
       const normalizedBrackets: TaxBracket[] = (bracketsData || []).map((b: any) => ({
         id: b.id,

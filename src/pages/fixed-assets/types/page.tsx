@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { assetTypesService, chartAccountsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { assetTypesService, chartAccountsService, settingsService } from '../../../services/database';
 
 interface AssetType {
   id: string;
@@ -360,72 +361,75 @@ export default function AssetTypesPage() {
     }
   };
 
-  const exportToExcel = () => {
-    // Preparar datos para Excel
+  const exportToExcel = async () => {
     const filteredData = filteredTypes;
-    const totalTypes = filteredData.length;
-    const activeTypes = filteredData.filter(type => type.isActive).length;
-    const inactiveTypes = filteredData.filter(type => !type.isActive).length;
-    const avgDepreciationRate = filteredData.reduce((sum, type) => sum + type.depreciationRate, 0) / filteredData.length;
+    if (!filteredData || filteredData.length === 0) {
+      alert('No hay datos para exportar.');
+      return;
+    }
 
-    // Crear contenido CSV
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de tipos de activos:', error);
+    }
+
+    const rows = filteredData.map((type) => ({
+      name: type.name,
+      description: type.description,
+      depreciation_rate: type.depreciationRate,
+      useful_life: type.usefulLife,
+      depreciation_method: type.depreciationMethod,
+      asset_account: type.account,
+      depreciation_account: type.depreciationAccount,
+      accumulated_depreciation_account: type.accumulatedDepreciationAccount,
+      revaluation_gain_account: type.revaluationGainAccount,
+      revaluation_loss_account: type.revaluationLossAccount,
+      status: type.isActive ? 'Activo' : 'Inactivo',
+      created_at: new Date(type.createdAt).toLocaleDateString('es-DO'),
+    }));
+
     const headers = [
-      'Tipo de Activo',
-      'Descripción',
-      'Tasa Depreciación (%)',
-      'Vida Útil (años)',
-      'Método Depreciación',
-      'Cuenta de Activo',
-      'Cuenta de Depreciación',
-      'Cuenta Depreciación Acumulada',
-      'Cuenta Ganancia Reval.',
-      'Cuenta Pérdida Reval.',
-      'Estado',
-      'Fecha Creación'
+      { key: 'name', title: 'Tipo de Activo' },
+      { key: 'description', title: 'Descripción' },
+      { key: 'depreciation_rate', title: 'Tasa Depreciación (%)' },
+      { key: 'useful_life', title: 'Vida Útil (años)' },
+      { key: 'depreciation_method', title: 'Método Depreciación' },
+      { key: 'asset_account', title: 'Cuenta de Activo' },
+      { key: 'depreciation_account', title: 'Cuenta de Depreciación' },
+      { key: 'accumulated_depreciation_account', title: 'Cuenta Depreciación Acumulada' },
+      { key: 'revaluation_gain_account', title: 'Cuenta Ganancia Reval.' },
+      { key: 'revaluation_loss_account', title: 'Cuenta Pérdida Reval.' },
+      { key: 'status', title: 'Estado' },
+      { key: 'created_at', title: 'Fecha Creación' },
     ];
 
-    const csvContent = [
-      // Encabezados del resumen
-      ['TIPOS DE ACTIVOS FIJOS'],
-      [`Reporte generado: ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}`],
-      [''],
-      ['RESUMEN DE CONFIGURACIÓN'],
-      ['Total de Tipos', totalTypes],
-      ['Tipos Activos', activeTypes],
-      ['Tipos Inactivos', inactiveTypes],
-      ['Tasa Promedio de Depreciación', `${avgDepreciationRate.toFixed(2)}%`],
-      [''],
-      ['FILTROS APLICADOS'],
-      ['Búsqueda', searchTerm || 'Ninguno'],
-      [''],
-      ['DETALLE DE TIPOS DE ACTIVOS'],
-      headers,
-      ...filteredData.map(type => [
-        type.name,
-        type.description,
-        type.depreciationRate,
-        type.usefulLife,
-        type.depreciationMethod,
-        type.account,
-        type.depreciationAccount,
-        type.accumulatedDepreciationAccount,
-        type.revaluationGainAccount,
-        type.revaluationLossAccount,
-        type.isActive ? 'Activo' : 'Inactivo',
-        new Date(type.createdAt).toLocaleDateString('es-DO')
-      ])
-    ].map(row => row.join(',')).join('\n');
+    const today = new Date().toISOString().split('T')[0];
+    const fileBase = `tipos_activos_${today}`;
+    const title = 'Tipos de Activos Fijos';
 
-    // Crear y descargar el archivo
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `tipos_activos_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      fileBase,
+      'TiposActivos',
+      [26, 32, 18, 16, 24, 26, 26, 30, 30, 30, 14, 16],
+      {
+        title,
+        companyName,
+      },
+    );
   };
 
   return (

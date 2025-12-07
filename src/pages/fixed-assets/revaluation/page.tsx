@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { fixedAssetsService, revaluationService, assetTypesService, chartAccountsService, journalEntriesService } from '../../../services/database';
+import { fixedAssetsService, revaluationService, assetTypesService, chartAccountsService, journalEntriesService, settingsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface Revaluation {
   id: string;
@@ -518,200 +519,80 @@ export default function RevaluationPage() {
     }
   };
 
-  const exportToPDF = () => {
-    // Crear contenido del PDF
-    const filteredData = filteredRevaluations;
-
-    // Función auxiliar para formatear moneda
-    const formatCurrency = (amount: number) => {
-      return new Intl.NumberFormat('es-DO', {
-        style: 'currency',
-        currency: 'DOP'
-      }).format(amount);
-    };
-
-    // Generar contenido HTML para el PDF
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>Revalorización de Activos Fijos</title>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 20px; }
-          .header { text-align: center; margin-bottom: 30px; }
-          .summary { background: #f8f9fa; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
-          .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
-          .summary-item { text-align: center; }
-          .summary-value { font-size: 18px; font-weight: bold; color: #2563eb; }
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-          th { background-color: #f8f9fa; font-weight: bold; }
-          .currency { text-align: right; }
-          .positive { color: #059669; font-weight: bold; }
-          .negative { color: #dc2626; font-weight: bold; }
-          .status-aprobado { color: #059669; font-weight: bold; }
-          .status-pendiente { color: #d97706; font-weight: bold; }
-          .status-revision { color: #2563eb; font-weight: bold; }
-          .status-rechazado { color: #dc2626; font-weight: bold; }
-          .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>Revalorización de Activos Fijos</h1>
-          <p>Reporte generado el ${new Date().toLocaleDateString('es-DO')} a las ${new Date().toLocaleTimeString('es-DO')}</p>
-        </div>
-        
-        <div class="summary">
-          <h3>Resumen de Revalorizaciones</h3>
-          <div class="summary-grid">
-            <div class="summary-item">
-              <div>Revalorización Total</div>
-              <div class="summary-value ${totalRevaluationAmount >= 0 ? 'positive' : 'negative'}">${formatCurrency(totalRevaluationAmount)}</div>
-            </div>
-            <div class="summary-item">
-              <div>Incrementos</div>
-              <div class="summary-value">${positiveRevaluations.length}</div>
-            </div>
-            <div class="summary-item">
-              <div>Decrementos</div>
-              <div class="summary-value">${negativeRevaluations.length}</div>
-            </div>
-            <div class="summary-item">
-              <div>Total Revalorizaciones</div>
-              <div class="summary-value">${filteredData.length}</div>
-            </div>
-          </div>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th>Código</th>
-              <th>Activo</th>
-              <th>Categoría</th>
-              <th>Valor Anterior</th>
-              <th>Nuevo Valor</th>
-              <th>Revalorización</th>
-              <th>Motivo</th>
-              <th>Método</th>
-              <th>Evaluador</th>
-              <th>Fecha</th>
-              <th>Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${filteredData.map(rev => `
-              <tr>
-                <td>${rev.assetCode}</td>
-                <td>${rev.assetName}</td>
-                <td>${rev.category}</td>
-                <td class="currency">${formatCurrency(rev.previousValue)}</td>
-                <td class="currency">${formatCurrency(rev.newValue)}</td>
-                <td class="currency ${rev.revaluationAmount >= 0 ? 'positive' : 'negative'}">
-                  ${rev.revaluationAmount >= 0 ? '+' : ''}${formatCurrency(rev.revaluationAmount)}
-                </td>
-                <td>${rev.reason}</td>
-                <td>${rev.method}</td>
-                <td>${rev.appraiser}</td>
-                <td>${new Date(rev.revaluationDate).toLocaleDateString('es-DO')}</td>
-                <td class="status-${rev.status.toLowerCase().replace(' ', '')}">${rev.status}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-
-        <div class="footer">
-          <p>Sistema de Gestión de Activos Fijos - Revalorizaciones</p>
-          <p>Filtros aplicados: ${searchTerm ? `Búsqueda: "${searchTerm}"` : ''} ${filterStatus ? `Estado: "${filterStatus}"` : ''} ${filterReason ? `Motivo: "${filterReason}"` : ''}</p>
-        </div>
-      </body>
-      </html>
-    `;
-
-    // Crear y abrir ventana para imprimir
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-      printWindow.focus();
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    } else {
-      alert('No se pudo abrir la ventana de impresión. Verifique que no esté bloqueada por el navegador.');
-    }
-  };
-
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     // Preparar datos para Excel
     const filteredData = filteredRevaluations;
 
-    // Crear contenido CSV
+    if (!filteredData || filteredData.length === 0) {
+      alert('No hay revalorizaciones para exportar.');
+      return;
+    }
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de revalorizaciones:', error);
+    }
+
+    const rows = filteredData.map((rev) => ({
+      assetCode: rev.assetCode,
+      assetName: rev.assetName,
+      category: rev.category,
+      originalValue: rev.originalValue,
+      previousValue: rev.previousValue,
+      newValue: rev.newValue,
+      revaluationAmount: rev.revaluationAmount,
+      revaluationDate: new Date(rev.revaluationDate).toLocaleDateString('es-DO'),
+      reason: rev.reason,
+      method: rev.method,
+      appraiser: rev.appraiser,
+      status: rev.status,
+      approvedBy: rev.approvedBy,
+      notes: rev.notes,
+    }));
+
     const headers = [
-      'Código Activo',
-      'Nombre del Activo',
-      'Categoría',
-      'Valor Original',
-      'Valor Anterior',
-      'Nuevo Valor',
-      'Monto Revalorización',
-      'Fecha Revalorización',
-      'Motivo',
-      'Método Evaluación',
-      'Evaluador/Tasador',
-      'Estado',
-      'Aprobado Por',
-      'Notas'
+      { key: 'assetCode', title: 'Código Activo' },
+      { key: 'assetName', title: 'Nombre del Activo' },
+      { key: 'category', title: 'Categoría' },
+      { key: 'originalValue', title: 'Valor Original' },
+      { key: 'previousValue', title: 'Valor Anterior' },
+      { key: 'newValue', title: 'Nuevo Valor' },
+      { key: 'revaluationAmount', title: 'Monto Revalorización' },
+      { key: 'revaluationDate', title: 'Fecha Revalorización' },
+      { key: 'reason', title: 'Motivo' },
+      { key: 'method', title: 'Método Evaluación' },
+      { key: 'appraiser', title: 'Evaluador/Tasador' },
+      { key: 'status', title: 'Estado' },
+      { key: 'approvedBy', title: 'Aprobado Por' },
+      { key: 'notes', title: 'Notas' },
     ];
 
-    const csvContent = [
-      // Encabezados del resumen
-      ['REVALORIZACIÓN DE ACTIVOS FIJOS'],
-      [`Reporte generado: ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}`],
-      [''],
-      ['RESUMEN DE REVALORIZACIONES'],
-      ['Revalorización Total', totalRevaluationAmount.toFixed(2)],
-      ['Incrementos', positiveRevaluations.length],
-      ['Decrementos', negativeRevaluations.length],
-      ['Total de Revalorizaciones', filteredData.length],
-      [''],
-      ['FILTROS APLICADOS'],
-      ['Búsqueda', searchTerm || 'Ninguno'],
-      ['Estado', filterStatus || 'Todos'],
-      ['Motivo', filterReason || 'Todos'],
-      [''],
-      ['DETALLE DE REVALORIZACIONES'],
-      headers,
-      ...filteredData.map(rev => [
-        rev.assetCode,
-        rev.assetName,
-        rev.category,
-        rev.originalValue.toFixed(2),
-        rev.previousValue.toFixed(2),
-        rev.newValue.toFixed(2),
-        rev.revaluationAmount.toFixed(2),
-        new Date(rev.revaluationDate).toLocaleDateString('es-DO'),
-        rev.reason,
-        rev.method,
-        rev.appraiser,
-        rev.status,
-        rev.approvedBy,
-        rev.notes
-      ])
-    ].map(row => row.join(',')).join('\n');
+    const fileBase = `revalorizaciones_${new Date().toISOString().split('T')[0]}`;
+    const title = 'Revalorización de Activos Fijos';
 
-    // Crear y descargar el archivo
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `revalorizaciones_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      fileBase,
+      'Revalorizaciones',
+      [16, 32, 22, 18, 18, 18, 20, 18, 24, 24, 24, 14, 20, 40],
+      {
+        title,
+        companyName,
+      },
+    );
   };
 
   const formatCurrency = (amount: number) => {

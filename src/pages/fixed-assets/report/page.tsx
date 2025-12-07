@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { fixedAssetsService, assetTypesService } from '../../../services/database';
+import { fixedAssetsService, assetTypesService, settingsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface AssetReportRow {
   id: string;
@@ -109,69 +110,74 @@ export default function FixedAssetsReportPage() {
     }).format(amount);
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     if (filteredAssets.length === 0) {
       alert('No hay datos para exportar');
       return;
     }
 
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel del reporte de activos fijos:', error);
+    }
+
+    const rows = filteredAssets.map((asset) => ({
+      code: asset.code,
+      name: asset.name,
+      category: asset.category,
+      location: asset.location,
+      acquisitionDate: asset.acquisitionDate
+        ? new Date(asset.acquisitionDate).toLocaleDateString('es-DO')
+        : '',
+      acquisitionCost: asset.acquisitionCost,
+      currentValue: asset.currentValue,
+      accumulatedDepreciation: asset.accumulatedDepreciation,
+      status: asset.status,
+      supplier: asset.supplier,
+      description: asset.description,
+    }));
+
     const headers = [
-      'Código',
-      'Nombre del Activo',
-      'Categoría',
-      'Ubicación',
-      'Fecha Adquisición',
-      'Costo Adquisición',
-      'Valor Actual',
-      'Depreciación Acumulada',
-      'Estado',
-      'Proveedor',
-      'Descripción',
+      { key: 'code', title: 'Código' },
+      { key: 'name', title: 'Nombre del Activo' },
+      { key: 'category', title: 'Categoría' },
+      { key: 'location', title: 'Ubicación' },
+      { key: 'acquisitionDate', title: 'Fecha Adquisición' },
+      { key: 'acquisitionCost', title: 'Costo Adquisición' },
+      { key: 'currentValue', title: 'Valor Actual' },
+      { key: 'accumulatedDepreciation', title: 'Depreciación Acumulada' },
+      { key: 'status', title: 'Estado' },
+      { key: 'supplier', title: 'Proveedor' },
+      { key: 'description', title: 'Descripción' },
     ];
 
-    const csvContent = [
-      ['REPORTE DE ACTIVOS FIJOS'],
-      [`Reporte generado: ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}`],
-      [''],
-      ['RESUMEN'],
-      ['Total de Activos', totals.totalAssets],
-      ['Costo Total de Adquisición', totals.totalCost.toFixed(2)],
-      ['Valor Actual Total', totals.totalCurrentValue.toFixed(2)],
-      ['Depreciación Acumulada Total', totals.totalDepreciation.toFixed(2)],
-      [''],
-      ['FILTROS APLICADOS'],
-      ['Búsqueda', searchTerm || 'Ninguno'],
-      ['Categoría', filterCategory || 'Todas'],
-      ['Estado', filterStatus || 'Todos'],
-      [''],
-      ['DETALLE DE ACTIVOS'],
-      headers,
-      ...filteredAssets.map((asset) => [
-        asset.code,
-        asset.name,
-        asset.category,
-        asset.location,
-        asset.acquisitionDate ? new Date(asset.acquisitionDate).toLocaleDateString('es-DO') : '',
-        asset.acquisitionCost.toFixed(2),
-        asset.currentValue.toFixed(2),
-        asset.accumulatedDepreciation.toFixed(2),
-        asset.status,
-        asset.supplier,
-        asset.description,
-      ]),
-    ]
-      .map((row) => row.join(','))
-      .join('\n');
+    const today = new Date().toISOString().split('T')[0];
+    const fileBase = `reporte_activos_fijos_${today}`;
+    const title = 'Reporte de Activos Fijos';
 
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `reporte_activos_fijos_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      fileBase,
+      'Activos Fijos',
+      [12, 28, 20, 18, 18, 18, 18, 22, 14, 24, 40],
+      {
+        title,
+        companyName,
+      },
+    );
   };
 
   return (

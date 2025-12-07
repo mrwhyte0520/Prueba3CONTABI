@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { fixedAssetsService, assetTypesService, suppliersService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { fixedAssetsService, assetTypesService, suppliersService, settingsService } from '../../../services/database';
 
 interface Asset {
   id: string;
@@ -218,196 +219,76 @@ export default function AssetRegisterPage() {
     }
   };
 
-  const exportToPDF = () => {
-    // Crear contenido del PDF
+  const exportToExcel = async () => {
     const filteredData = filteredAssets;
-    const totalAssets = filteredData.length;
-    const totalCost = filteredData.reduce((sum, asset) => sum + asset.acquisitionCost, 0);
-    const totalCurrentValue = filteredData.reduce((sum, asset) => sum + asset.currentValue, 0);
-    const totalDepreciation = filteredData.reduce((sum, asset) => sum + asset.accumulatedDepreciation, 0);
-
-    // Función auxiliar para formatear moneda
-    const formatCurrency = (amount: number) => {
-      return new Intl.NumberFormat('es-DO', {
-        style: 'currency',
-        currency: 'DOP'
-      }).format(amount);
-    };
-
-    // Generar contenido HTML para el PDF
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>Registro de Activos Fijos</title>
-        <style>
-          body { font-family: Arial, sans-serif; margin: 20px; }
-          .header { text-align: center; margin-bottom: 30px; }
-          .summary { background: #f8f9fa; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
-          .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
-          .summary-item { text-align: center; }
-          .summary-value { font-size: 18px; font-weight: bold; color: #2563eb; }
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-          th { background-color: #f8f9fa; font-weight: bold; }
-          .currency { text-align: right; }
-          .status-active { color: #059669; font-weight: bold; }
-          .status-inactive { color: #dc2626; font-weight: bold; }
-          .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>Registro de Activos Fijos</h1>
-          <p>Reporte generado el ${new Date().toLocaleDateString('es-DO')} a las ${new Date().toLocaleTimeString('es-DO')}</p>
-        </div>
-        
-        <div class="summary">
-          <h3>Resumen Ejecutivo</h3>
-          <div class="summary-grid">
-            <div class="summary-item">
-              <div>Total de Activos</div>
-              <div class="summary-value">${totalAssets}</div>
-            </div>
-            <div class="summary-item">
-              <div>Costo Total de Adquisición</div>
-              <div class="summary-value">${formatCurrency(totalCost)}</div>
-            </div>
-            <div class="summary-item">
-              <div>Valor Actual Total</div>
-              <div class="summary-value">${formatCurrency(totalCurrentValue)}</div>
-            </div>
-            <div class="summary-item">
-              <div>Depreciación Acumulada</div>
-              <div class="summary-value">${formatCurrency(totalDepreciation)}</div>
-            </div>
-          </div>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th>Código</th>
-              <th>Nombre del Activo</th>
-              <th>Categoría</th>
-              <th>Ubicación</th>
-              <th>Fecha Adquisición</th>
-              <th>Costo Adquisición</th>
-              <th>Valor Actual</th>
-              <th>Depreciación Acumulada</th>
-              <th>Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${filteredData.map(asset => `
-              <tr>
-                <td>${asset.code}</td>
-                <td>${asset.name}</td>
-                <td>${asset.category}</td>
-                <td>${asset.location}</td>
-                <td>${new Date(asset.acquisitionDate).toLocaleDateString('es-DO')}</td>
-                <td class="currency">${formatCurrency(asset.acquisitionCost)}</td>
-                <td class="currency">${formatCurrency(asset.currentValue)}</td>
-                <td class="currency">${formatCurrency(asset.accumulatedDepreciation)}</td>
-                <td class="${asset.status === 'Activo' ? 'status-active' : 'status-inactive'}">${asset.status}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-
-        <div class="footer">
-          <p>Sistema de Gestión de Activos Fijos - Reporte generado automáticamente</p>
-          <p>Filtros aplicados: ${searchTerm ? `Búsqueda: "${searchTerm}"` : ''} ${filterCategory ? `Categoría: "${filterCategory}"` : ''} ${filterStatus ? `Estado: "${filterStatus}"` : ''}</p>
-        </div>
-      </body>
-      </html>
-    `;
-
-    // Crear y abrir ventana para imprimir
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(htmlContent);
-      printWindow.document.close();
-      printWindow.focus();
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    } else {
-      alert('No se pudo abrir la ventana de impresión. Verifique que no esté bloqueada por el navegador.');
+    if (!filteredData || filteredData.length === 0) {
+      alert('No hay datos para exportar.');
+      return;
     }
-  };
 
-  const exportToExcel = () => {
-    // Preparar datos para Excel
-    const filteredData = filteredAssets;
-    const totalAssets = filteredData.length;
-    const totalCost = filteredData.reduce((sum, asset) => sum + asset.acquisitionCost, 0);
-    const totalCurrentValue = filteredData.reduce((sum, asset) => sum + asset.currentValue, 0);
-    const totalDepreciation = filteredData.reduce((sum, asset) => sum + asset.accumulatedDepreciation, 0);
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      console.error('Error obteniendo información de la empresa para Excel de activos fijos:', error);
+    }
 
-    // Crear contenido CSV
+    const rows = filteredData.map((asset) => ({
+      code: asset.code,
+      name: asset.name,
+      category: asset.category,
+      location: asset.location,
+      acquisition_date: asset.acquisitionDate,
+      acquisition_cost: asset.acquisitionCost,
+      useful_life: asset.usefulLife,
+      depreciation_method: asset.depreciationMethod,
+      current_value: asset.currentValue,
+      accumulated_depreciation: asset.accumulatedDepreciation,
+      status: asset.status,
+      supplier: asset.supplier,
+      description: asset.description,
+    }));
+
     const headers = [
-      'Código',
-      'Nombre del Activo',
-      'Categoría',
-      'Ubicación',
-      'Fecha Adquisición',
-      'Costo Adquisición',
-      'Vida Útil (años)',
-      'Método Depreciación',
-      'Valor Actual',
-      'Depreciación Acumulada',
-      'Estado',
-      'Proveedor',
-      'Descripción'
+      { key: 'code', title: 'Código' },
+      { key: 'name', title: 'Nombre del Activo' },
+      { key: 'category', title: 'Categoría' },
+      { key: 'location', title: 'Ubicación' },
+      { key: 'acquisition_date', title: 'Fecha Adquisición' },
+      { key: 'acquisition_cost', title: 'Costo Adquisición' },
+      { key: 'useful_life', title: 'Vida Útil (años)' },
+      { key: 'depreciation_method', title: 'Método Depreciación' },
+      { key: 'current_value', title: 'Valor Actual' },
+      { key: 'accumulated_depreciation', title: 'Depreciación Acumulada' },
+      { key: 'status', title: 'Estado' },
+      { key: 'supplier', title: 'Proveedor' },
+      { key: 'description', title: 'Descripción' },
     ];
 
-    const csvContent = [
-      // Encabezados del resumen
-      ['REGISTRO DE ACTIVOS FIJOS'],
-      [`Reporte generado: ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}`],
-      [''],
-      ['RESUMEN EJECUTIVO'],
-      ['Total de Activos', totalAssets],
-      ['Costo Total de Adquisición', totalCost.toFixed(2)],
-      ['Valor Actual Total', totalCurrentValue.toFixed(2)],
-      ['Depreciación Acumulada Total', totalDepreciation.toFixed(2)],
-      [''],
-      ['FILTROS APLICADOS'],
-      ['Búsqueda', searchTerm || 'Ninguno'],
-      ['Categoría', filterCategory || 'Todas'],
-      ['Estado', filterStatus || 'Todos'],
-      [''],
-      ['DETALLE DE ACTIVOS'],
-      headers,
-      ...filteredData.map(asset => [
-        asset.code,
-        asset.name,
-        asset.category,
-        asset.location,
-        new Date(asset.acquisitionDate).toLocaleDateString('es-DO'),
-        asset.acquisitionCost.toFixed(2),
-        asset.usefulLife,
-        asset.depreciationMethod,
-        asset.currentValue.toFixed(2),
-        asset.accumulatedDepreciation.toFixed(2),
-        asset.status,
-        asset.supplier,
-        asset.description
-      ])
-    ].map(row => row.join(',')).join('\n');
+    const today = new Date().toISOString().split('T')[0];
+    const fileBase = `registro_activos_${today}`;
+    const title = 'Registro de Activos Fijos';
 
-    // Crear y descargar el archivo
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `registro_activos_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      fileBase,
+      'Activos',
+      [12, 28, 20, 18, 16, 16, 14, 20, 16, 20, 14, 20, 32],
+      {
+        title,
+        companyName,
+      },
+    );
   };
 
   const formatCurrency = (amount: number) => {

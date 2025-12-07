@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { fixedAssetsService, assetDepreciationService } from '../../../services/database';
+import { fixedAssetsService, assetDepreciationService, settingsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface DepreciationEntry {
   id: string;
@@ -298,68 +299,71 @@ export default function DepreciationPage() {
     }
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     // Preparar datos para Excel
     const filteredData = filteredDepreciations;
 
-    // Crear contenido CSV
+    if (!filteredData || filteredData.length === 0) {
+      alert('No hay depreciaciones para exportar.');
+      return;
+    }
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name || (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de depreciaciones:', error);
+    }
+
+    const rows = filteredData.map(dep => ({
+      assetCode: dep.assetCode,
+      assetName: dep.assetName,
+      category: dep.category,
+      acquisitionCost: dep.acquisitionCost,
+      monthlyDepreciation: dep.monthlyDepreciation,
+      accumulatedDepreciation: dep.accumulatedDepreciation,
+      remainingValue: dep.remainingValue,
+      depreciationDate: new Date(dep.depreciationDate).toLocaleDateString('es-DO'),
+      period: dep.period,
+      method: dep.method,
+      status: dep.status,
+    }));
+
     const headers = [
-      'Código Activo',
-      'Nombre del Activo',
-      'Categoría',
-      'Costo Adquisición',
-      'Depreciación Mensual',
-      'Depreciación Acumulada',
-      'Valor Remanente',
-      'Fecha Depreciación',
-      'Período',
-      'Método Depreciación',
-      'Estado'
+      { key: 'assetCode', title: 'Código Activo' },
+      { key: 'assetName', title: 'Nombre del Activo' },
+      { key: 'category', title: 'Categoría' },
+      { key: 'acquisitionCost', title: 'Costo Adquisición' },
+      { key: 'monthlyDepreciation', title: 'Depreciación Mensual' },
+      { key: 'accumulatedDepreciation', title: 'Depreciación Acumulada' },
+      { key: 'remainingValue', title: 'Valor Remanente' },
+      { key: 'depreciationDate', title: 'Fecha Depreciación' },
+      { key: 'period', title: 'Período' },
+      { key: 'method', title: 'Método Depreciación' },
+      { key: 'status', title: 'Estado' },
     ];
 
-    const csvContent = [
-      // Encabezados del resumen
-      ['DEPRECIACIÓN DE ACTIVOS FIJOS'],
-      [`Reporte generado: ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}`],
-      [''],
-      ['RESUMEN DE DEPRECIACIONES'],
-      ['Depreciación del Mes', totalDepreciationMonth.toFixed(2)],
-      ['Depreciación Acumulada Total', totalAccumulated.toFixed(2)],
-      ['Valor Remanente Total', totalRemainingValue.toFixed(2)],
-      ['Total de Activos', filteredData.length],
-      [''],
-      ['FILTROS APLICADOS'],
-      ['Búsqueda', searchTerm || 'Ninguno'],
-      ['Período', filterPeriod || 'Todos'],
-      ['Estado', filterStatus || 'Todos'],
-      [''],
-      ['DETALLE DE DEPRECIACIONES'],
-      headers,
-      ...filteredData.map(dep => [
-        dep.assetCode,
-        dep.assetName,
-        dep.category,
-        dep.acquisitionCost.toFixed(2),
-        dep.monthlyDepreciation.toFixed(2),
-        dep.accumulatedDepreciation.toFixed(2),
-        dep.remainingValue.toFixed(2),
-        new Date(dep.depreciationDate).toLocaleDateString('es-DO'),
-        dep.period,
-        dep.method,
-        dep.status
-      ])
-    ].map(row => row.join(',')).join('\n');
+    const fileBase = `depreciaciones_${new Date().toISOString().split('T')[0]}`;
+    const title = 'Depreciación de Activos Fijos';
 
-    // Crear y descargar el archivo
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `depreciaciones_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      fileBase,
+      'Depreciaciones',
+      [16, 32, 22, 18, 20, 22, 20, 18, 12, 22, 14],
+      {
+        title,
+        companyName,
+      },
+    );
   };
 
   const formatCurrency = (amount: number) => {

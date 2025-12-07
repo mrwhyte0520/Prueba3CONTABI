@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { fixedAssetsService, assetDisposalService } from '../../../services/database';
+import { fixedAssetsService, assetDisposalService, settingsService } from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface AssetDisposal {
   id: string;
@@ -91,7 +92,8 @@ export default function AssetDisposalPage() {
     };
 
     loadData();
- }, [user]);   // ← ESTA LÍNEA ES LA QUE FALTA
+  }, [user]);
+
   const disposalMethods = [
     'Venta',
     'Donación',
@@ -288,204 +290,80 @@ export default function AssetDisposalPage() {
     }
   };
 
-  // const exportToPDF = () => {
-  //   // Crear contenido del PDF
-  //   const filteredData = filteredDisposals;
-  //
-  //   // Función auxiliar para formatear moneda
-  //   const formatCurrency = (amount: number) => {
-  //     return new Intl.NumberFormat('es-DO', {
-  //       style: 'currency',
-  //       currency: 'DOP'
-  //     }).format(amount);
-  //   };
-  //
-  //   // Generar contenido HTML para el PDF
-  //   const htmlContent = `
-  //     <!DOCTYPE html>
-  //     <html>
-  //     <head>
-  //       <meta charset="UTF-8">
-  //       <title>Retiro de Activos Fijos</title>
-  //       <style>
-  //         body { font-family: Arial, sans-serif; margin: 20px; }
-  //         .header { text-align: center; margin-bottom: 30px; }
-  //         .summary { background: #f8f9fa; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
-  //         .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
-  //         .summary-item { text-align: center; }
-  //         .summary-value { font-size: 18px; font-weight: bold; color: #2563eb; }
-  //         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-  //         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-  //         th { background-color: #f8f9fa; font-weight: bold; }
-  //         .currency { text-align: right; }
-  //         .positive { color: #059669; font-weight: bold; }
-  //         .negative { color: #dc2626; font-weight: bold; }
-  //         .status-completado { color: #059669; font-weight: bold; }
-  //         .status-pendiente { color: #d97706; font-weight: bold; }
-  //         .status-proceso { color: #2563eb; font-weight: bold; }
-  //         .status-cancelado { color: #dc2626; font-weight: bold; }
-  //         .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #666; }
-  //       </style>
-  //     </head>
-  //     <body>
-  //       <div class="header">
-  //         <h1>Retiro de Activos Fijos</h1>
-  //         <p>Reporte generado el ${new Date().toLocaleDateString('es-DO')} a las ${new Date().toLocaleTimeString('es-DO')}</p>
-  //       </div>
-  //       
-  //       <div class="summary">
-  //         <h3>Resumen de Bajas de Activos</h3>
-  //         <div class="summary-grid">
-  //           <div class="summary-item">
-  //             <div>Ganancia/Pérdida Total</div>
-  //             <div class="summary-value ${totalGainLoss >= 0 ? 'positive' : 'negative'}">${formatCurrency(totalGainLoss)}</div>
-  //           </div>
-  //           <div class="summary-item">
-  //             <div>Valor de Venta Total</div>
-  //             <div class="summary-value">${formatCurrency(totalSaleValue)}</div>
-  //           </div>
-  //           <div class="summary-item">
-  //             <div>Valor en Libros</div>
-  //             <div class="summary-value">${formatCurrency(totalBookValue)}</div>
-  //           </div>
-  //           <div class="summary-item">
-  //             <div>Activos Dados de Baja</div>
-  //             <div class="summary-value">${filteredData.length}</div>
-  //           </div>
-  //         </div>
-  //       </div>
-  //
-  //       <table>
-  //         <thead>
-  //           <tr>
-  //             <th>Código</th>
-  //             <th>Activo</th>
-  //             <th>Categoría</th>
-  //             <th>Costo Original</th>
-  //             <th>Depreciación Acumulada</th>
-  //             <th>Valor en Libros</th>
-  //             <th>Precio de Venta</th>
-  //             <th>Ganancia/Pérdida</th>
-  //             <th>Método</th>
-  //             <th>Motivo</th>
-  //             <th>Fecha</th>
-  //             <th>Estado</th>
-  //           </tr>
-  //         </thead>
-  //         <tbody>
-  //           ${filteredData.map(disposal => `
-  //             <tr>
-  //               <td>${disposal.assetCode}</td>
-  //               <td>${disposal.assetName}</td>
-  //               <td>${disposal.category}</td>
-  //               <td class="currency">${formatCurrency(disposal.originalCost)}</td>
-  //               <td class="currency">${formatCurrency(disposal.accumulatedDepreciation)}</td>
-  //               <td class="currency">${formatCurrency(disposal.bookValue)}</td>
-  //               <td class="currency">${formatCurrency(disposal.salePrice)}</td>
-  //               <td class="currency ${disposal.gainLoss >= 0 ? 'positive' : 'negative'}">
-  //                 ${disposal.gainLoss >= 0 ? '+' : ''}${formatCurrency(disposal.gainLoss)}
-  //               </td>
-  //               <td>${disposal.disposalMethod}</td>
-  //               <td>${disposal.disposalReason}</td>
-  //               <td>${new Date(disposal.disposalDate).toLocaleDateString('es-DO')}</td>
-  //               <td class="status-${disposal.status.toLowerCase().replace(' ', '')}">${disposal.status}</td>
-  //             </tr>
-  //           `).join('')}
-  //         </tbody>
-  //       </table>
-  //
-  //       <div class="footer">
-  //         <p>Sistema de Gestión de Activos Fijos - Retiro de Activos</p>
-  //         <p>Filtros aplicados: ${searchTerm ? `Búsqueda: "${searchTerm}"` : ''} ${filterStatus ? `Estado: "${filterStatus}"` : ''} ${filterMethod ? `Método: "${filterMethod}"` : ''}</p>
-  //       </div>
-  //     </body>
-  //     </html>
-  //   `;
-  //
-  //   // Crear y abrir ventana para imprimir
-  //   const printWindow = window.open('', '_blank');
-  //   if (printWindow) {
-  //     printWindow.document.write(htmlContent);
-  //     printWindow.document.close();
-  //     printWindow.focus();
-  //     setTimeout(() => {
-  //       printWindow.print();
-  //     }, 500);
-  //   } else {
-  //     alert('No se pudo abrir la ventana de impresión. Verifique que no esté bloqueada por el navegador.');
-  //   }
-  // };
-
-  const exportToExcel = () => {
-    // Preparar datos para Excel
+  const exportToExcel = async () => {
     const filteredData = filteredDisposals;
 
-    // Crear contenido CSV
+    if (!filteredData || filteredData.length === 0) {
+      alert('No hay bajas de activos para exportar.');
+      return;
+    }
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      console.error('Error obteniendo información de la empresa para Excel de retiro de activos:', error);
+    }
+
+    const rows = filteredData.map((disposal) => ({
+      assetCode: disposal.assetCode,
+      assetName: disposal.assetName,
+      category: disposal.category,
+      originalCost: disposal.originalCost,
+      accumulatedDepreciation: disposal.accumulatedDepreciation,
+      bookValue: disposal.bookValue,
+      disposalDate: new Date(disposal.disposalDate).toLocaleDateString('es-DO'),
+      disposalMethod: disposal.disposalMethod,
+      disposalReason: disposal.disposalReason,
+      salePrice: disposal.salePrice,
+      gainLoss: disposal.gainLoss,
+      buyer: disposal.buyer,
+      authorizedBy: disposal.authorizedBy,
+      status: disposal.status,
+      notes: disposal.notes,
+    }));
+
     const headers = [
-      'Código Activo',
-      'Nombre del Activo',
-      'Categoría',
-      'Costo Original',
-      'Depreciación Acumulada',
-      'Valor en Libros',
-      'Fecha de Disposición',
-      'Método de Disposición',
-      'Motivo de Disposición',
-      'Precio de Venta',
-      'Ganancia/Pérdida',
-      'Comprador/Receptor',
-      'Autorizado Por',
-      'Estado',
-      'Notas'
+      { key: 'assetCode', title: 'Código Activo' },
+      { key: 'assetName', title: 'Nombre del Activo' },
+      { key: 'category', title: 'Categoría' },
+      { key: 'originalCost', title: 'Costo Original' },
+      { key: 'accumulatedDepreciation', title: 'Depreciación Acumulada' },
+      { key: 'bookValue', title: 'Valor en Libros' },
+      { key: 'disposalDate', title: 'Fecha de Disposición' },
+      { key: 'disposalMethod', title: 'Método de Disposición' },
+      { key: 'disposalReason', title: 'Motivo de Disposición' },
+      { key: 'salePrice', title: 'Precio de Venta' },
+      { key: 'gainLoss', title: 'Ganancia/Pérdida' },
+      { key: 'buyer', title: 'Comprador/Receptor' },
+      { key: 'authorizedBy', title: 'Autorizado Por' },
+      { key: 'status', title: 'Estado' },
+      { key: 'notes', title: 'Notas' },
     ];
 
-    const csvContent = [
-      // Encabezados del resumen
-      ['RETIRO DE ACTIVOS FIJOS'],
-      [`Reporte generado: ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}`],
-      [''],
-      ['RESUMEN DE BAJAS DE ACTIVOS'],
-      ['Ganancia/Pérdida Total', totalGainLoss.toFixed(2)],
-      ['Valor de Venta Total', totalSaleValue.toFixed(2)],
-      ['Valor en Libros Total', totalBookValue.toFixed(2)],
-      ['Total de Activos Dados de Baja', filteredData.length],
-      [''],
-      ['FILTROS APLICADOS'],
-      ['Búsqueda', searchTerm || 'Ninguno'],
-      ['Estado', filterStatus || 'Todos'],
-      ['Método de Disposición', filterMethod || 'Todos'],
-      [''],
-      ['DETALLE DE BAJAS DE ACTIVOS'],
-      headers,
-      ...filteredData.map(disposal => [
-        disposal.assetCode,
-        disposal.assetName,
-        disposal.category,
-        disposal.originalCost.toFixed(2),
-        disposal.accumulatedDepreciation.toFixed(2),
-        disposal.bookValue.toFixed(2),
-        new Date(disposal.disposalDate).toLocaleDateString('es-DO'),
-        disposal.disposalMethod,
-        disposal.disposalReason,
-        disposal.salePrice.toFixed(2),
-        disposal.gainLoss.toFixed(2),
-        disposal.buyer,
-        disposal.authorizedBy,
-        disposal.status,
-        disposal.notes
-      ])
-    ].map(row => row.join(',')).join('\n');
+    const fileBase = `retiro_activos_${new Date().toISOString().split('T')[0]}`;
+    const title = 'Retiro de Activos Fijos';
 
-    // Crear y descargar el archivo
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `retiro_activos_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      fileBase,
+      'Retiros',
+      [16, 32, 22, 18, 22, 18, 18, 22, 26, 18, 18, 26, 22, 14, 40],
+      {
+        title,
+        companyName,
+      },
+    );
   };
 
   const formatCurrency = (amount: number) => {
