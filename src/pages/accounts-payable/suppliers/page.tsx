@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { suppliersService, chartAccountsService, supplierTypesService, paymentTermsService, bankAccountsService } from '../../../services/database';
+import {
+  suppliersService,
+  chartAccountsService,
+  supplierTypesService,
+  paymentTermsService,
+  bankAccountsService,
+  settingsService,
+} from '../../../services/database';
+import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -154,7 +162,7 @@ export default function SuppliersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  const filteredSuppliers = suppliers.filter(supplier => {
+  const filteredSuppliers = suppliers.filter((supplier) => {
     const matchesCategory = filterCategory === 'all' || supplier.category === filterCategory;
     const matchesStatus = filterStatus === 'all' || supplier.status === filterStatus;
     const matchesSearch = searchTerm === '' || 
@@ -318,24 +326,46 @@ export default function SuppliersPage() {
     }
   };
 
-  
-
   const exportToPDF = async () => {
     const { default: jsPDF } = await import('jspdf');
     await import('jspdf-autotable');
     const doc = new jsPDF();
-    
+
+    // Encabezado: nombre de la empresa
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para PDF de proveedores:', error);
+    }
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // Nombre de empresa centrado
+    doc.setFontSize(14);
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' as any });
+
     // Título
-    doc.setFontSize(20);
-    doc.text('Lista de Proveedores', 20, 20);
+    doc.setFontSize(18);
+    doc.text('Lista de Proveedores', pageWidth / 2, 25, { align: 'center' as any });
     
     // Información del reporte
     doc.setFontSize(12);
-    doc.text(`Fecha de Generación: ${new Date().toLocaleDateString()}`, 20, 40);
-    doc.text(`Total de Proveedores: ${filteredSuppliers.length}`, 20, 50);
-    
+    doc.text(`Fecha de Generación: ${new Date().toLocaleDateString('es-DO')}`, 20, 40);
+    doc.text(`Total de Proveedores: ${filteredSuppliers.length}`, 20, 48);
+
     // Preparar datos para la tabla
-    const tableData = filteredSuppliers.map(supplier => [
+    const tableData = filteredSuppliers.map((supplier) => [
       supplier.name,
       supplier.rnc,
       supplier.phone,
@@ -351,7 +381,7 @@ export default function SuppliersPage() {
       body: tableData,
       startY: 70,
       theme: 'striped',
-      headStyles: { fillColor: [59, 130, 246] },
+      headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold' },
       styles: { fontSize: 9 },
       columnStyles: {
         0: { cellWidth: 40 },
@@ -360,14 +390,14 @@ export default function SuppliersPage() {
         3: { cellWidth: 25 },
         4: { cellWidth: 25, halign: 'right' },
         5: { cellWidth: 25, halign: 'right' },
-        6: { cellWidth: 20, halign: 'center' }
-      }
+        6: { cellWidth: 20, halign: 'center' },
+      },
     });
 
     // Estadísticas adicionales
     const totalCreditLimit = filteredSuppliers.reduce((sum, s) => sum + s.creditLimit, 0);
     const totalBalance = filteredSuppliers.reduce((sum, s) => sum + s.balance, 0);
-    const activeSuppliers = filteredSuppliers.filter(s => s.status === 'Activo').length;
+    const activeSuppliers = filteredSuppliers.filter((s) => s.status === 'Activo').length;
 
     doc.autoTable({
       body: [
@@ -392,34 +422,66 @@ export default function SuppliersPage() {
     doc.save(`proveedores-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportToExcel = () => {
-    let csvContent = 'Lista de Proveedores\n\n';
-    csvContent += 'Nombre,RNC,Teléfono,Email,Dirección,Categoría,Límite Crédito,Balance Actual,Estado,Términos de Pago,Contacto\n';
-    
-    filteredSuppliers.forEach(supplier => {
-      csvContent += `"${supplier.name}","${supplier.rnc}","${supplier.phone}","${supplier.email}","${supplier.address}","${supplier.category}",${supplier.creditLimit},${supplier.balance},"${supplier.status}","${supplier.paymentTerms}","${supplier.contact}"\n`;
-    });
+  const exportToExcel = async () => {
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de proveedores:', error);
+    }
 
-    // Estadísticas
-    const totalCreditLimit = filteredSuppliers.reduce((sum, s) => sum + s.creditLimit, 0);
-    const totalBalance = filteredSuppliers.reduce((sum, s) => sum + s.balance, 0);
-    const activeSuppliers = filteredSuppliers.filter(s => s.status === 'Activo').length;
+    const rows = filteredSuppliers.map((supplier) => ({
+      name: supplier.name,
+      rnc: supplier.rnc,
+      phone: supplier.phone,
+      email: supplier.email,
+      address: supplier.address,
+      category: supplier.category,
+      creditLimit: supplier.creditLimit,
+      balance: supplier.balance,
+      status: supplier.status,
+      paymentTerms: supplier.paymentTerms,
+      contact: supplier.contact,
+    }));
 
-    csvContent += `\nEstadísticas\n`;
-    csvContent += `Total Límite de Crédito,${totalCreditLimit}\n`;
-    csvContent += `Total Balance Actual,${totalBalance}\n`;
-    csvContent += `Proveedores Activos,${activeSuppliers}\n`;
-    csvContent += `Total Proveedores,${filteredSuppliers.length}\n`;
+    const headers = [
+      { key: 'name', title: 'Nombre' },
+      { key: 'rnc', title: 'RNC' },
+      { key: 'phone', title: 'Teléfono' },
+      { key: 'email', title: 'Email' },
+      { key: 'address', title: 'Dirección' },
+      { key: 'category', title: 'Categoría' },
+      { key: 'creditLimit', title: 'Límite Crédito' },
+      { key: 'balance', title: 'Balance Actual' },
+      { key: 'status', title: 'Estado' },
+      { key: 'paymentTerms', title: 'Términos de Pago' },
+      { key: 'contact', title: 'Contacto' },
+    ];
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `proveedores-${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const today = new Date().toISOString().split('T')[0];
+    const fileBase = `proveedores_${today}`;
+
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      fileBase,
+      'Proveedores',
+      [24, 14, 16, 26, 32, 18, 18, 18, 14, 18, 20],
+      {
+        title: 'Lista de Proveedores',
+        companyName,
+      },
+    );
   };
 
   const handleViewDetails = (supplier: any) => {

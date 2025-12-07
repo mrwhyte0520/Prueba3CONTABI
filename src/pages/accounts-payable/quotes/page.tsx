@@ -3,11 +3,12 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { suppliersService, apQuotesService } from '../../../services/database';
+import { suppliersService, apQuotesService, settingsService } from '../../../services/database';
 
 declare module 'jspdf' {
   interface jsPDF {
     autoTable: (options: any) => jsPDF;
+    lastAutoTable?: { finalY: number };
   }
 }
 
@@ -215,41 +216,85 @@ export default function QuotesPage() {
     setFormData({ ...formData, suppliers: updatedSuppliers });
   };
 
-  const exportToPDF = () => {
+  const formatDate = (value?: string | null) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleDateString('es-DO');
+  };
+
+  const formatCurrency = (amount: number | null | undefined) => {
+    const safe = Number(amount || 0);
+    return new Intl.NumberFormat('es-DO', {
+      style: 'currency',
+      currency: 'DOP',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(safe);
+  };
+
+  const exportToPDF = async () => {
     const doc = new jsPDF();
-    
-    // Título
-    doc.setFontSize(20);
-    doc.text('Solicitudes de Cotización', 20, 20);
-    
+
+    // Encabezado con nombre de la empresa
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para PDF de solicitudes de cotización:', error);
+    }
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    // Nombre de empresa centrado
+    doc.setFontSize(14);
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' as any });
+
+    // Título centrado
+    doc.setFontSize(18);
+    doc.text('Solicitudes de Cotización', pageWidth / 2, 25, { align: 'center' as any });
+
     // Información del reporte
-    doc.setFontSize(12);
-    doc.text(`Fecha de Generación: ${new Date().toLocaleDateString()}`, 20, 40);
-    doc.text(`Total de Solicitudes: ${filteredQuotes.length}`, 20, 50);
-    
+    doc.setFontSize(11);
+    doc.text(`Fecha de Generación: ${new Date().toLocaleDateString('es-DO')}`, 20, 40);
+    doc.text(`Total de Solicitudes: ${filteredQuotes.length}`, 20, 48);
+
     // Preparar datos para la tabla
-    const tableData = filteredQuotes.map(quote => [
+    const tableData = filteredQuotes.map((quote: any) => [
       quote.number,
-      quote.date,
-      quote.title,
-      quote.category,
-      quote.dueDate,
+      formatDate(quote.date),
+      quote.description || quote.title,
+      quote.requestedBy || '',
+      formatDate(quote.dueDate),
+      formatCurrency(quote.estimatedAmount),
       quote.status,
-      quote.suppliers.length.toString()
+      quote.suppliers.length.toString(),
     ]);
 
     // Crear la tabla
     doc.autoTable({
-      head: [['Número', 'Fecha', 'Título', 'Categoría', 'Vencimiento', 'Estado', 'Proveedores']],
+      head: [['Número', 'Fecha', 'Descripción', 'Solicitado por', 'Vencimiento', 'Monto Est.', 'Estado', 'Proveedores']],
       body: tableData,
       startY: 70,
       theme: 'striped',
-      headStyles: { fillColor: [59, 130, 246] },
-      styles: { fontSize: 9 },
+      headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold' },
+      styles: { fontSize: 9, cellPadding: 3 },
       columnStyles: {
-        2: { cellWidth: 40 },
-        6: { halign: 'center' }
-      }
+        2: { cellWidth: 50 }, // Descripción
+        4: { halign: 'right' }, // Vencimiento
+        5: { halign: 'right' }, // Monto Est.
+        7: { halign: 'center' }, // Proveedores
+      },
     });
 
     // Detalle de proveedores por cotización
@@ -258,7 +303,7 @@ export default function QuotesPage() {
     doc.text('Detalle de Proveedores por Cotización', 20, 20);
 
     let startY = 40;
-    filteredQuotes.forEach((quote, quoteIndex) => {
+    filteredQuotes.forEach((quote: any) => {
       if (startY > 250) {
         doc.addPage();
         startY = 20;
@@ -269,11 +314,11 @@ export default function QuotesPage() {
       startY += 10;
 
       if (quote.suppliers.length > 0) {
-        const supplierData = quote.suppliers.map(supplier => [
+        const supplierData = quote.suppliers.map((supplier: { name: string; amount: number; deliveryTime?: string; notes?: string; status: string }) => [
           supplier.name,
-          supplier.amount > 0 ? `RD$ ${supplier.amount.toLocaleString()}` : 'Pendiente',
+          supplier.amount > 0 ? formatCurrency(supplier.amount) : 'Pendiente',
           supplier.deliveryTime || 'N/A',
-          supplier.status
+          supplier.status,
         ]);
 
         doc.autoTable({
@@ -283,10 +328,14 @@ export default function QuotesPage() {
           theme: 'grid',
           headStyles: { fillColor: [34, 197, 94], fontSize: 10 },
           styles: { fontSize: 9 },
+          columnStyles: {
+            1: { halign: 'right' },
+          },
           margin: { left: 20, right: 20 }
         });
 
-        startY = doc.lastAutoTable.finalY + 15;
+        const anyDoc = doc as any;
+        startY = (anyDoc.lastAutoTable?.finalY || startY) + 15;
       } else {
         startY += 10;
       }
@@ -318,35 +367,76 @@ export default function QuotesPage() {
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
       doc.setFontSize(10);
-      doc.text(`Página ${i} de ${pageCount}`, doc.internal.pageSize.width - 50, doc.internal.pageSize.height - 10);
+      doc.text(
+        `Página ${i} de ${pageCount}`,
+        doc.internal.pageSize.width - 50,
+        doc.internal.pageSize.height - 10,
+      );
       doc.text('Sistema Contable - Solicitudes de Cotización', 20, doc.internal.pageSize.height - 10);
     }
 
     doc.save(`solicitudes-cotizacion-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const exportToExcel = () => {
-    let csvContent = 'Solicitudes de Cotización\n\n';
-    csvContent += 'Número,Fecha,Título,Descripción,Categoría,Fecha Vencimiento,Estado,Proveedor Seleccionado\n';
-    
-    filteredQuotes.forEach(quote => {
-      csvContent += `${quote.number},${quote.date},"${quote.title}","${quote.description}","${quote.category}",${quote.dueDate},"${quote.status}","${quote.selectedSupplier || 'N/A'}"\n`;
+  const exportToExcel = async () => {
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de solicitudes de cotización:', error);
+    }
+
+    let csvContent = '';
+    csvContent += `${companyName}\n`;
+    csvContent += 'Solicitudes de Cotización\n';
+    csvContent += `Fecha de generación: ${new Date().toLocaleDateString('es-DO')}\n`;
+    csvContent += `Total de solicitudes: ${filteredQuotes.length}\n\n`;
+    csvContent += 'Número,Fecha,Título,Descripción,Categoría,Fecha Vencimiento,Monto Estimado,Estado,Proveedor Seleccionado\n';
+
+    filteredQuotes.forEach((quote: any) => {
+      const date = formatDate(quote.date);
+      const due = formatDate(quote.dueDate);
+      const amount = formatCurrency(quote.estimatedAmount);
+      const title = String(quote.title || '').replace(/"/g, '""');
+      const description = String(quote.description || '').replace(/"/g, '""');
+      const category = String(quote.category || '').replace(/"/g, '""');
+      const status = String(quote.status || '').replace(/"/g, '""');
+      const selectedSupplier = String(quote.selectedSupplier || 'N/A').replace(/"/g, '""');
+
+      csvContent += `${quote.number},${date},"${title}","${description}","${category}",${due},${amount},"${status}","${selectedSupplier}"\n`;
     });
 
     // Detalle de proveedores
     csvContent += '\n\nDetalle de Proveedores\n';
     csvContent += 'Cotización,Proveedor,Monto,Tiempo Entrega,Notas,Estado\n';
-    
-    filteredQuotes.forEach(quote => {
-      quote.suppliers.forEach(supplier => {
-        csvContent += `${quote.number},"${supplier.name}",${supplier.amount},"${supplier.deliveryTime}","${supplier.notes}","${supplier.status}"\n`;
-      });
+    filteredQuotes.forEach((quote: any) => {
+      quote.suppliers.forEach(
+        (supplier: { name: string; amount: number; deliveryTime?: string; notes?: string; status: string }) => {
+          const supplierName = String(supplier.name || '').replace(/"/g, '""');
+          const supplierAmount = formatCurrency(supplier.amount);
+          const delivery = String(supplier.deliveryTime || '').replace(/"/g, '""');
+          const notes = String(supplier.notes || '').replace(/"/g, '""');
+          const status = String(supplier.status || '').replace(/"/g, '""');
+
+          csvContent += `${quote.number},"${supplierName}",${supplierAmount},"${delivery}","${notes}","${status}"\n`;
+        },
+      );
     });
 
     // Estadísticas
-    const pendingQuotes = filteredQuotes.filter(q => q.status === 'Pendiente').length;
-    const approvedQuotes = filteredQuotes.filter(q => q.status === 'Aprobada').length;
-    const rejectedQuotes = filteredQuotes.filter(q => q.status === 'Rechazada').length;
+    const pendingQuotes = filteredQuotes.filter((q) => q.status === 'Pendiente').length;
+    const approvedQuotes = filteredQuotes.filter((q) => q.status === 'Aprobada').length;
+    const rejectedQuotes = filteredQuotes.filter((q) => q.status === 'Rechazada').length;
 
     csvContent += `\nEstadísticas\n`;
     csvContent += `Solicitudes Pendientes,${pendingQuotes}\n`;
@@ -363,10 +453,6 @@ export default function QuotesPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const printQuote = (quote: any) => {
-    alert(`Imprimiendo solicitud de cotización: ${quote.number}`);
   };
 
   const handleViewDetails = (quote: any) => {
@@ -556,12 +642,6 @@ export default function QuotesPage() {
                           className="text-blue-600 hover:text-blue-900 whitespace-nowrap"
                         >
                           <i className="ri-eye-line"></i>
-                        </button>
-                        <button 
-                          onClick={() => sendQuoteRequest(quote)}
-                          className="text-gray-600 hover:text-gray-900 whitespace-nowrap"
-                        >
-                          <i className="ri-mail-send-line"></i>
                         </button>
                         {quote.status === 'Pendiente' && (
                           <button 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { bankAccountsService, supplierPaymentsService, suppliersService, apInvoicesService } from '../../../services/database';
+import { exportToExcelStyled } from '../../../utils/exportImportUtils';
 
 export default function PaymentsPage() {
   const { user } = useAuth();
@@ -212,69 +213,46 @@ export default function PaymentsPage() {
     setSelectedPayment(payment);
   };
 
-  const exportToExcel = () => {
-    // Preparar datos para exportación
-    const csvData = [
-      ['Reporte de Pagos a Proveedores'],
-      ['Fecha de Generación:', new Date().toLocaleDateString()],
-      [''],
-      ['Estadísticas Generales:'],
-      ['Total Pagado:', `RD$ ${payments.filter(p => p.status === 'Completado').reduce((sum, p) => sum + p.amount, 0).toLocaleString()}`],
-      ['Pagos Pendientes:', `RD$ ${payments.filter(p => p.status === 'Pendiente').reduce((sum, p) => sum + p.amount, 0).toLocaleString()}`],
-      ['Total Pagos Completados:', payments.filter(p => p.status === 'Completado').length],
-      ['Total Pagos Rechazados:', payments.filter(p => p.status === 'Rechazado').length],
-      [''],
-      ['Detalle de Pagos:'],
-      ['Fecha', 'Proveedor', 'Referencia', 'Factura', 'Método', 'Monto', 'Estado', 'Descripción', 'Cuenta Bancaria']
-    ];
+  const handleExportExcel = async () => {
+    if (!filteredPayments.length) {
+      alert('No hay pagos para exportar');
+      return;
+    }
 
-    // Agregar datos de pagos filtrados
-    filteredPayments.forEach(payment => {
-      csvData.push([
-        payment.date,
-        payment.supplier,
-        payment.reference,
-        payment.invoice,
-        payment.method,
-        `RD$ ${payment.amount.toLocaleString()}`,
-        payment.status,
-        payment.description,
-        payment.bankAccount
-      ]);
-    });
+    const today = new Date().toISOString().split('T')[0];
 
-    // Agregar resumen por método de pago
-    csvData.push(['']);
-    csvData.push(['Resumen por Método de Pago:']);
-    csvData.push(['Método', 'Cantidad', 'Monto Total']);
-    
-    paymentMethods.forEach(method => {
-      const methodPayments = filteredPayments.filter(p => p.method === method);
-      const methodTotal = methodPayments.reduce((sum, p) => sum + p.amount, 0);
-      if (methodPayments.length > 0) {
-        csvData.push([
-          method,
-          methodPayments.length,
-          `RD$ ${methodTotal.toLocaleString()}`
-        ]);
-      }
-    });
+    const rows = filteredPayments.map((payment) => ({
+      date: payment.date,
+      supplier: payment.supplier,
+      reference: payment.reference,
+      invoice: payment.invoice,
+      method: payment.method,
+      amount: payment.amount,
+      status: payment.status,
+      description: payment.description,
+      bankAccount: payment.bankAccount,
+    }));
 
-    // Convertir a CSV
-    const csvContent = csvData.map(row => 
-      row.map(cell => `"${cell}"`).join(',')
-    ).join('\n');
-
-    // Crear y descargar archivo
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `pagos_proveedores_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      await exportToExcelStyled(
+        rows,
+        [
+          { key: 'date', title: 'Fecha', width: 14 },
+          { key: 'supplier', title: 'Proveedor', width: 30 },
+          { key: 'reference', title: 'Referencia', width: 18 },
+          { key: 'invoice', title: 'Factura', width: 18 },
+          { key: 'method', title: 'Método', width: 16 },
+          { key: 'amount', title: 'Monto', width: 16, numFmt: '#,##0.00' },
+          { key: 'status', title: 'Estado', width: 14 },
+          { key: 'description', title: 'Descripción', width: 40 },
+          { key: 'bankAccount', title: 'Cuenta Bancaria', width: 30 },
+        ],
+        `pagos_proveedores_${today}`,
+        'Pagos'
+      );
+    } catch (error) {
+      alert('No se pudo exportar el archivo de Excel');
+    }
   };
 
   return (
@@ -288,7 +266,7 @@ export default function PaymentsPage() {
           </div>
           <div className="flex space-x-3">
             <button 
-              onClick={exportToExcel}
+              onClick={handleExportExcel}
               className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
             >
               <i className="ri-file-excel-line mr-2"></i>
