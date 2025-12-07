@@ -367,7 +367,7 @@ export default function PreInvoicingPage() {
         }));
 
         // Llamar a la función de exportación
-        await exportToPdf(dataToExport, columns, 'cotizaciones', 'ContaBi - Reporte de Cotizaciones');
+        await exportToPdf(dataToExport, columns, 'cotizaciones', 'Reporte de Cotizaciones');
         
         // Mostrar mensaje de éxito
         toast.success('PDF generado correctamente', { id: loadingToast });

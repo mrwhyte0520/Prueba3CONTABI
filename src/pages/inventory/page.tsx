@@ -3,6 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { inventoryService, settingsService, chartAccountsService, journalEntriesService, accountingSettingsService, storesService, warehouseEntriesService, warehouseTransfersService, deliveryNotesService, invoicesService } from '../../services/database';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { exportToExcelWithHeaders } from '../../utils/exportImportUtils';
 
 // Eliminados datos de ejemplo: la vista se alimenta solo de la base de datos
 
@@ -725,53 +726,165 @@ export default function InventoryPage() {
   };
 
   // Funciones de exportación
-  const exportToExcel = () => {
-    const dataToExport = activeTab === 'items' ? filteredItems : filteredMovements;
-    const headers = activeTab === 'items' 
-      ? ['SKU', 'Nombre', 'Categoría', 'Stock Actual', 'Stock Mínimo', 'Precio Costo', 'Precio Venta', 'Estado']
-      : ['Fecha', 'Producto', 'Tipo', 'Cantidad', 'Costo Unitario', 'Costo Total', 'Referencia'];
-    
-    let csvContent = '\uFEFF' + headers.join(',') + '\n';
-    
-    if (activeTab === 'items') {
-      dataToExport.forEach(item => {
-        csvContent += [
-          item.sku,
-          `"${item.name}"`,
-          `"${item.category || 'N/A'}"`,
-          item.current_stock,
-          item.minimum_stock || 0,
-          item.cost_price || 0,
-          item.selling_price || 0,
-          item.is_active ? 'Activo' : 'Inactivo'
-        ].join(',') + '\n';
-      });
-    } else {
-      dataToExport.forEach(movement => {
-        csvContent += [
-          movement.movement_date,
-          `"${movement.inventory_items?.name || 'N/A'}"`,
-          movement.movement_type === 'entry' ? 'Entrada' :
-          movement.movement_type === 'exit' ? 'Salida' :
-          movement.movement_type === 'transfer' ? 'Transferencia' : 'Ajuste',
-          movement.quantity,
-          movement.unit_cost || 0,
-          movement.total_cost || 0,
-          `"${movement.reference || 'N/A'}"`
-        ].join(',') + '\n';
-      });
+  const exportToExcel = async () => {
+    const isItemsTab = activeTab === 'items';
+    const dataToExport = isItemsTab ? filteredItems : filteredMovements;
+
+    if (!dataToExport || dataToExport.length === 0) {
+      alert('No hay datos para exportar.');
+      return;
     }
 
-    const csvForExcel = csvContent.replace(/\n/g, '\r\n');
-    const blob = new Blob([csvForExcel], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `inventario_${activeTab}_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName = (info as any).name || (info as any).company_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de inventario:', error);
+    }
+
+    if (isItemsTab) {
+      const rows = dataToExport.map((item: any) => ({
+        sku: item.sku,
+        name: item.name,
+        category: item.category || 'N/A',
+        current_stock: item.current_stock,
+        minimum_stock: item.minimum_stock || 0,
+        cost_price: item.cost_price || 0,
+        selling_price: item.selling_price || 0,
+        status: item.is_active ? 'Activo' : 'Inactivo',
+      }));
+
+      const headers = [
+        { key: 'sku', title: 'SKU' },
+        { key: 'name', title: 'Nombre' },
+        { key: 'category', title: 'Categoría' },
+        { key: 'current_stock', title: 'Stock Actual' },
+        { key: 'minimum_stock', title: 'Stock Mínimo' },
+        { key: 'cost_price', title: 'Precio Costo' },
+        { key: 'selling_price', title: 'Precio Venta' },
+        { key: 'status', title: 'Estado' },
+      ];
+
+      const fileBase = `inventario_productos_${new Date().toISOString().split('T')[0]}`;
+      const title = 'Productos en Inventario';
+
+      exportToExcelWithHeaders(rows, headers, fileBase, 'Productos', [16, 30, 22, 16, 16, 16, 16, 14], {
+        title,
+        companyName,
+      });
+    } else {
+      const rows = dataToExport.map((movement: any) => ({
+        movement_date: movement.movement_date,
+        product_name: movement.inventory_items?.name || 'N/A',
+        type:
+          movement.movement_type === 'entry'
+            ? 'Entrada'
+            : movement.movement_type === 'exit'
+            ? 'Salida'
+            : movement.movement_type === 'transfer'
+            ? 'Transferencia'
+            : 'Ajuste',
+        quantity: movement.quantity,
+        unit_cost: movement.unit_cost || 0,
+        total_cost: movement.total_cost || 0,
+        reference: movement.reference || 'N/A',
+      }));
+
+      const headers = [
+        { key: 'movement_date', title: 'Fecha' },
+        { key: 'product_name', title: 'Producto' },
+        { key: 'type', title: 'Tipo' },
+        { key: 'quantity', title: 'Cantidad' },
+        { key: 'unit_cost', title: 'Costo Unitario' },
+        { key: 'total_cost', title: 'Costo Total' },
+        { key: 'reference', title: 'Referencia' },
+      ];
+
+      const fileBase = `inventario_movimientos_${new Date().toISOString().split('T')[0]}`;
+      const title = 'Movimientos de Inventario';
+
+      exportToExcelWithHeaders(
+        rows,
+        headers,
+        fileBase,
+        'Movimientos',
+        [16, 30, 18, 14, 18, 18, 26],
+        {
+          title,
+          companyName,
+        },
+      );
+    }
+  };
+
+  const exportValuationToExcel = async () => {
+    if (!items || items.length === 0) {
+      alert('No hay datos para generar el reporte de valorización.');
+      return;
+    }
+
+    let companyName = 'ContaBi';
+    try {
+      const info = await settingsService.getCompanyInfo();
+      if (info && (info as any)) {
+        const resolvedName =
+          (info as any).name ||
+          (info as any).company_name ||
+          (info as any).legal_name;
+        if (resolvedName) {
+          companyName = String(resolvedName);
+        }
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error obteniendo información de la empresa para Excel de valorización:', error);
+    }
+
+    const rows = items.map((item: any) => {
+      const stock = Number(item.current_stock || 0) || 0;
+      const costPrice = Number(item.cost_price || 0) || 0;
+      const sellingPrice = Number(item.selling_price || 0) || 0;
+
+      return {
+        product: item.name,
+        stock,
+        cost_price: costPrice,
+        selling_price: sellingPrice,
+        value_cost: stock * costPrice,
+        value_sale: stock * sellingPrice,
+      };
+    });
+
+    const headers = [
+      { key: 'product', title: 'Producto' },
+      { key: 'stock', title: 'Stock' },
+      { key: 'cost_price', title: 'Precio Costo' },
+      { key: 'selling_price', title: 'Precio Venta' },
+      { key: 'value_cost', title: 'Valor Costo' },
+      { key: 'value_sale', title: 'Valor Venta' },
+    ];
+
+    const fileBase = `valorizacion_inventario_${new Date().toISOString().split('T')[0]}`;
+    const title = 'Valorización de Inventario (Costo y Venta)';
+
+    exportToExcelWithHeaders(
+      rows,
+      headers,
+      fileBase,
+      'Valorización',
+      [32, 12, 16, 16, 18, 18],
+      {
+        title,
+        companyName,
+      },
+    );
   };
 
   // Filtros aplicados
@@ -1771,29 +1884,7 @@ export default function InventoryPage() {
             Reporte del valor total del inventario a precios de costo y venta.
           </p>
           <button
-            onClick={() => {
-              const valorData = [
-                ['Producto', 'Stock', 'Precio Costo', 'Precio Venta', 'Valor Costo', 'Valor Venta'],
-                ...items.map(item => [
-                  item.name,
-                  item.current_stock || 0,
-                  item.cost_price || 0,
-                  item.selling_price || 0,
-                  (item.current_stock || 0) * (item.cost_price || 0),
-                  (item.current_stock || 0) * (item.selling_price || 0)
-                ])
-              ];
-              const csvContent = '\uFEFF' + valorData.map(row => row.join(',')).join('\n');
-              const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-              const link = document.createElement('a');
-              const url = URL.createObjectURL(blob);
-              link.setAttribute('href', url);
-              link.setAttribute('download', `valorizacion_inventario_${new Date().toISOString().split('T')[0]}.csv`);
-              link.style.visibility = 'hidden';
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-            }}
+            onClick={exportValuationToExcel}
             className="w-full bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors whitespace-nowrap"
           >
             <i className="ri-download-line mr-2"></i>

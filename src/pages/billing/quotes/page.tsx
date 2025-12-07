@@ -651,7 +651,7 @@ export default function QuotesPage() {
         dataToExport, 
         columns, 
         'cotizaciones_ventas', 
-        'ContaBi - Reporte de Cotizaciones de Ventas'
+        'Reporte de Cotizaciones de Ventas'
       );
       
     } catch (error) {

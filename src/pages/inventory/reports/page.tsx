@@ -181,7 +181,25 @@ export default function InventoryExistenceReportPage() {
       totalValue: r.totalValue,
     }));
 
-    exportToExcelWithHeaders(rowsData, headers, 'existencia_almacen');
+    const companyName =
+      (companyInfo?.name as string) ||
+      (companyInfo?.company_name as string) ||
+      (companyInfo?.legal_name as string) ||
+      undefined;
+
+    const title = 'Reporte de Existencia en Almacén';
+
+    exportToExcelWithHeaders(
+      rowsData,
+      headers,
+      'existencia_almacen',
+      'Existencias',
+      [20, 18, 32, 20, 14, 16, 18],
+      {
+        title,
+        companyName,
+      },
+    );
   };
 
   const handleExportPdf = async () => {
@@ -211,11 +229,7 @@ export default function InventoryExistenceReportPage() {
     }));
 
     try {
-      const companyName =
-        (companyInfo?.name as string) ||
-        (companyInfo?.company_name as string) ||
-        'ContaBi';
-      const title = `${companyName} - Reporte de Existencia en Almacén`;
+      const title = 'Reporte de Existencia en Almacén';
       await exportToPdf(data, columns, 'existencia_almacen', title);
     } catch (error) {
       console.error('[InventoryExistenceReport] Error exporting PDF', error);

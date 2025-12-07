@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { toast } from 'sonner';
 import { useAuth } from '../../../hooks/useAuth';
-import { cashClosingService, invoicesService, receiptsService } from '../../../services/database';
+import { cashClosingService, invoicesService, receiptsService, settingsService } from '../../../services/database';
 
 // Importación dinámica de jsPDF para evitar errores de compilación
 const loadJsPDF = async () => {
@@ -208,20 +208,39 @@ export default function CashClosingPage() {
     try {
       const jsPDF = await loadJsPDF();
       const doc = new jsPDF();
-      
-      // Configurar el documento
+
+      let companyName = 'ContaBi';
+      try {
+        const info = await settingsService.getCompanyInfo();
+        if (info && (info as any)) {
+          const resolvedName = (info as any).name || (info as any).company_name;
+          if (resolvedName) {
+            companyName = String(resolvedName);
+          }
+        }
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error obteniendo información de la empresa para PDF de cierre de caja:', error);
+      }
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+
+      // Encabezado con nombre de empresa y título
+      doc.setFontSize(16);
+      doc.text(companyName, pageWidth / 2, 15, { align: 'center' } as any);
+
       doc.setFontSize(20);
-      doc.text('Reporte de Cierre de Caja', 20, 20);
+      doc.text('Reporte de Cierre de Caja', 20, 30);
       
       // Información del cierre
       doc.setFontSize(12);
-      doc.text(`Fecha: ${selectedDate}`, 20, 40);
-      doc.text(`Cajero: ${currentShift.cashier}`, 20, 50);
-      doc.text(`Turno: ${currentShift.shift}`, 20, 60);
+      doc.text(`Fecha: ${selectedDate}`, 20, 50);
+      doc.text(`Cajero: ${currentShift.cashier}`, 20, 60);
+      doc.text(`Turno: ${currentShift.shift}`, 20, 70);
       
       // Resumen de ventas
       doc.setFontSize(14);
-      doc.text('Resumen de Ventas', 20, 80);
+      doc.text('Resumen de Ventas', 20, 90);
       
       // Calcular cantidades reales de transacciones por método a partir de los recibos del día
       const receiptsCount = dailyReceipts.length;
@@ -246,7 +265,7 @@ export default function CashClosingPage() {
       ];
 
       (doc as any).autoTable({
-        startY: 90,
+        startY: 100,
         head: [salesData[0]],
         body: salesData.slice(1),
         theme: 'grid',
