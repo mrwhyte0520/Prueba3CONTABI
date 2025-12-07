@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, journalEntriesService, chartAccountsService } from '../../../services/database';
+import {
+  customersService,
+  invoicesService,
+  journalEntriesService,
+  chartAccountsService,
+  accountingSettingsService,
+} from '../../../services/database';
 
 interface ArReturn {
   id: string;
@@ -20,12 +26,26 @@ export default function ReturnsPage() {
   const { user } = useAuth();
   const [returns, setReturns] = useState<ArReturn[]>([]);
   const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
-  const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string; customerId: string }>>([]);
+  const [invoices, setInvoices] = useState<
+    Array<{
+      id: string;
+      invoiceNumber: string;
+      customerId: string;
+      totalAmount: number;
+      paidAmount: number;
+      pendingAmount: number;
+    }>
+  >([]);
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [accountingSettings, setAccountingSettings] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [noteCustomerId, setNoteCustomerId] = useState<string>('');
+  const [noteInvoiceId, setNoteInvoiceId] = useState<string>('');
+  const [noteAmount, setNoteAmount] = useState<number>(0);
+  const [originAccountId, setOriginAccountId] = useState<string>('');
+  const [returnsAccountId, setReturnsAccountId] = useState<string>('');
 
   const incomeAccounts = accounts.filter((acc) => acc.allowPosting && acc.type === 'income');
 
@@ -33,24 +53,53 @@ export default function ReturnsPage() {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const [custList, invList, accList, entries] = await Promise.all([
+      const [custList, invList, accList, entries, settings] = await Promise.all([
         customersService.getAll(user.id),
         invoicesService.getAll(user.id),
         chartAccountsService.getAll(user.id),
         journalEntriesService.getAll(user.id),
+        accountingSettingsService.get(user.id),
       ]);
 
       const customersArray = (custList || []).map((c: any) => ({ id: String(c.id), name: String(c.name) }));
       setCustomers(customersArray);
 
-      const invoicesArray = (invList as any[]).map((inv) => ({
-        id: String(inv.id),
-        invoiceNumber: inv.invoice_number as string,
-        customerId: String(inv.customer_id),
-      }));
+      const invoicesArray = (invList as any[]).map((inv) => {
+        const totalAmount = Number(inv.total_amount) || 0;
+        const paidAmount = Number((inv as any).paid_amount) || 0;
+        const pendingAmount = totalAmount > 0 ? Math.max(totalAmount - paidAmount, 0) : 0;
+
+        return {
+          id: String(inv.id),
+          invoiceNumber: inv.invoice_number as string,
+          customerId: String(inv.customer_id),
+          totalAmount,
+          paidAmount,
+          pendingAmount,
+        };
+      });
       setInvoices(invoicesArray);
 
       setAccounts(accList || []);
+      setAccountingSettings(settings || null);
+
+      // Preseleccionar cuentas por defecto desde Ajustes Contables cuando sea posible
+      if (settings && Array.isArray(accList) && accList.length > 0) {
+        const incomeAccs = (accList as any[]).filter((acc) => acc.allowPosting && acc.type === 'income');
+        const defaultOrigin = (settings as any).sales_account_id as string | undefined;
+        const defaultReturns = (settings as any).sales_returns_account_id as string | undefined;
+
+        if (!originAccountId && defaultOrigin && incomeAccs.some((acc) => String(acc.id) === String(defaultOrigin))) {
+          setOriginAccountId(String(defaultOrigin));
+        }
+
+        if (!returnsAccountId) {
+          const target = defaultReturns || defaultOrigin;
+          if (target && incomeAccs.some((acc) => String(acc.id) === String(target))) {
+            setReturnsAccountId(String(target));
+          }
+        }
+      }
 
       const customersMap: Record<string, string> = {};
       customersArray.forEach((c: { id: string; name: string }) => {
@@ -121,6 +170,46 @@ export default function ReturnsPage() {
     );
   });
 
+  const handleInvoiceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newInvoiceId = e.target.value;
+    setNoteInvoiceId(newInvoiceId);
+
+    if (!newInvoiceId) {
+      setNoteAmount(0);
+      return;
+    }
+
+    const selectedInvoice = invoices.find((inv) => inv.id === newInvoiceId);
+    if (selectedInvoice) {
+      const pending = Number(selectedInvoice.pendingAmount) || 0;
+      if (pending > 0) {
+        setNoteAmount(pending);
+      } else if (selectedInvoice.totalAmount > 0) {
+        // Si no hay pendiente (ya pagada / ajustada), sugerimos total solo como referencia
+        // y permitimos que el usuario ajuste manualmente si necesita un crédito especial.
+        setNoteAmount(selectedInvoice.totalAmount);
+      } else {
+        setNoteAmount(0);
+      }
+    }
+
+    if (accountingSettings) {
+      const originId = (accountingSettings as any).sales_account_id as string | undefined;
+      const returnsId = (accountingSettings as any).sales_returns_account_id as string | undefined;
+
+      if (!originAccountId && originId) {
+        setOriginAccountId(String(originId));
+      }
+
+      if (!returnsAccountId) {
+        const target = returnsId || originId;
+        if (target) {
+          setReturnsAccountId(String(target));
+        }
+      }
+    }
+  };
+
   const handleSaveReturn = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!user?.id) {
@@ -133,8 +222,8 @@ export default function ReturnsPage() {
     const date = String(formData.get('date') || '');
     const amount = Number(formData.get('amount') || 0);
     const invoiceId = String(formData.get('invoice_id') || '');
-    const originAccountId = String(formData.get('origin_account_id') || '');
-    const returnsAccountId = String(formData.get('returns_account_id') || '');
+    const originAccountFromForm = String(formData.get('origin_account_id') || '');
+    const returnsAccountFromForm = String(formData.get('returns_account_id') || '');
     const concept = String(formData.get('concept') || '');
 
     if (!amount || amount <= 0) {
@@ -142,7 +231,25 @@ export default function ReturnsPage() {
       return;
     }
 
-    if (!originAccountId || !returnsAccountId) {
+    // Validar que no se pueda devolver más que el saldo pendiente de la factura seleccionada
+    if (invoiceId) {
+      const selectedInvoice = invoices.find((inv) => inv.id === invoiceId);
+      if (selectedInvoice) {
+        const pending = Number(selectedInvoice.pendingAmount) || 0;
+        if (pending <= 0) {
+          alert('La factura seleccionada no tiene saldo pendiente para devolver.');
+          return;
+        }
+        if (amount > pending) {
+          alert(
+            `El monto de la devolución no puede ser mayor que el saldo pendiente de la factura (pendiente: RD$${pending.toLocaleString()}).`,
+          );
+          return;
+        }
+      }
+    }
+
+    if (!originAccountFromForm || !returnsAccountFromForm) {
       alert('Debes seleccionar la cuenta de ingresos original y la cuenta "Devoluciones en ventas"');
       return;
     }
@@ -166,14 +273,14 @@ export default function ReturnsPage() {
 
     const lines = [
       {
-        account_id: originAccountId,
+        account_id: originAccountFromForm,
         description: 'Reverso de ingresos por devolución',
         debit_amount: amount,
         credit_amount: 0,
         line_number: 1,
       },
       {
-        account_id: returnsAccountId,
+        account_id: returnsAccountFromForm,
         description: 'Devoluciones en ventas',
         debit_amount: 0,
         credit_amount: amount,
@@ -189,6 +296,28 @@ export default function ReturnsPage() {
         reference,
         status: 'posted',
       }, lines);
+
+      // Si hay una factura relacionada, actualizar su total y estado
+      if (invoiceId) {
+        const targetInvoice = invoices.find((inv) => inv.id === invoiceId);
+        if (targetInvoice) {
+          const originalTotal = Number(targetInvoice.totalAmount) || 0;
+          const paidAmount = Number(targetInvoice.paidAmount) || 0;
+          let newInvoiceTotal = originalTotal - amount;
+          if (newInvoiceTotal < 0) newInvoiceTotal = 0;
+
+          let newInvoiceStatus: string;
+          if (newInvoiceTotal <= 0) {
+            newInvoiceStatus = 'paid';
+          } else if (paidAmount > 0) {
+            newInvoiceStatus = 'partial';
+          } else {
+            newInvoiceStatus = 'pending';
+          }
+
+          await invoicesService.updateTotals(invoiceId, newInvoiceTotal, newInvoiceStatus);
+        }
+      }
 
       await loadData();
       alert('Devolución registrada exitosamente');
@@ -357,7 +486,12 @@ export default function ReturnsPage() {
                     <select
                       name="customer_id"
                       value={noteCustomerId}
-                      onChange={(e) => setNoteCustomerId(e.target.value)}
+                      onChange={(e) => {
+                        const newCustomerId = e.target.value;
+                        setNoteCustomerId(newCustomerId);
+                        setNoteInvoiceId('');
+                        setNoteAmount(0);
+                      }}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">(Opcional) Seleccionar cliente</option>
@@ -386,10 +520,13 @@ export default function ReturnsPage() {
                       Monto
                     </label>
                     <input
-                      type="number" min="0"
+                      type="number"
+                      min="0"
                       step="0.01"
                       name="amount"
                       required
+                      value={noteAmount || ''}
+                      onChange={(e) => setNoteAmount(Number(e.target.value || 0))}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
                     />
@@ -401,6 +538,8 @@ export default function ReturnsPage() {
                     </label>
                     <select
                       name="invoice_id"
+                      value={noteInvoiceId}
+                      onChange={handleInvoiceChange}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar factura</option>
@@ -421,7 +560,8 @@ export default function ReturnsPage() {
                     name="origin_account_id"
                     required
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
-                    defaultValue=""
+                    value={originAccountId}
+                    onChange={(e) => setOriginAccountId(e.target.value)}
                   >
                     <option value="">Seleccionar cuenta de ingresos original</option>
                     {incomeAccounts.map((acc) => (
@@ -440,7 +580,8 @@ export default function ReturnsPage() {
                     name="returns_account_id"
                     required
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
-                    defaultValue=""
+                    value={returnsAccountId}
+                    onChange={(e) => setReturnsAccountId(e.target.value)}
                   >
                     <option value="">Seleccionar cuenta de ingresos para devoluciones</option>
                     {incomeAccounts.map((acc) => (
@@ -467,7 +608,12 @@ export default function ReturnsPage() {
                 <div className="flex space-x-3 pt-4">
                   <button
                     type="button"
-                    onClick={() => setShowModal(false)}
+                    onClick={() => {
+                      setShowModal(false);
+                      setNoteCustomerId('');
+                      setNoteInvoiceId('');
+                      setNoteAmount(0);
+                    }}
                     className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors whitespace-nowrap"
                   >
                     Cancelar

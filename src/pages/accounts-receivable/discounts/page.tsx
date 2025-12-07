@@ -20,12 +20,24 @@ export default function DiscountsPage() {
   const { user } = useAuth();
   const [discounts, setDiscounts] = useState<ArDiscount[]>([]);
   const [customers, setCustomers] = useState<Array<{ id: string; name: string }>>([]);
-  const [invoices, setInvoices] = useState<Array<{ id: string; invoiceNumber: string; customerId: string }>>([]);
+  const [invoices, setInvoices] = useState<
+    Array<{
+      id: string;
+      invoiceNumber: string;
+      customerId: string;
+      totalAmount: number;
+      paidAmount: number;
+      pendingAmount: number;
+    }>
+  >([]);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [noteCustomerId, setNoteCustomerId] = useState<string>('');
+  const [noteInvoiceId, setNoteInvoiceId] = useState<string>('');
+  const [noteAmount, setNoteAmount] = useState<number>(0);
+  const [notePercent, setNotePercent] = useState<number>(0);
 
   const incomeAccounts = accounts.filter((acc) => acc.allowPosting && acc.type === 'income');
 
@@ -43,11 +55,20 @@ export default function DiscountsPage() {
       const customersArray = (custList || []).map((c: any) => ({ id: String(c.id), name: String(c.name) }));
       setCustomers(customersArray);
 
-      const invoicesArray = (invList as any[]).map((inv) => ({
-        id: String(inv.id),
-        invoiceNumber: inv.invoice_number as string,
-        customerId: String(inv.customer_id),
-      }));
+      const invoicesArray = (invList as any[]).map((inv) => {
+        const totalAmount = Number(inv.total_amount) || 0;
+        const paidAmount = Number((inv as any).paid_amount) || 0;
+        const pendingAmount = totalAmount > 0 ? Math.max(totalAmount - paidAmount, 0) : 0;
+
+        return {
+          id: String(inv.id),
+          invoiceNumber: inv.invoice_number as string,
+          customerId: String(inv.customer_id),
+          totalAmount,
+          paidAmount,
+          pendingAmount,
+        };
+      });
       setInvoices(invoicesArray);
 
       setAccounts(accList || []);
@@ -121,6 +142,70 @@ export default function DiscountsPage() {
     );
   });
 
+  const selectedInvoiceForDiscount = noteInvoiceId
+    ? invoices.find((inv) => inv.id === noteInvoiceId)
+    : undefined;
+
+  const selectedInvoicePending = selectedInvoiceForDiscount
+    ? Number(selectedInvoiceForDiscount.pendingAmount) || 0
+    : 0;
+
+  const previewNewInvoiceTotal = selectedInvoiceForDiscount
+    ? Math.max((Number(selectedInvoiceForDiscount.totalAmount) || 0) - (noteAmount || 0), 0)
+    : 0;
+
+  const handleInvoiceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newInvoiceId = e.target.value;
+    setNoteInvoiceId(newInvoiceId);
+
+    if (!newInvoiceId) {
+      setNoteAmount(0);
+      return;
+    }
+
+    const invoice = invoices.find((inv) => inv.id === newInvoiceId);
+    if (!invoice) {
+      setNoteAmount(0);
+      return;
+    }
+
+    const pending = Number(invoice.pendingAmount) || 0;
+    if (pending <= 0) {
+      setNoteAmount(0);
+      return;
+    }
+
+    if (notePercent > 0) {
+      const calc = (pending * notePercent) / 100;
+      setNoteAmount(Number(calc.toFixed(2)));
+    } else {
+      setNoteAmount(0);
+    }
+  };
+
+  const handlePercentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = Number(e.target.value || 0);
+    const value = Number.isFinite(raw) && raw >= 0 ? raw : 0;
+    setNotePercent(value);
+
+    if (!noteInvoiceId) {
+      // Sin factura, solo guardamos el porcentaje; el usuario puede escribir el monto manualmente.
+      return;
+    }
+
+    const invoice = invoices.find((inv) => inv.id === noteInvoiceId);
+    if (!invoice) return;
+
+    const pending = Number(invoice.pendingAmount) || 0;
+    if (pending <= 0 || value <= 0) {
+      setNoteAmount(0);
+      return;
+    }
+
+    const calc = (pending * value) / 100;
+    setNoteAmount(Number(calc.toFixed(2)));
+  };
+
   const handleSaveDiscount = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!user?.id) {
@@ -140,6 +225,24 @@ export default function DiscountsPage() {
     if (!amount || amount <= 0) {
       alert('El monto debe ser mayor que 0');
       return;
+    }
+
+    // Si hay factura relacionada, validar contra saldo pendiente
+    if (invoiceId) {
+      const targetInvoice = invoices.find((inv) => inv.id === invoiceId);
+      if (targetInvoice) {
+        const pending = Number(targetInvoice.pendingAmount) || 0;
+        if (pending <= 0) {
+          alert('La factura seleccionada no tiene saldo pendiente para aplicar descuentos.');
+          return;
+        }
+        if (amount > pending) {
+          alert(
+            `El monto del descuento no puede ser mayor que el saldo pendiente de la factura (pendiente: RD$${pending.toLocaleString()}).`,
+          );
+          return;
+        }
+      }
     }
 
     if (!originAccountId || !discountsAccountId) {
@@ -189,6 +292,28 @@ export default function DiscountsPage() {
         reference,
         status: 'posted',
       }, lines);
+
+      // Si hay una factura relacionada, actualizar su total y estado (similar a aplicar una nota de crédito)
+      if (invoiceId) {
+        const targetInvoice = invoices.find((inv) => inv.id === invoiceId);
+        if (targetInvoice) {
+          const originalTotal = Number(targetInvoice.totalAmount) || 0;
+          const paidAmount = Number(targetInvoice.paidAmount) || 0;
+          let newInvoiceTotal = originalTotal - amount;
+          if (newInvoiceTotal < 0) newInvoiceTotal = 0;
+
+          let newInvoiceStatus: string;
+          if (newInvoiceTotal <= 0) {
+            newInvoiceStatus = 'paid';
+          } else if (paidAmount > 0) {
+            newInvoiceStatus = 'partial';
+          } else {
+            newInvoiceStatus = 'pending';
+          }
+
+          await invoicesService.updateTotals(invoiceId, newInvoiceTotal, newInvoiceStatus);
+        }
+      }
 
       await loadData();
       alert('Descuento registrado exitosamente');
@@ -357,7 +482,13 @@ export default function DiscountsPage() {
                     <select
                       name="customer_id"
                       value={noteCustomerId}
-                      onChange={(e) => setNoteCustomerId(e.target.value)}
+                      onChange={(e) => {
+                        const newCustomerId = e.target.value;
+                        setNoteCustomerId(newCustomerId);
+                        setNoteInvoiceId('');
+                        setNoteAmount(0);
+                        setNotePercent(0);
+                      }}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">(Opcional) Seleccionar cliente</option>
@@ -383,16 +514,39 @@ export default function DiscountsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Monto
+                      % de descuento (sobre saldo pendiente)
                     </label>
                     <input
-                      type="number" min="0"
+                      type="number"
+                      min="0"
+                      max="100"
                       step="0.01"
-                      name="amount"
-                      required
+                      value={notePercent || ''}
+                      onChange={handlePercentChange}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="0.00"
                     />
+                    <label className="block text-sm font-medium text-gray-700 mb-2 mt-3">
+                      Monto
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      name="amount"
+                      required
+                      value={noteAmount || ''}
+                      onChange={(e) => setNoteAmount(Number(e.target.value || 0))}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="0.00"
+                    />
+                    {selectedInvoiceForDiscount && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Saldo pendiente: RD${selectedInvoicePending.toLocaleString()} · Nuevo total factura:
+                        {' '}
+                        RD${previewNewInvoiceTotal.toLocaleString()}
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -401,11 +555,13 @@ export default function DiscountsPage() {
                     </label>
                     <select
                       name="invoice_id"
+                      value={noteInvoiceId}
+                      onChange={handleInvoiceChange}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Seleccionar factura</option>
                       {invoices
-                        .filter((inv) => !noteCustomerId || inv.customerId === noteCustomerId)
+                        .filter((inv) => (!noteCustomerId || inv.customerId === noteCustomerId) && (Number(inv.pendingAmount) || 0) > 0)
                         .map((inv) => (
                           <option key={inv.id} value={inv.id}>{inv.invoiceNumber}</option>
                         ))}
