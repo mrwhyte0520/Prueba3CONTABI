@@ -38,25 +38,11 @@ const settingsSections: SettingsSection[] = [
     href: '/settings/accounting'
   },
   {
-    id: 'taxes',
-    name: 'Configuración de Impuestos',
-    description: 'Configurar tipos de impuestos, tasas y reglas fiscales',
-    icon: 'ri-percent-line',
-    href: '/settings/taxes'
-  },
-  {
     id: 'inventory',
     name: 'Configuración de Inventario',
     description: 'Configurar métodos de valuación, categorías y almacenes',
     icon: 'ri-archive-line',
     href: '/settings/inventory'
-  },
-  {
-    id: 'payroll',
-    name: 'Configuración de Nómina',
-    description: 'Configurar conceptos de nómina, deducciones y beneficios',
-    icon: 'ri-money-dollar-circle-line',
-    href: '/settings/payroll'
   },
   {
     id: 'backup',

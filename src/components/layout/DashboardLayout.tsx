@@ -367,9 +367,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         { name: 'Empresa', href: '/settings/company' },
         { name: 'Balances Iniciales', href: '/settings/opening-balances' },
         { name: 'Contabilidad', href: '/settings/accounting' },
-        { name: 'Impuestos', href: '/settings/taxes' },
         { name: 'Inventario', href: '/settings/inventory' },
-        { name: 'Nómina', href: '/settings/payroll' },
         { name: 'Respaldos', href: '/settings/backup' }
       ]
     }] : [])
