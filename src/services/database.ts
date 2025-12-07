@@ -2658,9 +2658,11 @@ export const pettyCashService = {
     try {
       const tenantId = await resolveTenantId(userId);
       if (!tenantId) throw new Error('userId required');
+      const initialAmount = Number(fund.initial_amount) || 0;
       const payload = {
         ...fund,
         user_id: tenantId,
+        current_balance: initialAmount,
       };
       const { data, error } = await supabase
         .from('petty_cash_funds')
@@ -2723,7 +2725,6 @@ export const pettyCashService = {
     try {
       const payload = {
         ...patch,
-        updated_at: new Date().toISOString(),
       };
 
       const tenantId = await resolveTenantId(userId);
@@ -2771,6 +2772,34 @@ export const pettyCashService = {
       const tenantId = await resolveTenantId(userId);
       if (!tenantId) throw new Error('userId required');
 
+      // Validar saldo disponible del fondo antes de aprobar el gasto
+      const { data: expenseRow, error: expenseError } = await supabase
+        .from('petty_cash_expenses')
+        .select('*')
+        .eq('id', expenseId)
+        .eq('user_id', tenantId)
+        .single();
+
+      if (expenseError || !expenseRow) {
+        throw expenseError || new Error('Gasto de caja chica no encontrado');
+      }
+
+      const requestedAmount = Number(expenseRow.amount) || 0;
+      if (requestedAmount > 0 && expenseRow.fund_id) {
+        const { data: fundDataForCheck, error: fundErrorForCheck } = await supabase
+          .from('petty_cash_funds')
+          .select('id, current_balance')
+          .eq('id', expenseRow.fund_id)
+          .maybeSingle();
+
+        if (!fundErrorForCheck && fundDataForCheck) {
+          const currentBalance = Number(fundDataForCheck.current_balance || 0);
+          if (currentBalance < requestedAmount) {
+            throw new Error('Fondos insuficientes en caja chica para aprobar este gasto');
+          }
+        }
+      }
+
       const updatePayload: any = {
         status: 'approved',
         approved_by: approvedBy,
@@ -2787,12 +2816,12 @@ export const pettyCashService = {
 
       // Asiento contable automático al aprobar gasto: Debe Gasto / Haber Caja Chica
       try {
-        const amount = Number(data.amount) || 0;
-        if (amount > 0 && data.expense_account_id && data.fund_id) {
+        const approvedAmount = Number(data.amount) || 0;
+        if (approvedAmount > 0 && data.expense_account_id && data.fund_id) {
           // Obtener fondo para saber la cuenta de caja chica
           const { data: fundData, error: fundError } = await supabase
             .from('petty_cash_funds')
-            .select('id, petty_cash_account_id')
+            .select('id, petty_cash_account_id, current_balance')
             .eq('id', data.fund_id)
             .maybeSingle();
 
@@ -2810,18 +2839,28 @@ export const pettyCashService = {
               {
                 account_id: data.expense_account_id as string,
                 description: 'Gasto de Caja Chica',
-                debit_amount: amount,
+                debit_amount: approvedAmount,
                 credit_amount: 0,
               },
               {
                 account_id: fundData.petty_cash_account_id as string,
                 description: `Salida de Caja Chica fondo ${fundData.id}`,
                 debit_amount: 0,
-                credit_amount: amount,
+                credit_amount: approvedAmount,
               },
             ];
 
             await journalEntriesService.createWithLines(userId, entryPayload, lines);
+
+            const currentBalance = Number(fundData.current_balance || 0);
+            const { error: fundUpdateError } = await supabase
+              .from('petty_cash_funds')
+              .update({ current_balance: currentBalance - approvedAmount })
+              .eq('id', fundData.id);
+
+            if (fundUpdateError) {
+              console.error('Error actualizando saldo del fondo de caja chica al aprobar gasto:', fundUpdateError);
+            }
           }
         }
       } catch (jeError) {
