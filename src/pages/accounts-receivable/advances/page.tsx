@@ -4,7 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, customerAdvancesService, bankAccountsService, journalEntriesService, settingsService } from '../../../services/database';
+import { customersService, invoicesService, customerAdvancesService, bankAccountsService, journalEntriesService, settingsService, accountingSettingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 
 interface Advance {
@@ -56,6 +56,7 @@ export default function AdvancesPage() {
   const [loadingSupport, setLoadingSupport] = useState(false);
   const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
   const [customerAdvanceAccounts, setCustomerAdvanceAccounts] = useState<Record<string, string>>({});
+  const [customerArAccounts, setCustomerArAccounts] = useState<Record<string, string>>({});
 
   const getPaymentMethodName = (method: string) => {
     switch (method) {
@@ -135,6 +136,15 @@ export default function AdvancesPage() {
         }
       });
       setCustomerAdvanceAccounts(advMap);
+
+      // Mapa de cuentas de CxC por cliente (para cruces de anticipos vs facturas)
+      const arMap: Record<string, string> = {};
+      (custList || []).forEach((c: any) => {
+        if (c.id && c.arAccountId) {
+          arMap[String(c.id)] = String(c.arAccountId);
+        }
+      });
+      setCustomerArAccounts(arMap);
 
       // Cuentas bancarias para poder generar asientos Banco vs Anticipos
       const mappedBanks: BankAccountOption[] = (bankList || []).map((ba: any) => ({
@@ -381,11 +391,12 @@ export default function AdvancesPage() {
       alert('Debes iniciar sesión para crear anticipos');
       return;
     }
+
     const formData = new FormData(e.currentTarget);
     const customerId = String(formData.get('customer_id') || '');
     const date = String(formData.get('date') || '');
     const amount = Number(formData.get('amount') || 0);
-    const paymentMethod = String(formData.get('payment_method') || '');
+    const paymentMethod = String(formData.get('payment_method') || '') as 'cash' | 'check' | 'transfer' | 'card';
     const reference = String(formData.get('reference') || '');
     const concept = String(formData.get('concept') || '');
     const bankAccountId = String(formData.get('bank_account_id') || '');
@@ -427,14 +438,24 @@ export default function AdvancesPage() {
           alert('Anticipo registrado, pero no se pudo crear el asiento: el cliente no tiene configurada una cuenta de Anticipos.');
         } else {
           let bankChartAccountId: string | null = null;
+
           if (bankAccountId) {
-            const bank = bankAccounts.find(b => b.id === bankAccountId);
+            const bank = bankAccounts.find((b) => b.id === bankAccountId);
             bankChartAccountId = bank?.chartAccountId || null;
+          }
+
+          // Si es efectivo y no hay banco, intentar usar cuenta de Caja/Efectivo global
+          if (!bankChartAccountId && paymentMethod === 'cash') {
+            const settings = await accountingSettingsService.get(user.id);
+            const cashAccountId = (settings as any)?.cash_account_id as string | undefined;
+            if (cashAccountId) {
+              bankChartAccountId = cashAccountId;
+            }
           }
 
           if (!bankChartAccountId) {
             if (paymentMethod === 'cash') {
-              alert('Anticipo registrado en efectivo sin cuenta de banco/caja configurada; no se generó asiento automático.');
+              alert('Anticipo registrado en efectivo, pero no se pudo crear el asiento: configure una cuenta de Caja/Efectivo en Ajustes Contables o use una cuenta bancaria con cuenta contable asociada.');
             } else {
               alert('Anticipo registrado, pero no se pudo crear el asiento: la cuenta de banco seleccionada no tiene cuenta contable asociada.');
             }
@@ -444,7 +465,7 @@ export default function AdvancesPage() {
             const lines: any[] = [
               {
                 account_id: bankChartAccountId,
-                description: 'Anticipo de cliente - Banco',
+                description: paymentMethod === 'cash' ? 'Anticipo de cliente - Caja/Efectivo' : 'Anticipo de cliente - Banco',
                 debit_amount: entryAmount,
                 credit_amount: 0,
                 line_number: 1,
@@ -458,7 +479,7 @@ export default function AdvancesPage() {
               },
             ];
 
-            const customerName = customers.find(c => c.id === customerId)?.name || '';
+            const customerName = customers.find((c) => c.id === customerId)?.name || '';
             const descriptionText = customerName
               ? `Anticipo ${created.advance_number || advanceNumber} - ${customerName}`
               : `Anticipo ${created.advance_number || advanceNumber}`;
@@ -556,6 +577,68 @@ export default function AdvancesPage() {
         appliedAmount: newApplied,
         balanceAmount: newBalance,
       });
+
+      // Best-effort: registrar asiento contable de aplicación de anticipo (Anticipos vs CxC)
+      try {
+        const customerId = selectedAdvance.customerId;
+        const advanceAccountId = customerAdvanceAccounts[customerId];
+
+        if (!advanceAccountId) {
+          alert('Anticipo aplicado, pero no se pudo crear el asiento: el cliente no tiene configurada una cuenta de Anticipos.');
+        } else {
+          const settings = await accountingSettingsService.get(user.id);
+          const customerSpecificArId = customerArAccounts[customerId];
+          const arAccountId = customerSpecificArId || settings?.ar_account_id;
+
+          if (!arAccountId) {
+            alert('Anticipo aplicado, pero no se pudo crear el asiento: configure una cuenta de Cuentas por Cobrar en el cliente o en Ajustes Contables.');
+          } else {
+            const amountForEntry = amountToApply;
+
+            const lines: any[] = [
+              {
+                account_id: advanceAccountId,
+                description: 'Aplicación de anticipo a factura - Anticipos de Cliente',
+                debit_amount: amountForEntry,
+                credit_amount: 0,
+                line_number: 1,
+              },
+              {
+                account_id: arAccountId,
+                description: 'Aplicación de anticipo a factura - Cuentas por Cobrar',
+                debit_amount: 0,
+                credit_amount: amountForEntry,
+                line_number: 2,
+              },
+            ];
+
+            const customerName = customers.find(c => c.id === customerId)?.name || selectedAdvance.customerName;
+            const descriptionText = customerName
+              ? `Aplicación anticipo ${selectedAdvance.advanceNumber} a factura ${targetInvoice.invoiceNumber} - ${customerName}`
+              : `Aplicación anticipo ${selectedAdvance.advanceNumber} a factura ${targetInvoice.invoiceNumber}`;
+
+            const entryDate = new Date().toISOString().split('T')[0];
+            const entryReference = `AdvApply:${selectedAdvance.id}-Inv:${invoiceId}`;
+
+            const entryPayload = {
+              entry_number: `${selectedAdvance.id}-APP-${Date.now()}`,
+              entry_date: entryDate,
+              description: descriptionText,
+              reference: entryReference,
+              total_debit: amountForEntry,
+              total_credit: amountForEntry,
+              status: 'posted' as const,
+            };
+
+            await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+          }
+        }
+      } catch (jeError) {
+        // eslint-disable-next-line no-console
+        console.error('[Advances] Error creando asiento contable de aplicación de anticipo:', jeError);
+        alert('Anticipo aplicado, pero ocurrió un error al crear el asiento contable. Revise el libro diario y la configuración.');
+      }
+
       await loadAdvances();
       alert('Anticipo aplicado exitosamente');
       setShowApplyModal(false);
@@ -898,6 +981,28 @@ export default function AdvancesPage() {
                       <option value="card">Tarjeta</option>
                     </select>
                   </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de Banco
+                  </label>
+                  <select
+                    name="bank_account_id"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                  >
+                    <option value="">
+                      Seleccionar cuenta (obligatoria para Cheque, Transferencia o Tarjeta)
+                    </option>
+                    {bankAccounts.map((ba) => (
+                      <option key={ba.id} value={ba.id}>
+                        {ba.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Si el método de pago es Efectivo, puede dejar este campo en blanco y se usará la cuenta de Caja/Efectivo configurada en Ajustes Contables.
+                  </p>
                 </div>
                 
                 <div>

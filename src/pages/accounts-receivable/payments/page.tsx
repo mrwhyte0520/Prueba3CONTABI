@@ -368,8 +368,13 @@ export default function PaymentsPage() {
         const customerSpecificArId = customerArAccounts[mapped.customerId] || customerArAccounts[created.customer_id];
         const arAccountId = arAccountIdFromForm || customerSpecificArId || settings?.ar_account_id;
 
-        // Necesitamos la cuenta contable del banco (chart_account_id)
-        const { chart_account_id: bankAccountAccountId } = created.bank_accounts || {};
+        // Necesitamos la cuenta contable del banco (chart_account_id) o de Caja
+        let bankAccountAccountId = (created.bank_accounts as any)?.chart_account_id as string | undefined;
+
+        // Si es efectivo y no hay banco, intentar usar cuenta de Caja/Efectivo global
+        if (!bankAccountAccountId && paymentMethod === 'cash' && settings && (settings as any).cash_account_id) {
+          bankAccountAccountId = String((settings as any).cash_account_id);
+        }
 
         if (!arAccountId) {
           alert(
@@ -378,7 +383,7 @@ export default function PaymentsPage() {
         } else if (!bankAccountAccountId) {
           if (paymentMethod === 'cash') {
             alert(
-              'Pago registrado en efectivo sin cuenta de banco ni cuenta de caja configurada; no se generó asiento automático.',
+              'Pago registrado en efectivo, pero no se pudo crear el asiento: configure una cuenta de Caja/Efectivo en Ajustes Contables o use una cuenta bancaria con cuenta contable asociada.',
             );
           } else {
             alert(
