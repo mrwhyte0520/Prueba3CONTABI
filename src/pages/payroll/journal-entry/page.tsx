@@ -54,6 +54,7 @@ export default function PayrollJournalEntryPage() {
         .from('payroll_periods')
         .select('*')
         .eq('user_id', tenantId)
+        .is('journal_entry_id', null)
         // Soportar tanto estados en inglés como en español por compatibilidad
         .in('status', ['closed', 'paid', 'cerrado', 'pagado'])
         .order('start_date', { ascending: false });
@@ -166,13 +167,27 @@ export default function PayrollJournalEntryPage() {
       const today = new Date().toISOString().split('T')[0];
       const entryNumber = `NOM-${today}-${String(period.id).slice(0, 6)}`;
 
-      await journalEntriesService.createWithLines(user.id, {
+      const createdEntry = await journalEntriesService.createWithLines(user.id, {
         entry_number: entryNumber,
         entry_date: today,
         description: `Asiento de nómina del período ${period.period_name}`,
         reference: `Nómina - ${period.period_name}`,
         status: 'posted',
       }, lines);
+
+      // Guardar referencia al asiento contable en el período de nómina para evitar doble contabilización
+      const tenantId = await resolveTenantId(user.id);
+      if (tenantId && createdEntry?.id) {
+        const { error: linkError } = await supabase
+          .from('payroll_periods')
+          .update({ journal_entry_id: createdEntry.id })
+          .eq('id', period.id)
+          .eq('user_id', tenantId);
+
+        if (linkError) {
+          console.error('Error linking payroll period to journal entry:', linkError);
+        }
+      }
 
       alert('Asientos de nómina contabilizados correctamente en el libro mayor');
       setJournalEntries([]);

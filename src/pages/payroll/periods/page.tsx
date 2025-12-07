@@ -1,7 +1,10 @@
-
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { exportToExcelStyled } from '../../../utils/exportImportUtils';
+import { exportToExcelStyled, exportToPdf } from '../../../utils/exportImportUtils';
+import { useAuth } from '../../../hooks/useAuth';
+import { payrollService, resolveTenantId } from '../../../services/database';
+import { supabase } from '../../../lib/supabase';
 
 interface PayrollPeriod {
   id: string;
@@ -20,12 +23,17 @@ interface PayrollPeriod {
 }
 
 export default function PayrollPeriodsPage() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
   const [showForm, setShowForm] = useState(false);
   const [editingPeriod, setEditingPeriod] = useState<PayrollPeriod | null>(null);
+  const [viewPeriod, setViewPeriod] = useState<PayrollPeriod | null>(null);
+  const [showViewModal, setShowViewModal] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -35,6 +43,53 @@ export default function PayrollPeriodsPage() {
     pay_date: ''
   });
 
+  useEffect(() => {
+    const loadPeriods = async () => {
+      if (!user) return;
+      setLoading(true);
+      try {
+        const rows = await payrollService.getPeriods(user.id);
+        const mapped: PayrollPeriod[] = (rows || []).map((p: any) => {
+          const rawStatus = (p.status ?? 'draft') as string;
+          const value = rawStatus.toString().toLowerCase();
+          const normalized: PayrollPeriod['status'] =
+            value === 'processing' || value === 'procesando'
+              ? 'processing'
+              : value === 'calculated'
+              ? 'calculated'
+              : value === 'paid' || value === 'pagado'
+              ? 'paid'
+              : value === 'closed' || value === 'cerrado'
+              ? 'closed'
+              : 'draft';
+
+          return {
+            id: p.id,
+            name: p.period_name || p.name || '',
+            period_type: (p.period_type as PayrollPeriod['period_type']) || 'monthly',
+            start_date: p.start_date || '',
+            end_date: p.end_date || '',
+            pay_date: p.pay_date || '',
+            status: normalized,
+            total_employees: Number(p.employee_count) || 0,
+            total_gross: Number(p.total_gross) || 0,
+            total_deductions: Number(p.total_deductions) || 0,
+            total_net: Number(p.total_net) || 0,
+            created_at: (p.created_at || new Date().toISOString()).split('T')[0],
+            closed_at: p.closed_at ? String(p.closed_at).split('T')[0] : undefined,
+          };
+        });
+        setPeriods(mapped);
+      } catch (error) {
+        console.error('Error loading payroll periods:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadPeriods();
+  }, [user]);
+
   const filteredPeriods = periods.filter(period => {
     const matchesSearch = period.name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === 'all' || period.status === filterStatus;
@@ -42,30 +97,157 @@ export default function PayrollPeriodsPage() {
     return matchesSearch && matchesStatus && matchesType;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (editingPeriod) {
-      setPeriods(prev => prev.map(period => 
-        period.id === editingPeriod.id 
-          ? { ...period, ...formData }
-          : period
-      ));
-    } else {
-      const newPeriod: PayrollPeriod = {
-        id: Date.now().toString(),
-        ...formData,
-        status: 'draft',
-        total_employees: 0,
-        total_gross: 0,
-        total_deductions: 0,
-        total_net: 0,
-        created_at: new Date().toISOString().split('T')[0]
-      };
-      setPeriods(prev => [...prev, newPeriod]);
+  const maxEmployees =
+    periods.length > 0
+      ? Math.max(...periods.map(p => p.total_employees || 0))
+      : 0;
+
+  const mapUiStatusToDb = (status: PayrollPeriod['status']): 'open' | 'processing' | 'closed' | 'paid' => {
+    switch (status) {
+      case 'draft':
+        return 'open';
+      case 'processing':
+      case 'calculated':
+        return 'processing';
+      case 'paid':
+        return 'paid';
+      case 'closed':
+        return 'closed';
+      default:
+        return 'open';
     }
-    
-    resetForm();
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!user) {
+      alert('Debe iniciar sesión para crear períodos de nómina.');
+      return;
+    }
+
+    // Validaciones de fechas
+    const { start_date, end_date, pay_date } = formData;
+
+    if (!start_date || !end_date || !pay_date) {
+      alert('Debe completar las fechas de inicio, fin y pago.');
+      return;
+    }
+
+    const start = new Date(start_date);
+    const end = new Date(end_date);
+    const pay = new Date(pay_date);
+
+    if (end < start) {
+      alert('La fecha de fin no puede ser menor que la fecha de inicio.');
+      return;
+    }
+
+    if (pay < start || pay > end) {
+      alert('La fecha de pago debe estar entre la fecha de inicio y la fecha de fin.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      if (editingPeriod) {
+        const tenantId = await resolveTenantId(user.id);
+        if (!tenantId) {
+          throw new Error('No se pudo determinar la empresa del usuario.');
+        }
+
+        const patch = {
+          period_name: formData.name,
+          name: formData.name,
+          start_date: formData.start_date,
+          end_date: formData.end_date,
+          pay_date: formData.pay_date,
+        };
+
+        const { error } = await supabase
+          .from('payroll_periods')
+          .update(patch)
+          .eq('id', editingPeriod.id)
+          .eq('user_id', tenantId);
+
+        if (error) throw error;
+
+        setPeriods(prev => prev.map(period =>
+          period.id === editingPeriod.id
+            ? {
+                ...period,
+                name: formData.name,
+                period_type: formData.period_type,
+                start_date: formData.start_date,
+                end_date: formData.end_date,
+                pay_date: formData.pay_date,
+              }
+            : period
+        ));
+      } else {
+
+        const today = new Date().toISOString().slice(0, 10);
+
+        const payload = {
+          // Mantener compatibilidad con la creación de períodos desde la pantalla principal de Nómina
+          period_name: formData.name || '',
+          name: formData.name || '',
+          start_date: formData.start_date || today,
+          end_date: formData.end_date || today,
+          pay_date: formData.pay_date || today,
+          // Guardamos en la base en inglés para cumplir con el constraint de status
+          status: 'open',
+          total_gross: 0,
+          total_deductions: 0,
+          total_net: 0,
+          employee_count: 0,
+        };
+
+        await payrollService.createPeriod(user.id, payload);
+
+        // Recargar lista desde la base de datos para mantener consistencia
+        const rows = await payrollService.getPeriods(user.id);
+        const mapped: PayrollPeriod[] = (rows || []).map((p: any) => {
+          const rawStatus = (p.status ?? 'draft') as string;
+          const value = rawStatus.toString().toLowerCase();
+          const normalized: PayrollPeriod['status'] =
+            value === 'processing' || value === 'procesando'
+              ? 'processing'
+              : value === 'calculated'
+              ? 'calculated'
+              : value === 'paid' || value === 'pagado'
+              ? 'paid'
+              : value === 'closed' || value === 'cerrado'
+              ? 'closed'
+              : 'draft';
+
+          return {
+            id: p.id,
+            name: p.period_name || p.name || '',
+            period_type: (p.period_type as PayrollPeriod['period_type']) || 'monthly',
+            start_date: p.start_date || '',
+            end_date: p.end_date || '',
+            pay_date: p.pay_date || '',
+            status: normalized,
+            total_employees: Number(p.employee_count) || 0,
+            total_gross: Number(p.total_gross) || 0,
+            total_deductions: Number(p.total_deductions) || 0,
+            total_net: Number(p.total_net) || 0,
+            created_at: (p.created_at || new Date().toISOString()).split('T')[0],
+            closed_at: p.closed_at ? String(p.closed_at).split('T')[0] : undefined,
+          };
+        });
+        setPeriods(mapped);
+      }
+
+      resetForm();
+    } catch (error) {
+      console.error('Error creating payroll period:', error);
+      alert('Error al crear el período de nómina.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const resetForm = () => {
@@ -92,14 +274,51 @@ export default function PayrollPeriodsPage() {
     setShowForm(true);
   };
 
-  const updateStatus = (id: string, newStatus: PayrollPeriod['status']) => {
-    setPeriods(prev => prev.map(period => 
-      period.id === id ? { 
-        ...period, 
-        status: newStatus,
-        ...(newStatus === 'closed' ? { closed_at: new Date().toISOString().split('T')[0] } : {})
-      } : period
-    ));
+  const updateStatus = async (id: string, newStatus: PayrollPeriod['status']) => {
+    if (!user) {
+      alert('Debe iniciar sesión para actualizar el estado del período.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        throw new Error('No se pudo determinar la empresa del usuario.');
+      }
+
+      const dbStatus = mapUiStatusToDb(newStatus);
+      const patch: any = { status: dbStatus };
+
+      if (newStatus === 'closed') {
+        patch.closed_at = new Date().toISOString();
+      }
+
+      const { error } = await supabase
+        .from('payroll_periods')
+        .update(patch)
+        .eq('id', id)
+        .eq('user_id', tenantId);
+
+      if (error) throw error;
+
+      setPeriods(prev => prev.map(period =>
+        period.id === id
+          ? {
+              ...period,
+              status: newStatus,
+              ...(newStatus === 'closed'
+                ? { closed_at: new Date().toISOString().split('T')[0] }
+                : {}),
+            }
+          : period
+      ));
+    } catch (error) {
+      console.error('Error updating payroll period status:', error);
+      alert('Error al actualizar el estado del período de nómina.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const exportToExcel = async () => {
@@ -203,6 +422,120 @@ export default function PayrollPeriodsPage() {
     return status === 'paid';
   };
 
+  const handleExportPeriodToExcel = async (period: PayrollPeriod) => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+
+      const entries = await payrollService.getEntries(period.id);
+      if (!entries || (entries as any[]).length === 0) {
+        alert('No hay entradas de nómina para este período.');
+        return;
+      }
+
+      const detailRows = (entries as any[]).map((e: any) => {
+        const emp = (e as any).employees || {};
+        const fullName = `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
+        return {
+          period: period.name,
+          employeeCode: emp.employee_code || '',
+          employeeName: fullName || 'Sin nombre',
+          gross: Number(e.gross_salary) || 0,
+          deductions: Number(e.deductions) || 0,
+          net: Number(e.net_salary) || 0,
+        };
+      });
+
+      const totalGross = detailRows.reduce((sum, r) => sum + (r.gross || 0), 0);
+      const totalDeductions = detailRows.reduce((sum, r) => sum + (r.deductions || 0), 0);
+      const totalNet = detailRows.reduce((sum, r) => sum + (r.net || 0), 0);
+
+      const rows = [
+        ...detailRows,
+        {
+          period: period.name,
+          employeeCode: 'TOTAL',
+          employeeName: '',
+          gross: totalGross,
+          deductions: totalDeductions,
+          net: totalNet,
+        },
+      ];
+
+      await exportToExcelStyled(
+        rows,
+        [
+          { key: 'period', title: 'Período', width: 22 },
+          { key: 'employeeCode', title: 'Código', width: 14 },
+          { key: 'employeeName', title: 'Empleado', width: 30 },
+          { key: 'gross', title: 'Salario Bruto', width: 18, numFmt: '#,##0.00' },
+          { key: 'deductions', title: 'Deducciones', width: 18, numFmt: '#,##0.00' },
+          { key: 'net', title: 'Salario Neto', width: 18, numFmt: '#,##0.00' },
+        ],
+        `nomina_periodo_${(period.name || '').replace(/\s+/g, '_') || period.id}_${today}`,
+        `Nómina - ${period.name}`,
+      );
+    } catch (error) {
+      console.error('Error exporting payroll period to Excel:', error);
+      alert('Error al exportar el período a Excel.');
+    }
+  };
+
+  const handleExportPeriodToPdf = async (period: PayrollPeriod) => {
+    try {
+      const entries = await payrollService.getEntries(period.id);
+
+      if (!entries || (entries as any[]).length === 0) {
+        alert('No hay entradas de nómina para este período.');
+        return;
+      }
+
+      const detailRows = (entries as any[]).map((e: any) => {
+        const emp = (e as any).employees || {};
+        const fullName = `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
+        return {
+          employeeCode: emp.employee_code || '',
+          employeeName: fullName || 'Sin nombre',
+          gross: Number(e.gross_salary) || 0,
+          deductions: Number(e.deductions) || 0,
+          net: Number(e.net_salary) || 0,
+        };
+      });
+
+      const totalGross = detailRows.reduce((sum, r) => sum + (r.gross || 0), 0);
+      const totalDeductions = detailRows.reduce((sum, r) => sum + (r.deductions || 0), 0);
+      const totalNet = detailRows.reduce((sum, r) => sum + (r.net || 0), 0);
+
+      const rows = [
+        ...detailRows,
+        {
+          employeeCode: 'TOTAL',
+          employeeName: '',
+          gross: totalGross,
+          deductions: totalDeductions,
+          net: totalNet,
+        },
+      ];
+
+      const columns = [
+        { key: 'employeeCode', label: 'Código' },
+        { key: 'employeeName', label: 'Empleado' },
+        { key: 'gross', label: 'Salario Bruto' },
+        { key: 'deductions', label: 'Deducciones' },
+        { key: 'net', label: 'Salario Neto' },
+      ];
+
+      await exportToPdf(
+        rows,
+        columns,
+        `nomina_periodo_${(period.name || '').replace(/\s+/g, '_') || period.id}`,
+        `Nómina - ${period.name}`,
+      );
+    } catch (error) {
+      console.error('Error exporting payroll period to PDF:', error);
+      alert('Error al exportar el período a PDF.');
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -213,6 +546,13 @@ export default function PayrollPeriodsPage() {
             <p className="text-gray-600">Gestiona los períodos de pago y procesamiento de nóminas</p>
           </div>
           <div className="flex gap-3">
+            <button
+              onClick={() => navigate('/payroll/payroll-process')}
+              className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 flex items-center gap-2"
+            >
+              <i className="ri-arrow-left-line"></i>
+              Ir Atrás
+            </button>
             <button
               onClick={exportToExcel}
               className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
@@ -286,19 +626,6 @@ export default function PayrollPeriodsPage() {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Empleados Activos</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {Math.max(...periods.map(p => p.total_employees))}
-                </p>
-              </div>
-              <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
-                <i className="ri-team-line text-xl text-orange-600"></i>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Filters */}
@@ -431,61 +758,29 @@ export default function PayrollPeriodsPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex items-center justify-end gap-2">
-                        {canEdit(period.status) && (
-                          <button
-                            onClick={() => handleEdit(period)}
-                            className="text-blue-600 hover:text-blue-900"
-                            title="Editar"
-                          >
-                            <i className="ri-edit-line"></i>
-                          </button>
-                        )}
-                        
-                        {canProcess(period.status) && (
-                          <button
-                            onClick={() => updateStatus(period.id, 'processing')}
-                            className="text-yellow-600 hover:text-yellow-900"
-                            title="Procesar"
-                          >
-                            <i className="ri-play-line"></i>
-                          </button>
-                        )}
-                        
-                        {canCalculate(period.status) && (
-                          <button
-                            onClick={() => updateStatus(period.id, 'calculated')}
-                            className="text-blue-600 hover:text-blue-900"
-                            title="Calcular"
-                          >
-                            <i className="ri-calculator-line"></i>
-                          </button>
-                        )}
-                        
-                        {canPay(period.status) && (
-                          <button
-                            onClick={() => updateStatus(period.id, 'paid')}
-                            className="text-green-600 hover:text-green-900"
-                            title="Marcar como Pagado"
-                          >
-                            <i className="ri-money-dollar-circle-line"></i>
-                          </button>
-                        )}
-                        
-                        {canClose(period.status) && (
-                          <button
-                            onClick={() => updateStatus(period.id, 'closed')}
-                            className="text-purple-600 hover:text-purple-900"
-                            title="Cerrar Período"
-                          >
-                            <i className="ri-lock-line"></i>
-                          </button>
-                        )}
-
                         <button
+                          onClick={() => {
+                            setViewPeriod(period);
+                            setShowViewModal(true);
+                          }}
                           className="text-gray-600 hover:text-gray-900"
                           title="Ver Detalles"
                         >
                           <i className="ri-eye-line"></i>
+                        </button>
+                        <button
+                          onClick={() => handleExportPeriodToExcel(period)}
+                          className="text-green-600 hover:text-green-900"
+                          title="Exportar a Excel"
+                        >
+                          <i className="ri-file-excel-2-line"></i>
+                        </button>
+                        <button
+                          onClick={() => handleExportPeriodToPdf(period)}
+                          className="text-red-600 hover:text-red-900"
+                          title="Imprimir / PDF"
+                        >
+                          <i className="ri-file-pdf-2-line"></i>
                         </button>
                       </div>
                     </td>
@@ -569,6 +864,7 @@ export default function PayrollPeriodsPage() {
                       type="date"
                       required
                       value={formData.end_date}
+                      min={formData.start_date || undefined}
                       onChange={(e) => setFormData(prev => ({ ...prev, end_date: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
@@ -583,6 +879,8 @@ export default function PayrollPeriodsPage() {
                     type="date"
                     required
                     value={formData.pay_date}
+                    min={formData.start_date || undefined}
+                    max={formData.end_date || undefined}
                     onChange={(e) => setFormData(prev => ({ ...prev, pay_date: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
@@ -604,6 +902,91 @@ export default function PayrollPeriodsPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* View Details Modal */}
+        {showViewModal && viewPeriod && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-xl max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-gray-900">Detalle del Período</h2>
+                <button
+                  onClick={() => {
+                    setShowViewModal(false);
+                    setViewPeriod(null);
+                  }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <i className="ri-close-line text-xl"></i>
+                </button>
+              </div>
+
+              <div className="space-y-4 text-sm text-gray-700">
+                <div>
+                  <p className="font-semibold">Nombre del Período</p>
+                  <p>{viewPeriod.name}</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="font-semibold">Tipo</p>
+                    <p>{getPeriodTypeLabel(viewPeriod.period_type)}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold">Estado</p>
+                    <p>
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(viewPeriod.status)}`}>
+                        {getStatusLabel(viewPeriod.status)}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <p className="font-semibold">Fecha Inicio</p>
+                    <p>{viewPeriod.start_date}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold">Fecha Fin</p>
+                    <p>{viewPeriod.end_date}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold">Fecha de Pago</p>
+                    <p>{viewPeriod.pay_date}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div>
+                    <p className="font-semibold">Empleados</p>
+                    <p>{viewPeriod.total_employees}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold">Total Bruto</p>
+                    <p>RD${viewPeriod.total_gross.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold">Deducciones</p>
+                    <p>RD${viewPeriod.total_deductions.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold">Total Neto</p>
+                    <p>RD${viewPeriod.total_net.toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end mt-6">
+                <button
+                  onClick={() => {
+                    setShowViewModal(false);
+                    setViewPeriod(null);
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </div>
         )}

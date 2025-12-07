@@ -1853,7 +1853,6 @@ export default function PayrollPage() {
             { id: 'employees', name: 'Empleados', icon: 'ri-user-line' },
             { id: 'departments', name: 'Departamentos', icon: 'ri-building-line' },
             { id: 'positions', name: 'Posiciones', icon: 'ri-briefcase-line' },
-            { id: 'payroll', name: 'Períodos de Nómina', icon: 'ri-calendar-line' },
             { id: 'reports', name: 'Reportes', icon: 'ri-bar-chart-line' }
           ].map((tab) => (
             <button
@@ -1878,7 +1877,6 @@ export default function PayrollPage() {
         {activeTab === 'employees' && renderEmployees()}
         {activeTab === 'departments' && renderDepartments()}
         {activeTab === 'positions' && renderPositions()}
-        {activeTab === 'payroll' && renderPayroll()}
         {activeTab === 'reports' && renderReports()}
       </div>
 

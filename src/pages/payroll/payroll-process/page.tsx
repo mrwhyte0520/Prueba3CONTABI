@@ -296,13 +296,22 @@ export default function PayrollProcessPage() {
             <h1 className="text-2xl font-bold text-gray-900">Proceso de Pago de Nómina</h1>
             <p className="text-gray-600">Procesamiento y gestión de períodos de nómina</p>
           </div>
-          <button
-            onClick={() => navigate('/payroll')}
-            className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700"
-          >
-            <i className="ri-arrow-left-line mr-2"></i>
-            Volver
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/payroll/periods')}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+            >
+              <i className="ri-calendar-line mr-2"></i>
+              Nuevo Período
+            </button>
+            <button
+              onClick={() => navigate('/payroll')}
+              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700"
+            >
+              <i className="ri-arrow-left-line mr-2"></i>
+              Volver
+            </button>
+          </div>
         </div>
 
         {loading && (
@@ -376,20 +385,14 @@ export default function PayrollProcessPage() {
                 )}
                 {period.status === 'closed' && (
                   <button
-                    onClick={() => markAsPaid(period.id)}
-                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+                    type="button"
+                    disabled
+                    className="bg-purple-100 text-purple-700 px-4 py-2 rounded-lg cursor-default"
                   >
-                    <i className="ri-check-double-line mr-2"></i>
-                    Marcar como Pagado
+                    <i className="ri-lock-line mr-2"></i>
+                    Cerrado
                   </button>
                 )}
-                <button
-                  onClick={() => setSelectedPeriod(period)}
-                  className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700"
-                >
-                  <i className="ri-eye-line mr-2"></i>
-                  Ver Detalle
-                </button>
               </div>
             </div>
           ))}
