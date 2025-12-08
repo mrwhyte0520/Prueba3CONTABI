@@ -196,22 +196,18 @@ export default function Report606Page() {
     // Preparar datos para Excel
     const excelData = reportData.map(row => ({
       'RNC/Cédula': row.rnc_cedula,
-      'Tipo Identificación': row.tipo_identificacion,
-      'Tipo Bienes/Servicios': row.tipo_bienes_servicios,
+      'Tipo ID': row.tipo_identificacion,
+      'Tipo Bien/Serv.': row.tipo_bienes_servicios,
       'NCF': row.ncf,
-      'NCF Modificado': row.ncf_modificado || '',
-      'Fecha Comprobante': row.fecha_comprobante,
-      'Fecha Pago': row.fecha_pago,
-      'Servicios Facturados': row.servicios_facturados,
-      'Bienes Facturados': row.bienes_facturados,
-      'Monto Facturado': row.monto_facturado,
-      'ITBIS Facturado': row.itbis_facturado,
-      'ITBIS Retenido': row.itbis_retenido,
-      'Retención Renta': row.retencion_renta,
-      'ISR Percibido': row.isr_percibido,
-      'Impuesto Selectivo': row.impuesto_selectivo_consumo,
-      'Otros Impuestos': row.otros_impuestos,
-      'Propina Legal': row.monto_propina_legal,
+      'NCF Mod.': row.ncf_modificado || '',
+      'F. Comp.': row.fecha_comprobante,
+      'F. Pago': row.fecha_pago,
+      'Serv. Fact.': row.servicios_facturados,
+      'Bienes Fact.': row.bienes_facturados,
+      'Monto Fact.': row.monto_facturado,
+      'ITBIS Fact.': row.itbis_facturado,
+      'ITBIS Ret.': row.itbis_retenido,
+      'Ret. Renta': row.retencion_renta,
       'Forma Pago': row.forma_pago
     }));
 
@@ -243,25 +239,65 @@ export default function Report606Page() {
 
     XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
 
-    // Configurar ancho de columnas
+    // Centrar y resaltar encabezado (empresa, nombre del reporte y período)
+    const totalColumns = Object.keys(excelData[0] || {}).length || 1;
+    const merges: any[] = (ws as any)['!merges'] || [];
+
+    // Fusionar las primeras filas de encabezado sobre todas las columnas de datos
+    for (let r = 0; r < headerRows.length - 1; r++) {
+      merges.push({
+        s: { r, c: 0 },
+        e: { r, c: totalColumns - 1 },
+      });
+    }
+    (ws as any)['!merges'] = merges;
+
+    // Aplicar estilos: centrado y fuente más grande para el título del reporte
+    for (let r = 0; r < headerRows.length - 1; r++) {
+      const cellRef = `A${r + 1}`;
+      const cell = (ws as any)[cellRef];
+      if (!cell) continue;
+
+      const existingStyle = (cell as any).s || {};
+      const font: any = {
+        ...(existingStyle.font || {}),
+        bold: true,
+      };
+
+      if (typeof cell.v === 'string' && cell.v.includes('Reporte 606')) {
+        font.sz = 16; // Título principal del reporte
+      } else if (r === 0) {
+        font.sz = 14; // Nombre de la empresa
+      } else {
+        font.sz = 12; // Otras líneas de encabezado (RNC, período)
+      }
+
+      (cell as any).s = {
+        ...existingStyle,
+        alignment: {
+          ...(existingStyle.alignment || {}),
+          horizontal: 'center',
+          vertical: 'center',
+        },
+        font,
+      };
+    }
+
+    // Configurar ancho de columnas (alineado con las columnas simplificadas)
     const colWidths = [
       { wch: 15 }, // RNC/Cédula
-      { wch: 12 }, // Tipo ID
-      { wch: 20 }, // Tipo Bienes/Servicios
+      { wch: 10 }, // Tipo ID
+      { wch: 20 }, // Tipo Bien/Serv.
       { wch: 15 }, // NCF
-      { wch: 15 }, // NCF Modificado
-      { wch: 15 }, // Fecha Comprobante
-      { wch: 15 }, // Fecha Pago
-      { wch: 18 }, // Servicios Facturados
-      { wch: 16 }, // Bienes Facturados
-      { wch: 16 }, // Monto Facturado
-      { wch: 15 }, // ITBIS Facturado
-      { wch: 15 }, // ITBIS Retenido
-      { wch: 15 }, // Retención Renta
-      { wch: 12 }, // ISR Percibido
-      { wch: 16 }, // Impuesto Selectivo
-      { wch: 14 }, // Otros Impuestos
-      { wch: 12 }, // Propina Legal
+      { wch: 12 }, // NCF Mod.
+      { wch: 12 }, // F. Comp.
+      { wch: 12 }, // F. Pago
+      { wch: 14 }, // Serv. Fact.
+      { wch: 14 }, // Bienes Fact.
+      { wch: 14 }, // Monto Fact.
+      { wch: 14 }, // ITBIS Fact.
+      { wch: 14 }, // ITBIS Ret.
+      { wch: 14 }, // Ret. Renta
       { wch: 12 }  // Forma Pago
     ];
     ws['!cols'] = colWidths;
@@ -295,7 +331,7 @@ export default function Report606Page() {
     }
 
     // Descargar archivo
-    XLSX.writeFile(wb, `reporte_606_${selectedPeriod}.xlsx`);
+    XLSX.writeFile(wb, `reporte_606_${selectedPeriod}.xlsx`, { cellStyles: true } as any);
   };
 
   const exportToTXT = () => {
@@ -345,14 +381,12 @@ export default function Report606Page() {
         ncf_modificado: row.ncf_modificado || '',
         fecha_comprobante: row.fecha_comprobante,
         fecha_pago: row.fecha_pago,
+        servicios_facturados: row.servicios_facturados,
+        bienes_facturados: row.bienes_facturados,
         monto_facturado: row.monto_facturado,
         itbis_facturado: row.itbis_facturado,
         itbis_retenido: row.itbis_retenido,
         retencion_renta: row.retencion_renta,
-        isr_percibido: row.isr_percibido,
-        imp_selectivo: row.impuesto_selectivo_consumo,
-        otros_impuestos: row.otros_impuestos,
-        propina_legal: row.monto_propina_legal,
         forma_pago: row.forma_pago,
       }));
 
@@ -361,17 +395,15 @@ export default function Report606Page() {
         { key: 'tipo_id', label: 'Tipo ID' },
         { key: 'tipo_bien_servicio', label: 'Tipo Bien/Serv.' },
         { key: 'ncf', label: 'NCF' },
-        { key: 'ncf_modificado', label: 'NCF Modificado' },
-        { key: 'fecha_comprobante', label: 'Fecha Comp.' },
-        { key: 'fecha_pago', label: 'Fecha Pago' },
-        { key: 'monto_facturado', label: 'Monto Facturado' },
-        { key: 'itbis_facturado', label: 'ITBIS Facturado' },
-        { key: 'itbis_retenido', label: 'ITBIS Retenido' },
-        { key: 'retencion_renta', label: 'Retención Renta' },
-        { key: 'isr_percibido', label: 'ISR Percibido' },
-        { key: 'imp_selectivo', label: 'Imp. Selectivo' },
-        { key: 'otros_impuestos', label: 'Otros Impuestos' },
-        { key: 'propina_legal', label: 'Propina Legal' },
+        { key: 'ncf_modificado', label: 'NCF Mod.' },
+        { key: 'fecha_comprobante', label: 'F. Comp.' },
+        { key: 'fecha_pago', label: 'F. Pago' },
+        { key: 'servicios_facturados', label: 'Serv. Fact.' },
+        { key: 'bienes_facturados', label: 'Bienes Fact.' },
+        { key: 'monto_facturado', label: 'Monto Fact.' },
+        { key: 'itbis_facturado', label: 'ITBIS Fact.' },
+        { key: 'itbis_retenido', label: 'ITBIS Ret.' },
+        { key: 'retencion_renta', label: 'Ret. Renta' },
         { key: 'forma_pago', label: 'Forma Pago' },
       ];
 

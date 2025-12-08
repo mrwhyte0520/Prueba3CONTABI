@@ -239,7 +239,7 @@ export const exportToPdf = async (
     doc.setLineWidth(0.5);
     doc.line(14, startY - 5, pageWidth - 14, startY - 5);
 
-    // Fecha de generación
+    // Fecha de generación (colocada debajo del título del reporte, sin taparlo)
     doc.setFontSize(10);
     doc.setTextColor(100);
     doc.setFont('helvetica', 'normal');
@@ -250,7 +250,8 @@ export const exportToPdf = async (
       hour: '2-digit',
       minute: '2-digit'
     });
-    doc.text(`Generado el: ${date}`, 14, startY - 10);
+    const dateY = reportTitle ? 32 : startY - 6;
+    doc.text(`Generado el: ${date}`, 14, dateY);
 
     // Preparar datos para la tabla
     const tableData = data.map(item => 

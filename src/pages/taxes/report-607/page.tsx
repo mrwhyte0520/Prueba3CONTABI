@@ -215,6 +215,42 @@ export default function Report607Page() {
     XLSX.writeFile(wb, `reporte_607_${selectedPeriod}.xlsx`);
   };
 
+  const exportToTXT = () => {
+    if (reportData.length === 0) return;
+
+    const totals = getTotals();
+
+    let txtContent = `REPORTE 607 - VENTAS Y SERVICIOS\n`;
+    txtContent += `Período: ${selectedPeriod}\n`;
+    txtContent += `Fecha de generación: ${new Date().toLocaleDateString()}\n\n`;
+
+    txtContent += `RESUMEN:\n`;
+    txtContent += `Total vendido: RD$ ${totals.monto_facturado.toLocaleString('es-DO')}\n`;
+    txtContent += `ITBIS cobrado: RD$ ${totals.itbis_facturado.toLocaleString('es-DO')}\n`;
+    txtContent += `ITBIS retenido: RD$ ${totals.itbis_retenido.toLocaleString('es-DO')}\n`;
+    txtContent += `ISR retenido: RD$ ${totals.retencion_renta_terceros.toLocaleString('es-DO')}\n\n`;
+
+    txtContent += `DETALLE:\n`;
+    txtContent += `${'='.repeat(120)}\n`;
+
+    reportData.forEach((row, index) => {
+      txtContent += `${index + 1}. RNC/Cédula: ${row.rnc_cedula || 'N/A'}\n`;
+      txtContent += `   NCF: ${row.numero_comprobante_fiscal}\n`;
+      txtContent += `   Fecha: ${new Date(row.fecha_comprobante).toLocaleDateString('es-DO')}\n`;
+      txtContent += `   Monto facturado: RD$ ${row.monto_facturado.toLocaleString('es-DO')}\n`;
+      txtContent += `   ITBIS facturado: RD$ ${row.itbis_facturado.toLocaleString('es-DO')}\n`;
+      txtContent += `   ITBIS retenido: RD$ ${row.itbis_retenido.toLocaleString('es-DO')}\n`;
+      txtContent += `   ISR retenido: RD$ ${row.retencion_renta_terceros.toLocaleString('es-DO')}\n`;
+      txtContent += `${'-'.repeat(80)}\n`;
+    });
+
+    const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `reporte_607_${selectedPeriod}.txt`;
+    link.click();
+  };
+
   const handleExportPdf = async () => {
     if (reportData.length === 0) return;
 
@@ -232,11 +268,11 @@ export default function Report607Page() {
       const columns = [
         { key: 'rnc_cedula', label: 'RNC/Cédula' },
         { key: 'ncf', label: 'NCF' },
-        { key: 'fecha', label: 'Fecha' },
-        { key: 'monto_facturado', label: 'Monto Facturado' },
-        { key: 'itbis_facturado', label: 'ITBIS Facturado' },
-        { key: 'itbis_retenido', label: 'ITBIS Retenido' },
-        { key: 'isr_retenido', label: 'ISR Retenido' },
+        { key: 'fecha', label: 'F. Comp.' },
+        { key: 'monto_facturado', label: 'Monto Fact.' },
+        { key: 'itbis_facturado', label: 'ITBIS Fact.' },
+        { key: 'itbis_retenido', label: 'ITBIS Ret.' },
+        { key: 'isr_retenido', label: 'ISR Ret.' },
       ];
 
       await exportToPdf(
@@ -322,7 +358,7 @@ export default function Report607Page() {
               </div>
             </div>
             {reportData.length > 0 && (
-              <div className="flex gap-3 mt-6 md:mt-8">
+              <div className="flex gap-3 mt-6 md:mt-8 flex-wrap">
                 <button
                   onClick={exportToCSV}
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
@@ -336,6 +372,13 @@ export default function Report607Page() {
                 >
                   <i className="ri-file-excel-line mr-2"></i>
                   Exportar Excel
+                </button>
+                <button
+                  onClick={exportToTXT}
+                  className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-text-line mr-2"></i>
+                  Exportar TXT
                 </button>
                 <button
                   onClick={handleExportPdf}

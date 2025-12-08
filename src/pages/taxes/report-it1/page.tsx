@@ -348,8 +348,33 @@ Cumple con las normativas de la DGII
   const exportHistoricalToCSV = () => {
     if (filteredHistoricalData.length === 0) return;
     
-    const csvContent = [
-      ['Período', 'Total Ventas', 'ITBIS Cobrado', 'Total Compras', 'ITBIS Pagado', 'ITBIS Neto', 'Fecha Generación'],
+    const separator = ';';
+
+    const companyName =
+      (companyInfo as any)?.name ||
+      (companyInfo as any)?.company_name ||
+      'ContaBi';
+
+    const companyRnc =
+      (companyInfo as any)?.rnc ||
+      (companyInfo as any)?.tax_id ||
+      '';
+
+    const headerLines: string[] = [
+      ['Empresa', companyName].join(separator),
+    ];
+
+    if (companyRnc) {
+      headerLines.push(['RNC', companyRnc].join(separator));
+    }
+
+    headerLines.push(['Reporte', 'Historial Declaración IT-1 (ITBIS)'].join(separator));
+    headerLines.push(['Año', selectedYear || 'Todos los años'].join(separator));
+    headerLines.push('');
+
+    const csvLines = [
+      ...headerLines,
+      ['Período', 'Total Ventas', 'ITBIS Cobrado', 'Total Compras', 'ITBIS Pagado', 'ITBIS Neto', 'Fecha Generación'].join(separator),
       ...filteredHistoricalData.map(record => [
         new Date(record.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }),
         record.total_sales.toLocaleString('es-DO'),
@@ -358,10 +383,12 @@ Cumple con las normativas de la DGII
         record.itbis_paid.toLocaleString('es-DO'),
         record.net_itbis_due.toLocaleString('es-DO'),
         new Date(record.generated_date).toLocaleDateString('es-DO')
-      ])
-    ].map(row => row.join(',')).join('\n');
+      ].join(separator)),
+    ];
 
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const csvContent = csvLines.join('\n');
+
+    const blob = new Blob(['\uFEFF' + csvContent.replace(/\n/g, '\r\n')], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);

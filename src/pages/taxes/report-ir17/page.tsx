@@ -111,22 +111,68 @@ export default function ReportIR17Page() {
     const tableStartRow = headerRows.length + 1;
     const ws = XLSX.utils.json_to_sheet(excelData as any, { origin: `A${tableStartRow}` } as any);
 
-    ws['!cols'] = [
-      { wch: 15 },
-      { wch: 30 },
-      { wch: 15 },
-      { wch: 20 },
-      { wch: 18 },
-      { wch: 15 },
-      { wch: 18 },
-      { wch: 15 },
-      { wch: 15 }
-    ];
-
+    // Insertar filas de encabezado al inicio
     XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
 
+    // Centrar y resaltar encabezado (empresa, nombre del reporte y período)
+    const totalColumns = Object.keys(excelData[0] || {}).length || 1;
+    const merges: any[] = (ws as any)['!merges'] || [];
+
+    // Fusionar las primeras filas de encabezado sobre todas las columnas de datos
+    for (let r = 0; r < headerRows.length - 1; r++) {
+      merges.push({
+        s: { r, c: 0 },
+        e: { r, c: totalColumns - 1 },
+      });
+    }
+    (ws as any)['!merges'] = merges;
+
+    // Aplicar estilos: centrado y fuente más grande para el título del reporte
+    for (let r = 0; r < headerRows.length - 1; r++) {
+      const cellRef = `A${r + 1}`;
+      const cell = (ws as any)[cellRef];
+      if (!cell) continue;
+
+      const existingStyle = (cell as any).s || {};
+      const font: any = {
+        ...(existingStyle.font || {}),
+        bold: true,
+      };
+
+      if (typeof cell.v === 'string' && cell.v.includes('Reporte IR-17')) {
+        font.sz = 16; // Título principal del reporte
+      } else if (r === 0) {
+        font.sz = 14; // Nombre de la empresa
+      } else {
+        font.sz = 12; // Otras líneas de encabezado (RNC, período)
+      }
+
+      (cell as any).s = {
+        ...existingStyle,
+        alignment: {
+          ...(existingStyle.alignment || {}),
+          horizontal: 'center',
+          vertical: 'center',
+        },
+        font,
+      };
+    }
+
+    // Ancho de columnas de la tabla de datos
+    ws['!cols'] = [
+      { wch: 15 }, // RNC
+      { wch: 30 }, // Nombre proveedor
+      { wch: 15 }, // Fecha pago
+      { wch: 28 }, // Tipo servicio (más ancho para ver el texto completo)
+      { wch: 22 }, // Número factura (más ancho para NCF largos)
+      { wch: 15 }, // Monto bruto
+      { wch: 18 }, // Tasa retención
+      { wch: 15 }, // Monto retenido
+      { wch: 15 }  // Monto neto
+    ];
+
     XLSX.utils.book_append_sheet(wb, ws, 'Reporte IR-17');
-    XLSX.writeFile(wb, `reporte_ir17_${selectedPeriod}.xlsx`);
+    XLSX.writeFile(wb, `reporte_ir17_${selectedPeriod}.xlsx`, { cellStyles: true } as any);
   };
 
   const exportToCSV = () => {
@@ -194,6 +240,44 @@ export default function ReportIR17Page() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const exportToTXT = () => {
+    if (withholdingData.length === 0) return;
+
+    const totals = getTotals();
+
+    let txtContent = `REPORTE IR-17 - RETENCIONES ISR\n`;
+    txtContent += `Período: ${reportPeriod || selectedPeriod}\n`;
+    txtContent += `Fecha de generación: ${new Date().toLocaleDateString()}\n\n`;
+
+    txtContent += `RESUMEN:\n`;
+    txtContent += `Cantidad de retenciones: ${totals.count}\n`;
+    txtContent += `Monto bruto total: RD$ ${totals.total_gross.toLocaleString('es-DO')}\n`;
+    txtContent += `Monto retenido total: RD$ ${totals.total_withheld.toLocaleString('es-DO')}\n`;
+    txtContent += `Monto neto total: RD$ ${totals.total_net.toLocaleString('es-DO')}\n\n`;
+
+    txtContent += `DETALLE:\n`;
+    txtContent += `${'='.repeat(120)}\n`;
+
+    withholdingData.forEach((item, index) => {
+      txtContent += `${index + 1}. RNC Proveedor: ${item.supplier_rnc || 'N/A'}\n`;
+      txtContent += `   Nombre: ${item.supplier_name || ''}\n`;
+      txtContent += `   Fecha Pago: ${new Date(item.payment_date).toLocaleDateString('es-DO')}\n`;
+      txtContent += `   Tipo Servicio: ${item.service_type || ''}\n`;
+      txtContent += `   Número Factura: ${item.invoice_number || ''}\n`;
+      txtContent += `   Monto Bruto: RD$ ${item.gross_amount.toLocaleString('es-DO')}\n`;
+      txtContent += `   Tasa Retención: ${item.withholding_rate}%\n`;
+      txtContent += `   Monto Retenido: RD$ ${item.withheld_amount.toLocaleString('es-DO')}\n`;
+      txtContent += `   Monto Neto: RD$ ${item.net_amount.toLocaleString('es-DO')}\n`;
+      txtContent += `${'-'.repeat(80)}\n`;
+    });
+
+    const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `reporte_ir17_${reportPeriod || selectedPeriod}.txt`;
+    link.click();
   };
 
   const handleExportPdf = async () => {
@@ -307,7 +391,7 @@ export default function ReportIR17Page() {
               </div>
             </div>
             {withholdingData.length > 0 && (
-              <div className="flex space-x-2">
+              <div className="flex space-x-2 flex-wrap">
                 <button
                   onClick={exportToExcel}
                   className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
@@ -321,6 +405,13 @@ export default function ReportIR17Page() {
                 >
                   <i className="ri-download-line mr-2"></i>
                   Exportar CSV
+                </button>
+                <button
+                  onClick={exportToTXT}
+                  className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-file-text-line mr-2"></i>
+                  Exportar TXT
                 </button>
                 <button
                   onClick={handleExportPdf}
@@ -414,6 +505,9 @@ export default function ReportIR17Page() {
                     Tipo Servicio
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Número Factura
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Monto Bruto
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -441,6 +535,9 @@ export default function ReportIR17Page() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.service_type}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {item.invoice_number || ''}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       RD$ {item.gross_amount.toLocaleString('es-DO')}
