@@ -94,6 +94,7 @@ export default function PayrollJournalEntryPage() {
       const fallbackAccounts = {
         salary: { code: '6101', name: 'Sueldos y Salarios' },
         tss: { code: '2102', name: 'Retenciones TSS por Pagar' },
+        isr: { code: '2104', name: 'ISR de Nómina por Pagar' },
         payroll: { code: '2101', name: 'Nómina por Pagar' },
         otherDeductions: { code: '2103', name: 'Otras deducciones por pagar' },
       } as const;
@@ -126,6 +127,10 @@ export default function PayrollJournalEntryPage() {
         (settings as any)?.tss_payable_account_id,
         'tss',
       );
+      const isrAcc = resolveAccount(
+        (settings as any)?.isr_payable_account_id,
+        'isr',
+      );
       const payrollAcc = resolveAccount(
         (settings as any)?.payroll_payable_account_id,
         'payroll',
@@ -136,12 +141,13 @@ export default function PayrollJournalEntryPage() {
       );
 
       let tssTotal = period.total_deductions;
+      let isrTotal = 0;
       let otherDeductionsTotal = 0;
 
       try {
         const { data: payrollEntries, error: payrollEntriesError } = await supabase
           .from('payroll_entries')
-          .select('tss_deductions, periodic_deductions, other_deductions, absence_deductions')
+          .select('tss_deductions, periodic_deductions, other_deductions, absence_deductions, isr_deductions')
           .eq('payroll_period_id', period.id);
 
         if (!payrollEntriesError && payrollEntries && payrollEntries.length > 0) {
@@ -151,17 +157,20 @@ export default function PayrollJournalEntryPage() {
               acc.periodic += Number(entry.periodic_deductions) || 0;
               acc.other += Number(entry.other_deductions) || 0;
               acc.absence += Number(entry.absence_deductions) || 0;
+              acc.isr += Number(entry.isr_deductions) || 0;
               return acc;
             },
-            { tss: 0, periodic: 0, other: 0, absence: 0 },
+            { tss: 0, periodic: 0, other: 0, absence: 0, isr: 0 },
           );
 
           const calculatedTss = totals.tss;
+          const calculatedIsr = totals.isr;
           const calculatedOther = totals.periodic + totals.other + totals.absence;
-          const sumDeductions = calculatedTss + calculatedOther;
+          const sumDeductions = calculatedTss + calculatedIsr + calculatedOther;
 
           if (Math.abs(sumDeductions - period.total_deductions) < 0.01) {
             tssTotal = calculatedTss;
+            isrTotal = calculatedIsr;
             otherDeductionsTotal = calculatedOther;
           }
         }
@@ -183,6 +192,15 @@ export default function PayrollJournalEntryPage() {
           description: `Retenciones TSS - ${period.period_name}`,
         },
       ];
+
+      if (isrTotal > 0.01) {
+        entries.push({
+          account: `${isrAcc.code} - ${isrAcc.name}`,
+          debit: 0,
+          credit: isrTotal,
+          description: `ISR retenido de nómina - ${period.period_name}`,
+        });
+      }
 
       if (otherDeductionsTotal > 0.01) {
         entries.push({

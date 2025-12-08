@@ -5271,6 +5271,50 @@ export const payrollService = {
       if (!tenantId) throw new Error('userId required');
       const payrollEntries = [];
 
+      // Cargar tramos de ISR (si existen). Si falla o no hay tramos, ISR se mantiene en 0.
+      let taxBrackets: any[] = [];
+      try {
+        taxBrackets = await settingsService.getPayrollTaxBrackets();
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading payroll tax brackets for payroll calculation:', e);
+        taxBrackets = [];
+      }
+
+      const calculateIsrForIncome = (taxableIncome: number): number => {
+        if (!taxBrackets || taxBrackets.length === 0 || !Number.isFinite(taxableIncome) || taxableIncome <= 0) {
+          return 0;
+        }
+
+        const bracket = (taxBrackets as any[]).find((b: any) => {
+          const min = Number(b.min_amount ?? 0);
+          const hasMax = b.max_amount !== null && b.max_amount !== undefined;
+          const max = hasMax ? Number(b.max_amount) : Number.POSITIVE_INFINITY;
+
+          if (!Number.isFinite(min) || !Number.isFinite(max)) return false;
+          return taxableIncome >= min && taxableIncome <= max;
+        });
+
+        if (!bracket) return 0;
+
+        const min = Number(bracket.min_amount ?? 0);
+        const fixedAmount = Number(bracket.fixed_amount ?? 0);
+        const rate = Number(
+          // Compatibilidad flexible: aceptar rate_percent o rate
+          bracket.rate_percent !== undefined ? bracket.rate_percent : bracket.rate ?? 0,
+        );
+
+        if (!Number.isFinite(min) || !Number.isFinite(fixedAmount) || !Number.isFinite(rate)) {
+          return 0;
+        }
+
+        const excess = Math.max(0, taxableIncome - min);
+        const variablePart = excess * (rate / 100);
+        const isr = fixedAmount + variablePart;
+
+        return Number.isFinite(isr) && isr > 0 ? isr : 0;
+      };
+
       for (const employee of employees) {
         const grossSalary = Number(employee.salary) || 0;
 
@@ -5319,8 +5363,17 @@ export const payrollService = {
 
         const tssDeductions = baseSalary * (employeeRate / 100);
 
-        // Total de deducciones
-        const totalDeductions = periodicDeductionsTotal + otherDeductionsTotal + absenceDeduction + tssDeductions;
+        // Calcular ISR de nómina sobre base imponible (salario bruto menos TSS)
+        const taxableIncome = Math.max(0, grossSalary - tssDeductions);
+        const isrDeductions = calculateIsrForIncome(taxableIncome);
+
+        // Total de deducciones (incluyendo ISR cuando aplique)
+        const totalDeductions =
+          periodicDeductionsTotal +
+          otherDeductionsTotal +
+          absenceDeduction +
+          tssDeductions +
+          isrDeductions;
 
         // Salario neto (no permitir valores negativos)
         const netSalary = Math.max(0, grossSalary - totalDeductions);
@@ -5334,6 +5387,7 @@ export const payrollService = {
           overtime_amount: 0,
           bonuses: 0,
           tss_deductions: tssDeductions,
+          isr_deductions: isrDeductions,
           periodic_deductions: periodicDeductionsTotal,
           other_deductions: otherDeductionsTotal,
           absence_deductions: absenceDeduction,
@@ -9341,6 +9395,8 @@ export const taxService = {
       const mapped = (data || []).map((item: any) => ({
         ...item,
         // Normalizar nombres esperados por el frontend
+        rnc_cedula: item.rnc_cedula ?? item.rnc_cedula_proveedor ?? '',
+        forma_pago: item.forma_pago ?? item.tipo_pago ?? '',
         retencion_renta: item.retencion_renta ?? item.monto_retencion_renta ?? 0,
       }));
 

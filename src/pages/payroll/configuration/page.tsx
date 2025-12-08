@@ -26,6 +26,7 @@ interface PayrollConfig {
   auto_generate_reports: boolean;
   payroll_payable_account_id?: string;
   tss_payable_account_id?: string;
+  isr_payable_account_id?: string;
   other_deductions_payable_account_id?: string;
   salary_expense_account_id?: string;
 }
@@ -48,6 +49,12 @@ export default function PayrollConfigurationPage() {
   const [showModal, setShowModal] = useState(false);
 
   const [formData, setFormData] = useState<any>({});
+
+  const getAccountDisplay = (accountId: string | undefined) => {
+    if (!accountId) return 'Ninguna';
+    const account = accounts.find(a => a.id === accountId);
+    return account ? `${account.code} - ${account.name}` : 'No encontrada';
+  };
 
   useEffect(() => {
     loadConfiguration();
@@ -105,6 +112,7 @@ export default function PayrollConfigurationPage() {
           auto_generate_reports: data.auto_generate_reports ?? true,
           payroll_payable_account_id: data.payroll_payable_account_id || undefined,
           tss_payable_account_id: data.tss_payable_account_id || undefined,
+          isr_payable_account_id: data.isr_payable_account_id || undefined,
           other_deductions_payable_account_id: data.other_deductions_payable_account_id || undefined,
           salary_expense_account_id: data.salary_expense_account_id || undefined,
         };
@@ -131,6 +139,7 @@ export default function PayrollConfigurationPage() {
           auto_generate_reports: true,
           payroll_payable_account_id: undefined,
           tss_payable_account_id: undefined,
+          isr_payable_account_id: undefined,
           other_deductions_payable_account_id: undefined,
           salary_expense_account_id: undefined,
         });
@@ -182,6 +191,7 @@ export default function PayrollConfigurationPage() {
         auto_generate_reports: config.auto_generate_reports,
         payroll_payable_account_id: config.payroll_payable_account_id || null,
         tss_payable_account_id: config.tss_payable_account_id || null,
+        isr_payable_account_id: config.isr_payable_account_id || null,
         other_deductions_payable_account_id: config.other_deductions_payable_account_id || null,
         salary_expense_account_id: config.salary_expense_account_id || null,
       };
@@ -305,6 +315,7 @@ export default function PayrollConfigurationPage() {
           ['Frecuencia de Respaldo', config.backup_frequency],
           ['Cuenta Nómina por Pagar', getAccountDisplay(config.payroll_payable_account_id)],
           ['Cuenta Retenciones TSS por Pagar', getAccountDisplay(config.tss_payable_account_id)],
+          ['Cuenta ISR de Nómina por Pagar', getAccountDisplay(config.isr_payable_account_id)],
           ['Cuenta Otras Deducciones por Pagar', getAccountDisplay(config.other_deductions_payable_account_id)],
           ['Cuenta Gastos de Sueldos y Salarios', getAccountDisplay(config.salary_expense_account_id)],
         ];
@@ -658,12 +669,6 @@ export default function PayrollConfigurationPage() {
     const liabilityAccounts = accounts.filter(acc => acc.type === 'liability' && acc.allowPosting);
     const expenseAccounts = accounts.filter(acc => acc.type === 'expense' && acc.allowPosting);
 
-    const getAccountDisplay = (accountId: string | undefined) => {
-      if (!accountId) return 'Ninguna';
-      const account = accounts.find(a => a.id === accountId);
-      return account ? `${account.code} - ${account.name}` : 'No encontrada';
-    };
-
     return (
       <div className="space-y-6">
         <div className="bg-white rounded-lg shadow p-6">
@@ -714,6 +719,28 @@ export default function PayrollConfigurationPage() {
               </select>
               <p className="text-xs text-gray-500 mt-1">
                 Cuenta para retenciones de AFP, SFS y SRL (ej: 2102 - Retenciones TSS por Pagar)
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <i className="ri-percent-line mr-2"></i>
+                ISR de Nómina por Pagar
+              </label>
+              <select
+                value={config?.isr_payable_account_id || ''}
+                onChange={(e) => setConfig(prev => prev ? { ...prev, isr_payable_account_id: e.target.value || undefined } : null)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Seleccionar Cuenta --</option>
+                {liabilityAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.code} - {acc.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Cuenta para retenciones de ISR sobre salarios (ej: 2104 - ISR de Nómina por Pagar)
               </p>
             </div>
 
