@@ -5171,11 +5171,11 @@ export const payrollService = {
     }
   },
 
-  async update(id: string, po: any) {
+  async update(id: string, period: any) {
     try {
       const { data, error } = await supabase
-        .from('purchase_orders')
-        .update(po)
+        .from('payroll_periods')
+        .update(period)
         .eq('id', id)
         .select()
         .single();
@@ -5190,11 +5190,14 @@ export const payrollService = {
     try {
       const patch: any = {
         status,
-        updated_at: new Date().toISOString(),
       };
       const { data, error } = await supabase
-        .from('purchase_orders')
+        .from('payroll_periods')
         .update(patch)
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) throw error;
       return data;
     } catch (error) {
       console.error('payrollService.updateStatus error', error);
@@ -9859,39 +9862,83 @@ export const taxService = {
       const defaultRate = 10; // 10% por defecto si no hay configuración
       const retentionRate = Number(taxSettings?.retention_rate ?? defaultRate);
 
-      // Pagos a suplidores del período
-      const { data: payments, error: payErr } = await supabase
-        .from('supplier_payments')
+      let rows: any[] = [];
+
+      // 1) Intentar usar retenciones reales desde ap_invoices (total_isr_withheld)
+      const { data: apInvoices, error: apErr } = await supabase
+        .from('ap_invoices')
         .select(
           `*,
            suppliers (name, tax_id)`
         )
         .eq('user_id', tenantId)
-        .gte('payment_date', startDate)
-        .lte('payment_date', endDate)
-        .in('status', ['completed', 'Completado']);
+        .gte('invoice_date', startDate)
+        .lte('invoice_date', endDate)
+        .gt('total_isr_withheld', 0);
 
-      if (payErr) throw payErr;
+      if (apErr) throw apErr;
 
-      const rows = (payments || []).map((p: any) => {
-        const gross = Number(p.amount || 0);
-        const rate = retentionRate;
-        const withheld = (gross * rate) / 100;
-        const net = gross - withheld;
+      if (apInvoices && apInvoices.length > 0) {
+        rows = (apInvoices as any[]).map((inv: any) => {
+          const supplierName = inv.legal_name || inv.suppliers?.name || 'Proveedor';
+          const supplierRnc = inv.tax_id || inv.suppliers?.tax_id || null;
+          const totalGross = Number(inv.total_gross) || 0;
+          const totalDiscount = Number(inv.total_discount) || 0;
+          const gross = Math.max(0, totalGross - totalDiscount);
+          const withheld = Number(inv.total_isr_withheld) || 0;
 
-        return {
-          user_id: tenantId,
-          period,
-          supplier_rnc: p.suppliers?.tax_id || null,
-          supplier_name: p.suppliers?.name || null,
-          payment_date: p.payment_date,
-          service_type: p.description || p.method || null,
-          gross_amount: gross,
-          withholding_rate: rate,
-          withheld_amount: withheld,
-          net_amount: net,
-        };
-      });
+          const rate =
+            gross > 0 && withheld > 0 ? (withheld / gross) * 100 : retentionRate;
+          const net = gross - withheld;
+
+          return {
+            user_id: tenantId,
+            period,
+            supplier_rnc: supplierRnc,
+            supplier_name: supplierName,
+            payment_date: inv.invoice_date,
+            service_type: (inv.expense_type_606 as string) || inv.document_type || null,
+            gross_amount: gross,
+            withholding_rate: rate,
+            withheld_amount: withheld,
+            net_amount: net,
+          };
+        });
+      } else {
+        // 2) Fallback: usar lógica anterior basada en pagos a suplidores
+        const { data: payments, error: payErr } = await supabase
+          .from('supplier_payments')
+          .select(
+            `*,
+             suppliers (name, tax_id)`
+          )
+          .eq('user_id', tenantId)
+          .gte('payment_date', startDate)
+          .lte('payment_date', endDate)
+          .in('status', ['completed', 'Completado']);
+
+        if (payErr) throw payErr;
+
+        rows = (payments || []).map((p: any) => {
+          const gross = Number(p.amount || 0);
+          const rate = retentionRate;
+          const withheld = (gross * rate) / 100;
+          const net = gross - withheld;
+
+          return {
+            user_id: tenantId,
+            period,
+            supplier_rnc: p.suppliers?.tax_id || null,
+            supplier_name: p.suppliers?.name || null,
+            payment_date: p.payment_date,
+            service_type: p.description || p.method || null,
+            gross_amount: gross,
+            withholding_rate: rate,
+            withheld_amount: withheld,
+            net_amount: net,
+          };
+        });
+      }
 
       // Limpiar datos anteriores del período para este usuario
       const { error: delErr } = await supabase
