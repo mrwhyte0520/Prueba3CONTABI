@@ -9392,13 +9392,58 @@ export const taxService = {
 
       if (error) throw error;
 
-      const mapped = (data || []).map((item: any) => ({
-        ...item,
-        // Normalizar nombres esperados por el frontend
-        rnc_cedula: item.rnc_cedula ?? item.rnc_cedula_proveedor ?? '',
-        forma_pago: item.forma_pago ?? item.tipo_pago ?? '',
-        retencion_renta: item.retencion_renta ?? item.monto_retencion_renta ?? 0,
-      }));
+      const mapped = (data || []).map((item: any) => {
+        // RNC / Cédula
+        const rawRnc: string = (item.rnc_cedula ?? item.rnc_cedula_proveedor ?? '') as string;
+        const normalizedRnc = rawRnc || '';
+
+        // Tipo de identificación (simplificado: RNC vs Cédula por longitud)
+        let tipoIdentificacion: string = item.tipo_identificacion ?? '';
+        if (!tipoIdentificacion && normalizedRnc) {
+          const digits = normalizedRnc.replace(/[^0-9]/g, '');
+          if (digits.length === 11) {
+            tipoIdentificacion = 'Cédula';
+          } else {
+            tipoIdentificacion = 'RNC';
+          }
+        }
+
+        // Tipo de bienes/servicios
+        const tipoBienesServicios: string =
+          (item.tipo_bienes_servicios as string) ||
+          (item.tipo_gasto as string) ||
+          '';
+
+        // Monto base y distribución entre bienes/servicios
+        const baseAmount = Number(item.monto_facturado ?? 0) || 0;
+        let serviciosFacturados = Number(item.servicios_facturados ?? 0) || 0;
+        let bienesFacturados = Number(item.bienes_facturados ?? 0) || 0;
+
+        if (!serviciosFacturados && !bienesFacturados && baseAmount) {
+          const tipoLower = tipoBienesServicios.toLowerCase();
+          if (tipoLower.includes('servicio')) {
+            serviciosFacturados = baseAmount;
+          } else {
+            bienesFacturados = baseAmount;
+          }
+        }
+
+        return {
+          ...item,
+          // Normalizar nombres esperados por el frontend
+          rnc_cedula: normalizedRnc,
+          tipo_identificacion: tipoIdentificacion,
+          tipo_bienes_servicios: tipoBienesServicios,
+          servicios_facturados: serviciosFacturados,
+          bienes_facturados: bienesFacturados,
+          forma_pago: (item.forma_pago as string) ?? (item.tipo_pago as string) ?? '',
+          retencion_renta: Number(item.retencion_renta ?? item.monto_retencion_renta ?? 0) || 0,
+          isr_percibido: Number(item.isr_percibido ?? 0) || 0,
+          impuesto_selectivo_consumo: Number(item.impuesto_selectivo_consumo ?? 0) || 0,
+          otros_impuestos: Number(item.otros_impuestos ?? 0) || 0,
+          monto_propina_legal: Number(item.monto_propina_legal ?? 0) || 0,
+        };
+      });
 
       return mapped;
     } catch (error) {
