@@ -183,6 +183,7 @@ export default function FinancialStatementsPage() {
 
           // Normalizar código (remover puntos para comparación)
           const normalizedCode = code.replace(/\./g, '');
+          const type = String(acc.type || '');
           
           switch (acc.type) {
             case 'asset':
@@ -213,9 +214,18 @@ export default function FinancialStatementsPage() {
               nextData.equity.push({ code, name: label, amount: balance });
               break;
             case 'income':
-            case 'ingreso':
-              nextData.revenue.push({ code, name: label, amount: balance });
+            case 'ingreso': {
+              // Para ingresos mostramos las ventas e ingresos como montos positivos,
+              // y solo tratamos como contra-ingresos (que restan) aquellas cuentas
+              // que claramente son descuentos/devoluciones sobre ventas.
+              const contra = isContraAccount(code, baseName, type);
+              let amount = Math.abs(balance);
+              if (contra) {
+                amount = -Math.abs(balance);
+              }
+              nextData.revenue.push({ code, name: label, amount });
               break;
+            }
             case 'cost':
             case 'costo':
             case 'costos':
