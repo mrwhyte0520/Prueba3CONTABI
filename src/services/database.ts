@@ -2255,7 +2255,18 @@ export const chartAccountsService = {
       if (existingError) throw existingError;
       const existingCodes = new Set((existing || []).map((r: any) => String(r.code || '').trim()));
 
-      const rowsToInsert = templateRows
+      // Normalizar y deduplicar filas de la plantilla por código
+      const uniqueTemplateMap = new Map<string, any>();
+      for (const row of templateRows as any[]) {
+        const normalizedCode = String(row.code || '').trim();
+        if (!normalizedCode) continue;
+        if (!uniqueTemplateMap.has(normalizedCode)) {
+          uniqueTemplateMap.set(normalizedCode, row);
+        }
+      }
+      const uniqueTemplateRows = Array.from(uniqueTemplateMap.values());
+
+      const rowsToInsert = uniqueTemplateRows
         .filter((row: any) => {
           const code = String(row.code || '').trim();
           return !!code && !existingCodes.has(code);
@@ -2280,7 +2291,10 @@ export const chartAccountsService = {
 
       const { error: insertError } = await supabase
         .from('chart_accounts')
-        .insert(rowsToInsert);
+        .insert(rowsToInsert, {
+          onConflict: 'user_id,code',
+          ignoreDuplicates: true,
+        });
 
       if (insertError) throw insertError;
       return { created: rowsToInsert.length };

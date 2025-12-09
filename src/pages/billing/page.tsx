@@ -14,11 +14,11 @@ export default function BillingPage() {
 
   const modules = [
     {
-      title: 'Reportes de Ventas',
-      description: 'Análisis completo de ventas y rendimiento comercial',
-      icon: 'ri-bar-chart-line',
-      href: '/billing/sales-reports',
-      color: 'blue'
+      title: 'Facturación',
+      description: 'Crear y gestionar facturas de clientes',
+      icon: 'ri-file-text-line',
+      href: '/billing/invoicing',
+      color: 'green'
     },
     {
       title: 'Vendedores',
@@ -28,11 +28,11 @@ export default function BillingPage() {
       color: 'teal'
     },
     {
-      title: 'Facturación',
-      description: 'Crear y gestionar facturas de clientes',
-      icon: 'ri-file-text-line',
-      href: '/billing/invoicing',
-      color: 'green'
+      title: 'Reportes de Ventas',
+      description: 'Análisis completo de ventas y rendimiento comercial',
+      icon: 'ri-bar-chart-line',
+      href: '/billing/sales-reports',
+      color: 'blue'
     },
     {
       title: 'Pre-facturación',
@@ -84,15 +84,29 @@ export default function BillingPage() {
         const todayStr = new Date().toISOString().slice(0, 10);
         const monthStr = todayStr.slice(0, 7); // YYYY-MM
 
+        const today = new Date(todayStr);
+        const yesterdayDate = new Date(today);
+        yesterdayDate.setDate(today.getDate() - 1);
+        const yesterdayStr = yesterdayDate.toISOString().slice(0, 10);
+
         const ventasHoy = invoicesArr
           .filter((inv: any) => (inv.invoice_date || '').slice(0, 10) === todayStr)
+          .reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
+
+        const ventasAyer = invoicesArr
+          .filter((inv: any) => (inv.invoice_date || '').slice(0, 10) === yesterdayStr)
           .reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
 
         const ingresosMensuales = invoicesArr
           .filter((inv: any) => (inv.invoice_date || '').slice(0, 7) === monthStr)
           .reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
 
+        const ingresosAyer = ventasAyer;
+
         const totalFacturas = invoicesArr.length;
+        const totalFacturasAyer = invoicesArr
+          .filter((inv: any) => (inv.invoice_date || '').slice(0, 10) === yesterdayStr)
+          .length;
 
         const pendingQuotesArr = quotesArr.filter((q: any) => {
           const st = (q.status || 'pending') as string;
@@ -101,34 +115,43 @@ export default function BillingPage() {
 
         const totalPendingQuotes = pendingQuotesArr.length;
 
+        const pendingQuotesAyer = pendingQuotesArr.filter((q: any) => {
+          const created = (q.quote_date || q.created_at || '').slice(0, 10);
+          return created === yesterdayStr;
+        }).length;
+
         setSalesStats([
           {
             title: 'Ventas de Hoy',
             value: `RD$ ${ventasHoy.toLocaleString('es-DO')}`,
             change: '',
+            previousValue: `RD$ ${ventasAyer.toLocaleString('es-DO')}`,
             icon: 'ri-money-dollar-circle-line',
             color: 'green',
-          },
-          {
-            title: 'Facturas Emitidas',
-            value: String(totalFacturas),
-            change: '',
-            icon: 'ri-file-text-line',
-            color: 'blue',
-          },
-          {
-            title: 'Cotizaciones Pendientes',
-            value: String(totalPendingQuotes),
-            change: '',
-            icon: 'ri-file-list-line',
-            color: 'orange',
           },
           {
             title: 'Ingresos Mensuales',
             value: `RD$ ${ingresosMensuales.toLocaleString('es-DO')}`,
             change: '',
+            previousValue: `RD$ ${ingresosAyer.toLocaleString('es-DO')}`,
             icon: 'ri-line-chart-line',
             color: 'purple',
+          },
+          {
+            title: 'Cotizaciones Pendientes',
+            value: String(totalPendingQuotes),
+            change: '',
+            previousValue: String(pendingQuotesAyer),
+            icon: 'ri-file-list-line',
+            color: 'orange',
+          },
+          {
+            title: 'Facturas Emitidas',
+            value: String(totalFacturas),
+            change: '',
+            previousValue: String(totalFacturasAyer),
+            icon: 'ri-file-text-line',
+            color: 'blue',
           },
         ]);
 
@@ -216,29 +239,33 @@ export default function BillingPage() {
       title: 'Ventas de Hoy',
       value: 'RD$ 0',
       change: '',
+      previousValue: 'RD$ 0',
       icon: 'ri-money-dollar-circle-line',
       color: 'green',
-    },
-    {
-      title: 'Facturas Emitidas',
-      value: '0',
-      change: '',
-      icon: 'ri-file-text-line',
-      color: 'blue',
-    },
-    {
-      title: 'Cotizaciones Pendientes',
-      value: '0',
-      change: '',
-      icon: 'ri-file-list-line',
-      color: 'orange',
     },
     {
       title: 'Ingresos Mensuales',
       value: 'RD$ 0',
       change: '',
+      previousValue: 'RD$ 0',
       icon: 'ri-line-chart-line',
       color: 'purple',
+    },
+    {
+      title: 'Cotizaciones Pendientes',
+      value: '0',
+      change: '',
+      previousValue: '0',
+      icon: 'ri-file-list-line',
+      color: 'orange',
+    },
+    {
+      title: 'Facturas Emitidas',
+      value: '0',
+      change: '',
+      previousValue: '0',
+      icon: 'ri-file-text-line',
+      color: 'blue',
     },
   ]);
 
@@ -311,6 +338,11 @@ export default function BillingPage() {
               <div className="mt-4">
                 <span className="text-sm font-medium text-green-600">{stat.change}</span>
                 <span className="text-sm text-gray-500 ml-1">vs ayer</span>
+                {stat.previousValue && (
+                  <div className="mt-1 text-xs text-gray-500">
+                    Ayer: {stat.previousValue}
+                  </div>
+                )}
               </div>
             </div>
           ))}

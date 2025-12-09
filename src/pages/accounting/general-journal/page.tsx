@@ -216,8 +216,8 @@ const GeneralJournalPage: React.FC = () => {
         return;
       }
 
-      const validLines = formData.lines.filter(line => 
-        line.account_id && (line.debit_amount > 0 || line.credit_amount > 0)
+      const validLines = formData.lines.filter(line =>
+        line.account_id && ((line.debit_amount || 0) > 0 || (line.credit_amount || 0) > 0)
       );
 
       console.log('=== DEBUG JOURNAL ENTRY ==');
@@ -660,6 +660,108 @@ const GeneralJournalPage: React.FC = () => {
     }
   };
 
+  const handlePrintEntry = (entry: JournalEntry) => {
+    const printWindow = window.open('', '_blank', 'width=900,height=700');
+    if (!printWindow) return;
+
+    const doc = printWindow.document;
+    const companyName = companyInfo?.name || 'Diario General';
+    const entryDate = new Date(entry.entry_date).toLocaleDateString();
+
+    const linesHtml = (entry.journal_entry_lines || [])
+      .map((line) => {
+        const accountLabel = `${line.chart_accounts?.code || ''} - ${line.chart_accounts?.name || ''}`;
+        const debit = line.debit_amount > 0 ? line.debit_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+        const credit = line.credit_amount > 0 ? line.credit_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+        return `
+          <tr>
+            <td style="padding:4px 8px; border-bottom:1px solid #e5e7eb;">${accountLabel}</td>
+            <td style="padding:4px 8px; border-bottom:1px solid #e5e7eb; text-align:right;">${debit}</td>
+            <td style="padding:4px 8px; border-bottom:1px solid #e5e7eb; text-align:right;">${credit}</td>
+            <td style="padding:4px 8px; border-bottom:1px solid #e5e7eb;">${line.description || ''}</td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    doc.open();
+    doc.write(`
+      <html>
+        <head>
+          <title>Asiento ${entry.entry_number}</title>
+          <style>
+            body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 12px; color: #111827; margin: 16px; }
+            h1 { font-size: 18px; margin-bottom: 4px; }
+            h2 { font-size: 14px; margin-top: 16px; margin-bottom: 8px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+            th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; border-bottom: 1px solid #9ca3af; padding: 4px 8px; }
+            td { font-size: 12px; }
+            .header-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+            .label { color: #6b7280; font-size: 11px; text-transform: uppercase; }
+            .value { font-size: 12px; font-weight: 500; }
+            @media print {
+              @page { size: portrait; margin: 1.5cm; }
+            }
+          </style>
+        </head>
+        <body>
+          <div style="text-align:center; margin-bottom:16px;">
+            <div style="font-size:16px; font-weight:bold;">${companyName}</div>
+            <div style="font-size:14px; font-weight:600; margin-top:4px;">Diario General - Asiento</div>
+          </div>
+
+          <div class="header-row">
+            <div>
+              <div class="label">Número de asiento</div>
+              <div class="value">${entry.entry_number}</div>
+            </div>
+            <div>
+              <div class="label">Fecha</div>
+              <div class="value">${entryDate}</div>
+            </div>
+            <div>
+              <div class="label">Estado</div>
+              <div class="value">${entry.status === 'posted' ? 'Contabilizado' : entry.status === 'draft' ? 'Borrador' : 'Reversado'}</div>
+            </div>
+          </div>
+
+          <div style="margin-top:8px;">
+            <div class="label">Descripción</div>
+            <div class="value">${entry.description || ''}</div>
+          </div>
+
+          <div style="margin-top:8px;">
+            <div class="label">Referencia</div>
+            <div class="value">${entry.reference || ''}</div>
+          </div>
+
+          <h2>Detalle de líneas</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Cuenta</th>
+                <th style="text-align:right;">Débito</th>
+                <th style="text-align:right;">Crédito</th>
+                <th>Descripción</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${linesHtml}
+            </tbody>
+          </table>
+
+          <div style="margin-top:12px; text-align:right; font-weight:600;">
+            <div>Total Débito: RD$ ${entry.total_debit.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            <div>Total Crédito: RD$ ${entry.total_credit.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          </div>
+        </body>
+      </html>
+    `);
+    doc.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -968,6 +1070,13 @@ const GeneralJournalPage: React.FC = () => {
                       onClick={() => handleEditClick(entry)}
                     >
                       <i className="ri-edit-line"></i>
+                    </button>
+                    <button
+                      className="text-green-600 hover:text-green-900 mr-3"
+                      title="Imprimir"
+                      onClick={() => handlePrintEntry(entry)}
+                    >
+                      <i className="ri-printer-line"></i>
                     </button>
                     <button 
                       className="text-red-600 hover:text-red-900" 

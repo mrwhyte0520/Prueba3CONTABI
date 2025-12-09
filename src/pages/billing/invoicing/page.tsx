@@ -1549,17 +1549,10 @@ export default function InvoicingPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
                     <div className="space-y-2">
-                      <input
-                        type="text"
-                        value={newInvoiceCustomerSearch}
-                        onChange={(e) => setNewInvoiceCustomerSearch(e.target.value)}
-                        placeholder="Buscar por nombre o RNC..."
-                        className="mb-2 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                      />
                       <select
                         value={newInvoiceCustomerId}
                         onChange={handleNewInvoiceCustomerChange}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8 text-sm"
+                        className="mb-2 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8 text-sm"
                       >
                         <option value="">Seleccionar cliente...</option>
                         {customers
@@ -1577,6 +1570,13 @@ export default function InvoicingPage() {
                             </option>
                           ))}
                       </select>
+                      <input
+                        type="text"
+                        value={newInvoiceCustomerSearch}
+                        onChange={(e) => setNewInvoiceCustomerSearch(e.target.value)}
+                        placeholder="Buscar por nombre o RNC..."
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      />
                     </div>
                     {selectedNewInvoiceCustomer && (
                       <div className="mt-2 p-3 bg-gray-50 rounded-lg text-xs md:text-sm text-gray-700">

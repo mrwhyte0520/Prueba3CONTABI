@@ -32,7 +32,6 @@ export default function DashboardPage() {
     { name: 'Entradas', icon: 'ri-download-line', href: '/inventory', color: 'from-lime-500 to-lime-600' },
     { name: 'Transferencias', icon: 'ri-arrow-left-right-line', href: '/inventory', color: 'from-emerald-500 to-emerald-600' },
     { name: 'Almacén', icon: 'ri-building-line', href: '/inventory', color: 'from-sky-500 to-sky-600' },
-    { name: 'Facturación', icon: 'ri-bill-line', href: '/billing', color: 'from-violet-500 to-violet-600' },
     { name: 'Nóminas', icon: 'ri-wallet-line', href: '/payroll', color: 'from-fuchsia-500 to-fuchsia-600' },
   ];
 
