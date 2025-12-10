@@ -7774,8 +7774,23 @@ export const apInvoiceLinesService = {
           // Configuración contable: cuenta de CxP y cuenta de ITBIS
           const settings = await accountingSettingsService.get(userId);
           const apAccountId = settings?.ap_account_id as string | undefined;
-          const itbisReceivableAccountId = settings?.itbis_receivable_account_id as string | undefined;
+          let itbisReceivableAccountId = settings?.itbis_receivable_account_id as string | undefined;
           const itbisToCost = invoice.itbis_to_cost === true;
+
+          // Si no hay cuenta de ITBIS configurada, usar por defecto la cuenta con código 110201 (ITBIS Compras)
+          if (!itbisReceivableAccountId) {
+            try {
+              const chartAccounts = await chartAccountsService.getAll(userId);
+              const itbisAccount = (chartAccounts || []).find(
+                (acc: any) => String(acc.code).trim() === '110201'
+              );
+              if (itbisAccount && itbisAccount.id) {
+                itbisReceivableAccountId = String(itbisAccount.id);
+              }
+            } catch (lookupError) {
+              console.error('Error buscando cuenta 110201 para ITBIS compras:', lookupError);
+            }
+          }
 
           if (apAccountId) {
             // Cargar líneas desde BD (asegurando tener expense_account_id y montos finales)

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { exportToExcel } from '../../../lib/excel';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { financialReportsService, chartAccountsService, financialStatementsService } from '../../../services/database';
+import { financialReportsService, chartAccountsService, financialStatementsService, accountingSettingsService } from '../../../services/database';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 
@@ -25,6 +25,9 @@ const printStyles = `
     .hide-zero-on-print { display: none !important; }
   }
 `;
+
+// Fecha de arranque contable del sistema: ignorar movimientos anteriores a esta fecha en los estados
+const SYSTEM_START_DATE = '2025-12-01';
 
 interface FinancialStatement {
   id: string;
@@ -90,6 +93,9 @@ export default function FinancialStatementsPage() {
     expenses: []
   });
 
+  // Código normalizado de la cuenta de ITBIS en compras para el Balance (configuración o 110201)
+  const [itbisAccountCode, setItbisAccountCode] = useState<string | null>(null);
+
   const [cashFlow, setCashFlow] = useState<{
     operatingCashFlow: number;
     investingCashFlow: number;
@@ -129,9 +135,31 @@ export default function FinancialStatementsPage() {
 
     const loadFinancialData = async () => {
       try {
-        const isBalanceTab = activeTab === 'balance';
-        const tbFromDate = isBalanceTab ? '1900-01-01' : fromDate;
-        const trialBalance = await financialReportsService.getTrialBalance(user.id, tbFromDate, toDate);
+        // Para todos los estados (incluyendo el Balance), usar solo el período seleccionado,
+        // respetando la fecha de arranque del sistema.
+        let effectiveFrom = fromDate;
+
+        let trialBalance: any[] = [];
+
+        if (toDate < SYSTEM_START_DATE) {
+          // Si el período termina antes de la fecha de arranque, no mostrar saldos
+          trialBalance = [];
+        } else {
+          if (effectiveFrom < SYSTEM_START_DATE) {
+            effectiveFrom = SYSTEM_START_DATE;
+          }
+
+          // Debug: ver rango usado para la balanza
+          // eslint-disable-next-line no-console
+          console.log('[FS] loadFinancialData', { selectedPeriod, fromDate: effectiveFrom, toDate });
+
+          // Cargar balanza de comprobación solo del período efectivo
+          trialBalance = await financialReportsService.getTrialBalance(user.id, effectiveFrom, toDate);
+
+          // Debug: cuántas cuentas regresó la balanza
+          // eslint-disable-next-line no-console
+          console.log('[FS] trialBalance length =', (trialBalance || []).length);
+        }
 
         const nextData: FinancialData = {
           assets: { current: [], nonCurrent: [] },
@@ -248,6 +276,15 @@ export default function FinancialStatementsPage() {
             ? null
             : prevToObj.toISOString().slice(0, 10);
 
+        // Fecha de inicio del mes ANTERIOR al del reporte
+        let prevFromDate: string | null = null;
+        if (prevToDate) {
+          const prevFromObj = new Date(fromDateObj);
+          prevFromObj.setMonth(prevFromObj.getMonth() - 1);
+          prevFromObj.setDate(1);
+          prevFromDate = prevFromObj.toISOString().slice(0, 10);
+        }
+
         const [prevTrial, finalTrial] = await Promise.all([
           prevToDate
             ? financialReportsService.getTrialBalance(user.id, '1900-01-01', prevToDate)
@@ -303,6 +340,49 @@ export default function FinancialStatementsPage() {
     }
   }, [user, selectedPeriod, activeTab]);
 
+  // Cargar el código de la cuenta de ITBIS en compras para el Balance:
+  // 1) Usar la cuenta configurada en ajustes (itbis_receivable_account_id) si existe
+  // 2) En caso contrario, usar el código 110201 como estándar
+  useEffect(() => {
+    const loadItbisAccountCode = async () => {
+      try {
+        if (!user) {
+          setItbisAccountCode(null);
+          return;
+        }
+
+        const [settings, accounts] = await Promise.all([
+          accountingSettingsService.get(user.id),
+          chartAccountsService.getAll(user.id),
+        ]);
+
+        let target: string | null = null;
+        const itbisAccountId = settings?.itbis_receivable_account_id
+          ? String(settings.itbis_receivable_account_id)
+          : null;
+
+        if (itbisAccountId && Array.isArray(accounts) && accounts.length > 0) {
+          const found = (accounts as any[]).find((acc) => String(acc.id) === itbisAccountId);
+          if (found?.code) {
+            target = String(found.code).replace(/\./g, '');
+          }
+        }
+
+        if (!target) {
+          target = '110201';
+        }
+
+        setItbisAccountCode(target);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('Error loading ITBIS account code for balance:', e);
+        setItbisAccountCode('110201');
+      }
+    };
+
+    void loadItbisAccountCode();
+  }, [user]);
+
   useEffect(() => {
     const loadCostOfSales = async () => {
       try {
@@ -317,6 +397,7 @@ export default function FinancialStatementsPage() {
         const fromDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
         const toDate = new Date(year, month, 0).toISOString().slice(0, 10);
 
+        // Calcular rango del MES ANTERIOR para Inventario Inicial
         const fromDateObj = new Date(fromDate);
         const prevToObj = new Date(fromDateObj.getTime() - 24 * 60 * 60 * 1000);
         const prevToDate =
@@ -324,14 +405,31 @@ export default function FinancialStatementsPage() {
             ? null
             : prevToObj.toISOString().slice(0, 10);
 
+        let prevFromDate: string | null = null;
+        if (prevToDate) {
+          const prevFromObj = new Date(fromDateObj);
+          prevFromObj.setMonth(prevFromObj.getMonth() - 1);
+          prevFromObj.setDate(1);
+          prevFromDate = prevFromObj.toISOString().slice(0, 10);
+        }
+
+        // Rango efectivo para inventario inicial (mes anterior), respetando fecha de arranque
+        let prevTrialPromise: Promise<any[]> = Promise.resolve([]);
+        if (prevFromDate && prevToDate && prevToDate >= SYSTEM_START_DATE) {
+          const effPrevFrom = prevFromDate < SYSTEM_START_DATE ? SYSTEM_START_DATE : prevFromDate;
+          prevTrialPromise = financialReportsService.getTrialBalance(user.id, effPrevFrom, prevToDate);
+        }
+
+        // Rango efectivo para inventario final (desde fecha de arranque hasta fin del período)
+        const invFromDate = fromDate < SYSTEM_START_DATE ? SYSTEM_START_DATE : fromDate;
+
+        // Rango efectivo para compras del período (no antes de la fecha de arranque)
+        const periodFromDate = fromDate < SYSTEM_START_DATE ? SYSTEM_START_DATE : fromDate;
+
         const [prevTrial, finalTrial, periodTrial] = await Promise.all([
-          prevToDate
-            ? financialReportsService.getTrialBalance(user.id, '1900-01-01', prevToDate)
-            : Promise.resolve([]),
-          // Para inventario final necesitamos todo el historial hasta la fecha de corte
-          financialReportsService.getTrialBalance(user.id, '1900-01-01', toDate),
-          // Para compras del período solo necesitamos el rango del período actual
-          financialReportsService.getTrialBalance(user.id, fromDate, toDate),
+          prevTrialPromise,
+          financialReportsService.getTrialBalance(user.id, invFromDate, toDate),
+          financialReportsService.getTrialBalance(user.id, periodFromDate, toDate),
         ]);
 
         const sumInventory = (trial: any[]) => {
@@ -592,9 +690,13 @@ export default function FinancialStatementsPage() {
   const nonCurrentLiabilities = financialData.liabilities.nonCurrent;
   const equityItems = financialData.equity;
 
-  const efectivoCajaBancos = sumByPrefixes(currentAssets, ['10', '1001', '1002', '110', '111', '1102']); // Caja y Bancos (múltiples formatos)
+  // Efectivo en Caja y Bancos: solo cuentas de caja/bancos reales, no cuentas de grupo como '10 ACTIVOS CORRIENTES'
+  const efectivoCajaBancos = sumByPrefixes(currentAssets, ['1001', '1002', '1102']);
   const cxcClientes = sumByPrefixes(currentAssets, ['1101']); // CxC Clientes
   const otrasCxc = sumByPrefixes(currentAssets, ['1103', '1104', '1105', '1199']); // Otras CxC (excluye 1102 que es Bancos)
+  const itbisCompras = itbisAccountCode
+    ? sumByPrefixes(currentAssets, [itbisAccountCode])
+    : 0; // ITBIS en compras (cuenta configurada o 110201)
   const inventarios = sumByPrefixes(currentAssets, ['12']); // Inventarios
   const anticiposISR = sumByPrefixes(currentAssets, ['1301']); // Anticipos ISR
   const gastosPagadosAnticipado = sumByPrefixes(currentAssets, ['13']) - anticiposISR; // Gastos anticipados
@@ -1600,22 +1702,38 @@ export default function FinancialStatementsPage() {
         {activeTab === 'balance' && (
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
-              {/* Header con botón de descarga */}
-              <div className="flex justify-end gap-2 mb-4 print-hidden">
-                <button
-                  onClick={downloadBalanceSheetExcel}
-                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-download-line mr-2"></i>
-                  Excel
-                </button>
-                <button
-                  onClick={() => window.print()}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-file-pdf-line mr-2"></i>
-                  PDF
-                </button>
+              {/* Header con selector de período y botón de descarga */}
+              <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Período:</label>
+                  <select
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm pr-8"
+                    value={selectedPeriod}
+                    onChange={(e) => setSelectedPeriod(e.target.value)}
+                  >
+                    {periodOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={downloadBalanceSheetExcel}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-download-line mr-2"></i>
+                    Excel
+                  </button>
+                  <button
+                    onClick={() => window.print()}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-file-pdf-line mr-2"></i>
+                    PDF
+                  </button>
+                </div>
               </div>
 
               {/* Contenido para impresión */}
@@ -1639,6 +1757,7 @@ export default function FinancialStatementsPage() {
                     {renderBalanceLineIfNotZero('Efectivo en Caja y Bancos', efectivoCajaBancos)}
                     {renderBalanceLineIfNotZero('Cuentas por Cobrar Clientes', cxcClientes)}
                     {renderBalanceLineIfNotZero('Otras Cuentas por Cobrar', otrasCxc)}
+                    {renderBalanceLineIfNotZero('ITBIS en compras', itbisCompras)}
                     {renderBalanceLineIfNotZero('Inventarios', inventarios)}
                     {renderBalanceLineIfNotZero('Gastos Pagados por Anticipado', gastosPagadosAnticipado)}
                     {renderBalanceLineIfNotZero('Anticipos sobre la Renta Pagados', anticiposISR)}
@@ -1646,13 +1765,7 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Activos Corrientes</span>
-                        <span
-                          className={`text-sm tabular-nums ${
-                            totals.totalCurrentAssets < 0 ? 'text-red-600' : 'text-gray-900'
-                          }`}
-                        >
-                          {formatCurrencyRD(totals.totalCurrentAssets)}
-                        </span>
+                        <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalCurrentAssets)}</span>
                       </div>
                     </div>
                   </div>
@@ -1675,13 +1788,7 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Otros Activos</span>
-                        <span
-                          className={`text-sm tabular-nums ${
-                            totals.totalNonCurrentAssets < 0 ? 'text-red-600' : 'text-gray-900'
-                          }`}
-                        >
-                          {formatCurrencyRD(totals.totalNonCurrentAssets)}
-                        </span>
+                        <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalNonCurrentAssets)}</span>
                       </div>
                     </div>
                   </div>
@@ -1690,13 +1797,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-2 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">TOTAL ACTIVOS</span>
-                      <span
-                        className={`text-base tabular-nums ${
-                          totals.totalAssets < 0 ? 'text-red-600' : 'text-gray-900'
-                        }`}
-                      >
-                        {formatCurrencyRD(totals.totalAssets)}
-                      </span>
+                      <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalAssets)}</span>
                     </div>
                   </div>
                 </div>
@@ -1716,13 +1817,7 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Pasivos Corrientes</span>
-                        <span
-                          className={`text-sm tabular-nums ${
-                            pasivosCorrientes < 0 ? 'text-red-600' : 'text-gray-900'
-                          }`}
-                        >
-                          {formatCurrencyRD(pasivosCorrientes)}
-                        </span>
+                        <span className="text-sm tabular-nums">{formatCurrencyRD(pasivosCorrientes)}</span>
                       </div>
                     </div>
                   </div>
@@ -1735,13 +1830,7 @@ export default function FinancialStatementsPage() {
                       <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Total Pasivos a Largo Plazo</span>
-                          <span
-                            className={`text-sm tabular-nums ${
-                              pasivosLargoPlazo < 0 ? 'text-red-600' : 'text-gray-900'
-                            }`}
-                          >
-                            {formatCurrencyRD(pasivosLargoPlazo)}
-                          </span>
+                          <span className="text-sm tabular-nums">{formatCurrencyRD(pasivosLargoPlazo)}</span>
                         </div>
                       </div>
                     )}
@@ -1751,13 +1840,7 @@ export default function FinancialStatementsPage() {
                   <div className={`border-t border-gray-400 pt-2 mb-4 ${Math.abs(totals.totalLiabilities) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between font-bold">
                       <span className="text-sm">TOTAL PASIVOS</span>
-                      <span
-                        className={`text-sm tabular-nums ${
-                          totals.totalLiabilities < 0 ? 'text-red-600' : 'text-gray-900'
-                        }`}
-                      >
-                        {formatCurrencyRD(totals.totalLiabilities)}
-                      </span>
+                      <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalLiabilities)}</span>
                     </div>
                   </div>
 
@@ -1778,13 +1861,7 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Patrimonio</span>
-                        <span
-                          className={`text-sm tabular-nums ${
-                            patrimonioConResultado < 0 ? 'text-red-600' : 'text-gray-900'
-                          }`}
-                        >
-                          {formatCurrencyRD(patrimonioConResultado)}
-                        </span>
+                        <span className="text-sm tabular-nums">{formatCurrencyRD(patrimonioConResultado)}</span>
                       </div>
                     </div>
                   </div>
@@ -1793,13 +1870,7 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-2 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">TOTAL PASIVOS Y PATRIMONIO</span>
-                      <span
-                        className={`text-base tabular-nums ${
-                          totalLiabilitiesAndEquity < 0 ? 'text-red-600' : 'text-gray-900'
-                        }`}
-                      >
-                        {formatCurrencyRD(totalLiabilitiesAndEquity)}
-                      </span>
+                      <span className="text-base tabular-nums">{formatCurrencyRD(totalLiabilitiesAndEquity)}</span>
                     </div>
                   </div>
                 </div>
