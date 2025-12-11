@@ -64,6 +64,21 @@ export default function FinancialStatementsPage() {
   const [activeTab, setActiveTab] = useState<'statements' | 'balance' | 'income' | 'costs' | 'expenses' | 'cashflow'>('statements');
   const [statements, setStatements] = useState<FinancialStatement[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState(() => new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [incomeFromDate, setIncomeFromDate] = useState(() => new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
+  const [incomeToDate, setIncomeToDate] = useState<string | null>(null); // YYYY-MM-DD (fin de rango opcional)
+  const [comparisonFromDate, setComparisonFromDate] = useState<string | null>(null);
+  const [comparisonToDate, setComparisonToDate] = useState<string | null>(null);
+  const [comparisonIncome, setComparisonIncome] = useState<{
+    totalRevenue: number;
+    totalCosts: number;
+    grossProfit: number;
+    operatingExpenses: number;
+    financialExpenses: number;
+    operatingIncome: number;
+    incomeBeforeTaxReserves: number;
+    netIncome: number;
+  } | null>(null);
+  const [showComparisonControls, setShowComparisonControls] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showNewStatementModal, setShowNewStatementModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
@@ -124,14 +139,43 @@ export default function FinancialStatementsPage() {
     // eslint-disable-next-line no-console
     console.log('FinancialStatementsPage user.id =', user.id);
 
-    const period = selectedPeriod || new Date().toISOString().slice(0, 7); // YYYY-MM
-    const [yearStr, monthStr] = period.split('-');
-    const year = parseInt(yearStr, 10);
-    const month = parseInt(monthStr, 10);
-    if (!year || !month) return;
+    // Determinar rango de fechas para los reportes
+    const now = new Date();
+    const defaultPeriod = selectedPeriod || now.toISOString().slice(0, 7); // YYYY-MM
+    const [yearStr, monthStr] = defaultPeriod.split('-');
+    const baseYear = parseInt(yearStr, 10);
+    const baseMonth = parseInt(monthStr, 10);
+    if (!baseYear || !baseMonth) return;
 
-    const fromDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
-    const toDate = new Date(year, month, 0).toISOString().slice(0, 10);
+    // Rango mensual por defecto (para Balance, Costos, Gastos, etc.)
+    const monthFromDate = new Date(baseYear, baseMonth - 1, 1).toISOString().slice(0, 10);
+    const monthToDate = new Date(baseYear, baseMonth, 0).toISOString().slice(0, 10);
+
+    let fromDate = monthFromDate;
+    let toDate = monthToDate;
+
+    // Para Estado de Resultados, Costos, Gastos y Flujo de Efectivo usamos rango diario configurable
+    if (activeTab === 'income' || activeTab === 'costs' || activeTab === 'expenses' || activeTab === 'cashflow') {
+      let from = incomeFromDate || monthFromDate;
+      let to = incomeToDate || from;
+
+      let fromObj = new Date(from);
+      let toObj = new Date(to);
+
+      if (Number.isNaN(fromObj.getTime())) {
+        fromObj = new Date(monthFromDate);
+      }
+      if (Number.isNaN(toObj.getTime())) {
+        toObj = fromObj;
+      }
+
+      if (toObj.getTime() < fromObj.getTime()) {
+        toObj = fromObj;
+      }
+
+      fromDate = fromObj.toISOString().slice(0, 10);
+      toDate = toObj.toISOString().slice(0, 10);
+    }
 
     const loadFinancialData = async () => {
       try {
@@ -211,6 +255,7 @@ export default function FinancialStatementsPage() {
 
           // Normalizar código (remover puntos para comparación)
           const normalizedCode = code.replace(/\./g, '');
+          const type = String(acc.type || '');
           
           switch (acc.type) {
             case 'asset':
@@ -241,9 +286,18 @@ export default function FinancialStatementsPage() {
               nextData.equity.push({ code, name: label, amount: balance });
               break;
             case 'income':
-            case 'ingreso':
-              nextData.revenue.push({ code, name: label, amount: balance });
+            case 'ingreso': {
+              // Para ingresos mostramos las ventas e ingresos como montos positivos,
+              // y solo tratamos como contra-ingresos (que restan) aquellas cuentas
+              // que claramente son descuentos/devoluciones sobre ventas.
+              const contra = isContraAccount(code, baseName, type);
+              let amount = Math.abs(balance);
+              if (contra) {
+                amount = -Math.abs(balance);
+              }
+              nextData.revenue.push({ code, name: label, amount });
               break;
+            }
             case 'cost':
             case 'costo':
             case 'costos':
@@ -338,7 +392,7 @@ export default function FinancialStatementsPage() {
     } else if (activeTab === 'cashflow') {
       void loadCashFlow();
     }
-  }, [user, selectedPeriod, activeTab]);
+  }, [user, selectedPeriod, incomeFromDate, incomeToDate, activeTab]);
 
   // Cargar el código de la cuenta de ITBIS en compras para el Balance:
   // 1) Usar la cuenta configurada en ajustes (itbis_receivable_account_id) si existe
@@ -388,14 +442,36 @@ export default function FinancialStatementsPage() {
       try {
         if (!user) return;
 
-        const period = selectedPeriod || new Date().toISOString().slice(0, 7); // YYYY-MM
-        const [yearStr, monthStr] = period.split('-');
-        const year = parseInt(yearStr, 10);
-        const month = parseInt(monthStr, 10);
-        if (!year || !month) return;
+        // Punto de partida: mes seleccionado (para fallback)
+        const now = new Date();
+        const basePeriod = selectedPeriod || now.toISOString().slice(0, 7); // YYYY-MM
+        const [yearStr, monthStr] = basePeriod.split('-');
+        const baseYear = parseInt(yearStr, 10);
+        const baseMonth = parseInt(monthStr, 10);
+        if (!baseYear || !baseMonth) return;
 
-        const fromDate = new Date(year, month - 1, 1).toISOString().slice(0, 10);
-        const toDate = new Date(year, month, 0).toISOString().slice(0, 10);
+        const monthFromDate = new Date(baseYear, baseMonth - 1, 1).toISOString().slice(0, 10);
+        const monthToDate = new Date(baseYear, baseMonth, 0).toISOString().slice(0, 10);
+
+        // Usar el mismo rango diario configurable que el Estado de Resultados
+        let from = incomeFromDate || monthFromDate;
+        let to = incomeToDate || from;
+
+        let fromObj = new Date(from);
+        let toObj = new Date(to);
+
+        if (Number.isNaN(fromObj.getTime())) {
+          fromObj = new Date(monthFromDate);
+        }
+        if (Number.isNaN(toObj.getTime())) {
+          toObj = fromObj;
+        }
+        if (toObj.getTime() < fromObj.getTime()) {
+          toObj = fromObj;
+        }
+
+        const fromDate = fromObj.toISOString().slice(0, 10);
+        const toDate = toObj.toISOString().slice(0, 10);
 
         // Calcular rango del MES ANTERIOR para Inventario Inicial
         const fromDateObj = new Date(fromDate);
@@ -446,44 +522,37 @@ export default function FinancialStatementsPage() {
         const openingInventory = prevTrial ? sumInventory(prevTrial as any[]) : 0;
         const closingInventory = sumInventory(finalTrial as any[]);
 
-        const totalCosts = totals.totalCosts; // costo de ventas del período desde cuentas de costo
-
-        // Fórmula: Costo de ventas = InvInicial + ComprasTotales - InvFinal
-        // => ComprasTotales = Costo + InvFinal - InvInicial
-        const totalPurchasesFromFormula = totalCosts + closingInventory - openingInventory;
-
-        // Si el usuario define cuentas específicas para compras locales e importaciones,
-        // las usamos para repartir las compras respetando la fórmula anterior.
         const sumCostByPrefixes = (trial: any[], prefixes: string[]) => {
           return (trial || []).reduce((sum, acc: any) => {
             const code = String(acc.code || '');
+            const normalizedCode = code.replace(/\./g, '');
             const type = String(acc.type || '');
-            if (!(type === 'cost' || type === 'costo' || type === 'costos')) return sum;
-            if (!prefixes.some((p) => code.startsWith(p))) return sum;
+            // Tratar tanto cuentas de costo como gastos 5xxx como parte de las compras
+            if (
+              !(
+                type === 'cost' ||
+                type === 'costo' ||
+                type === 'costos' ||
+                type === 'expense' ||
+                type === 'gasto'
+              )
+            ) {
+              return sum;
+            }
+            if (!prefixes.some((p) => normalizedCode.startsWith(p))) return sum;
             const balance = Number(acc.balance) || 0;
             return sum + Math.abs(balance);
           }, 0);
         };
 
-        const rawLocal = sumCostByPrefixes(periodTrial as any[], ['500101']);
+        // Compras locales: incluir tanto 5001 (Costos de venta genérico) como 500101 (Compras locales específicas)
+        const rawLocal = sumCostByPrefixes(periodTrial as any[], ['5001', '500101']);
         const rawImports = sumCostByPrefixes(periodTrial as any[], ['500102']);
-        const rawTotal = rawLocal + rawImports;
 
-        let purchasesLocal = 0;
-        let purchasesImports = 0;
-        let totalPurchases = totalPurchasesFromFormula;
-
-        if (rawTotal > 0 && totalPurchasesFromFormula !== 0) {
-          const factor = totalPurchasesFromFormula / rawTotal;
-          purchasesLocal = rawLocal * factor;
-          purchasesImports = rawImports * factor;
-          totalPurchases = purchasesLocal + purchasesImports;
-        } else {
-          // Si aún no se usan 500101/500102, consideramos todas las compras como locales
-          purchasesLocal = totalPurchasesFromFormula;
-          purchasesImports = 0;
-          totalPurchases = totalPurchasesFromFormula;
-        }
+        // Modelo B: tomar directamente los montos de las cuentas de compras/costo
+        const purchasesLocal = rawLocal;
+        const purchasesImports = rawImports;
+        const totalPurchases = purchasesLocal + purchasesImports;
 
         const indirectCosts = 0; // Placeholder para futuros desarrollos
         const availableForSale = openingInventory + totalPurchases + indirectCosts;
@@ -512,11 +581,11 @@ export default function FinancialStatementsPage() {
       }
     };
 
-    // Solo tiene sentido recalcular cuando cambian usuario, período o los costos asociados
+    // Solo tiene sentido recalcular cuando cambian usuario, período/rango o los costos asociados
     if (activeTab === 'costs' && user) {
       void loadCostOfSales();
     }
-  }, [user, selectedPeriod, activeTab, financialData.costs]);
+  }, [user, selectedPeriod, incomeFromDate, incomeToDate, activeTab, financialData.costs]);
 
   const loadStatements = async () => {
     try {
@@ -584,27 +653,27 @@ export default function FinancialStatementsPage() {
     }
   };
 
-  const calculateTotals = () => {
-    const totalCurrentAssets = financialData.assets.current.reduce((sum, item) => sum + item.amount, 0);
-    const totalNonCurrentAssets = financialData.assets.nonCurrent.reduce((sum, item) => sum + item.amount, 0);
+  const calculateTotalsFromData = (data: FinancialData) => {
+    const totalCurrentAssets = data.assets.current.reduce((sum, item) => sum + item.amount, 0);
+    const totalNonCurrentAssets = data.assets.nonCurrent.reduce((sum, item) => sum + item.amount, 0);
     const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
 
-    const totalCurrentLiabilities = financialData.liabilities.current.reduce((sum, item) => sum + item.amount, 0);
-    const totalNonCurrentLiabilities = financialData.liabilities.nonCurrent.reduce((sum, item) => sum + item.amount, 0);
+    const totalCurrentLiabilities = data.liabilities.current.reduce((sum, item) => sum + item.amount, 0);
+    const totalNonCurrentLiabilities = data.liabilities.nonCurrent.reduce((sum, item) => sum + item.amount, 0);
     const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
 
-    const totalEquity = financialData.equity.reduce((sum, item) => sum + item.amount, 0);
-    const totalRevenue = financialData.revenue.reduce((sum, item) => sum + item.amount, 0);
+    const totalEquity = data.equity.reduce((sum, item) => sum + item.amount, 0);
+    const totalRevenue = data.revenue.reduce((sum, item) => sum + item.amount, 0);
 
     // Tratar las cuentas 5xxx como costo de ventas aunque estén clasificadas como gastos
     const normalizeCode = (code: string | undefined) => (code || '').replace(/\./g, '');
-    const allExpenses = financialData.expenses || [];
+    const allExpenses = data.expenses || [];
     const extraCostItems = allExpenses.filter((item) => normalizeCode(item.code).startsWith('5'));
     const extraCostsTotal = extraCostItems.reduce((sum, item) => sum + item.amount, 0);
     const expensesWithoutCosts = allExpenses.filter((item) => !normalizeCode(item.code).startsWith('5'));
 
     const totalCosts =
-      financialData.costs.reduce((sum, item) => sum + item.amount, 0) + extraCostsTotal;
+      data.costs.reduce((sum, item) => sum + item.amount, 0) + extraCostsTotal;
     const totalExpenses = expensesWithoutCosts.reduce((sum, item) => sum + item.amount, 0);
 
     const netIncome = totalRevenue - totalCosts - totalExpenses;
@@ -624,7 +693,7 @@ export default function FinancialStatementsPage() {
     };
   };
 
-  const totals = calculateTotals();
+  const totals = calculateTotalsFromData(financialData);
 
   // Total Pasivos y Patrimonio incluyendo el resultado del período (utilidad o pérdida),
   // de forma que se cumpla la ecuación: Activos = Pasivos + Patrimonio + Resultado.
@@ -641,10 +710,10 @@ export default function FinancialStatementsPage() {
     const endDate = new Date(year, month, 0);
 
     const formatDate = (date: Date) => {
-      return date.toLocaleDateString('es-DO', { 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
+      return date.toLocaleDateString('es-DO', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
       });
     };
 
@@ -652,11 +721,89 @@ export default function FinancialStatementsPage() {
       startDateFormatted: formatDate(startDate),
       endDateFormatted: formatDate(endDate),
       periodLabel: `Del ${formatDate(startDate)} al ${formatDate(endDate)}`,
-      asOfDateLabel: `Al ${formatDate(endDate)}`
+      asOfDateLabel: `Al ${formatDate(endDate)}`,
     };
   };
 
   const periodDates = getPeriodDates();
+
+  // Rango de fechas específico para Estado de Resultados (rango diario)
+  const getIncomePeriodDates = () => {
+    const now = new Date();
+    const defaultPeriod = selectedPeriod || now.toISOString().slice(0, 7); // YYYY-MM
+    const [yearStr, monthStr] = defaultPeriod.split('-');
+    const baseYear = parseInt(yearStr, 10);
+    const baseMonth = parseInt(monthStr, 10);
+
+    const defaultStart =
+      !Number.isNaN(baseYear) && !Number.isNaN(baseMonth)
+        ? new Date(baseYear, baseMonth - 1, 1)
+        : now;
+    const defaultEnd =
+      !Number.isNaN(baseYear) && !Number.isNaN(baseMonth)
+        ? new Date(baseYear, baseMonth, 0)
+        : now;
+
+    let from = incomeFromDate ? new Date(incomeFromDate) : defaultStart;
+    let to = incomeToDate ? new Date(incomeToDate) : from;
+
+    if (Number.isNaN(from.getTime())) {
+      from = defaultStart;
+    }
+    if (Number.isNaN(to.getTime())) {
+      to = from;
+    }
+    if (to.getTime() < from.getTime()) {
+      to = from;
+    }
+
+    const formatDate = (date: Date) => {
+      return date.toLocaleDateString('es-DO', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
+    };
+
+    return {
+      startDateFormatted: formatDate(from),
+      endDateFormatted: formatDate(to),
+      periodLabel: `Del ${formatDate(from)} al ${formatDate(to)}`,
+      asOfDateLabel: `Al ${formatDate(to)}`,
+    };
+  };
+
+  const incomePeriodDates = getIncomePeriodDates();
+
+  const getComparisonPeriodLabel = () => {
+    if (!comparisonFromDate) return null;
+
+    const now = new Date();
+    let startDate = comparisonFromDate ? new Date(comparisonFromDate) : now;
+    let endDate = comparisonToDate ? new Date(comparisonToDate) : startDate;
+
+    if (Number.isNaN(startDate.getTime())) {
+      startDate = now;
+    }
+    if (Number.isNaN(endDate.getTime())) {
+      endDate = startDate;
+    }
+    if (endDate.getTime() < startDate.getTime()) {
+      endDate = startDate;
+    }
+
+    const formatDate = (date: Date) => {
+      return date.toLocaleDateString('es-DO', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
+    };
+
+    return `Del ${formatDate(startDate)} al ${formatDate(endDate)}`;
+  };
+
+  const comparisonPeriodLabel = getComparisonPeriodLabel();
 
   // Derivados para Estado de Resultados en formato profesional
   const grossProfit = totals.totalRevenue - totals.totalCosts;
@@ -709,7 +856,8 @@ export default function FinancialStatementsPage() {
   const otrosActivos = sumByPrefixes(nonCurrentAssets, ['1699']);
 
   // PASIVOS Y PATRIMONIO
-  const cppProveedores = sumByPrefixes(currentLiabilities, ['200', '2001']); // Cuentas por Pagar Proveedores
+  // Cuentas por Pagar Proveedores: solo la cuenta 2001 y sus subcuentas
+  const cppProveedores = sumByPrefixes(currentLiabilities, ['2001']);
   const prestamosCortoPlazo = sumByPrefixes(currentLiabilities, ['201', '2002']); // Préstamos Corto Plazo
   const otrasCxPCorrientes = sumByPrefixes(currentLiabilities, ['202', '203', '204', '2003', '2004', '2099']); // Otras CxP
   const acumulacionesPorPagar = sumByPrefixes(currentLiabilities, ['21']); // Acumulaciones
@@ -723,6 +871,216 @@ export default function FinancialStatementsPage() {
   const patrimonioTotal = capitalSuscrito + reservas + resultadosAcumulados;
   const beneficiosPeriodoActual = totals.netIncome;
   const patrimonioConResultado = patrimonioTotal + beneficiosPeriodoActual;
+
+  // Cargar totales comparativos para el Estado de Resultados a partir de un rango de fechas
+  const loadComparisonIncomeForRange = async (fromInput: string | null, toInput: string | null) => {
+    try {
+      if (!user) {
+        setComparisonIncome(null);
+        return;
+      }
+
+      if (!fromInput) {
+        setComparisonIncome(null);
+        return;
+      }
+
+      let from = fromInput;
+      let to = toInput || fromInput;
+
+      let fromObj = new Date(from);
+      let toObj = new Date(to);
+
+      if (Number.isNaN(fromObj.getTime())) {
+        fromObj = new Date();
+      }
+      if (Number.isNaN(toObj.getTime())) {
+        toObj = fromObj;
+      }
+      if (toObj.getTime() < fromObj.getTime()) {
+        toObj = fromObj;
+      }
+
+      const fromDate = fromObj.toISOString().slice(0, 10);
+      const toDate = toObj.toISOString().slice(0, 10);
+
+      let effectiveFrom = fromDate;
+      let trialBalance: any[] = [];
+
+      if (toDate < SYSTEM_START_DATE) {
+        trialBalance = [];
+      } else {
+        if (effectiveFrom < SYSTEM_START_DATE) {
+          effectiveFrom = SYSTEM_START_DATE;
+        }
+
+        trialBalance = await financialReportsService.getTrialBalance(user.id, effectiveFrom, toDate);
+      }
+
+      const comparisonData: FinancialData = {
+        assets: { current: [], nonCurrent: [] },
+        liabilities: { current: [], nonCurrent: [] },
+        equity: [],
+        revenue: [],
+        costs: [],
+        expenses: [],
+      };
+
+      const isContraAccountLocal = (code: string, name: string, type: string): boolean => {
+        const nameLower = name.toLowerCase();
+
+        if (type === 'asset' || type === 'activo') {
+          if (
+            nameLower.includes('depreci') ||
+            nameLower.includes('amortiz') ||
+            nameLower.includes('acumulad')
+          ) {
+            return true;
+          }
+        }
+
+        if (type === 'income' || type === 'ingreso') {
+          if (
+            nameLower.includes('devoluc') ||
+            nameLower.includes('descuent') ||
+            nameLower.includes('rebaj')
+          ) {
+            return true;
+          }
+        }
+
+        return false;
+      };
+
+      (trialBalance || []).forEach((acc: any) => {
+        let balance = Number(acc.balance) || 0;
+        if (Math.abs(balance) < 0.005) return;
+
+        const code = String(acc.code || '');
+        const baseName = String(acc.name || '');
+        const label = baseName;
+        const normalizedCode = code.replace(/\./g, '');
+        const type = String(acc.type || '');
+
+        switch (acc.type) {
+          case 'asset':
+          case 'activo': {
+            const item = { code, name: label, amount: balance };
+            if (
+              normalizedCode.startsWith('10') ||
+              normalizedCode.startsWith('11') ||
+              normalizedCode.startsWith('12') ||
+              normalizedCode.startsWith('13')
+            ) {
+              comparisonData.assets.current.push(item);
+            } else {
+              comparisonData.assets.nonCurrent.push(item);
+            }
+            break;
+          }
+          case 'liability':
+          case 'pasivo': {
+            const item = { code, name: label, amount: balance };
+            if (normalizedCode.startsWith('20') || normalizedCode.startsWith('21')) {
+              comparisonData.liabilities.current.push(item);
+            } else {
+              comparisonData.liabilities.nonCurrent.push(item);
+            }
+            break;
+          }
+          case 'equity':
+          case 'patrimonio':
+            comparisonData.equity.push({ code, name: label, amount: balance });
+            break;
+          case 'income':
+          case 'ingreso': {
+            const contra = isContraAccountLocal(code, baseName, type);
+            let amount = Math.abs(balance);
+            if (contra) {
+              amount = -Math.abs(balance);
+            }
+            comparisonData.revenue.push({ code, name: label, amount });
+            break;
+          }
+          case 'cost':
+          case 'costo':
+          case 'costos':
+            comparisonData.costs.push({ code, name: label, amount: Math.abs(balance) });
+            break;
+          case 'expense':
+          case 'gasto':
+            comparisonData.expenses.push({ code, name: label, amount: Math.abs(balance) });
+            break;
+          default:
+            break;
+        }
+      });
+
+      const totalsComp = calculateTotalsFromData(comparisonData);
+      const grossProfitComp = totalsComp.totalRevenue - totalsComp.totalCosts;
+
+      // Derivar gastos operativos y financieros para el comparativo usando los mismos prefijos
+      const expenseItemsComp = comparisonData.expenses;
+      const gastosPersonalComp = sumByPrefixes(expenseItemsComp, ['6001']);
+      const gastosGeneralesAdmComp = sumByPrefixes(expenseItemsComp, ['6002']);
+      const gastosMantenimientoAFComp = sumByPrefixes(expenseItemsComp, ['6003']);
+      const gastosDepreciacionComp = sumByPrefixes(expenseItemsComp, ['6004']);
+      const gastosImpuestosNoDeduciblesComp = sumByPrefixes(expenseItemsComp, ['6005', '6102']);
+      const gastosFinancierosComp = sumByPrefixes(expenseItemsComp, ['6101']);
+
+      const operatingExpensesComp =
+        gastosPersonalComp +
+        gastosGeneralesAdmComp +
+        gastosMantenimientoAFComp +
+        gastosDepreciacionComp +
+        gastosImpuestosNoDeduciblesComp;
+
+      const financialExpensesComp = gastosFinancierosComp;
+      const operatingIncomeComp = grossProfitComp - operatingExpensesComp - financialExpensesComp;
+      const incomeBeforeTaxReservesComp = operatingIncomeComp;
+
+      setComparisonIncome({
+        totalRevenue: totalsComp.totalRevenue,
+        totalCosts: totalsComp.totalCosts,
+        grossProfit: grossProfitComp,
+        operatingExpenses: operatingExpensesComp,
+        financialExpenses: financialExpensesComp,
+        operatingIncome: operatingIncomeComp,
+        incomeBeforeTaxReserves: incomeBeforeTaxReservesComp,
+        netIncome: totalsComp.netIncome,
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Error loading comparison income data:', error);
+      setComparisonIncome(null);
+    }
+  };
+
+  const handleComparisonFromChange = (value: string) => {
+    const nextFrom = value || '';
+    const normalizedFrom = nextFrom || null;
+    setComparisonFromDate(normalizedFrom);
+
+    if (!normalizedFrom) {
+      setComparisonIncome(null);
+      return;
+    }
+
+    void loadComparisonIncomeForRange(normalizedFrom, comparisonToDate);
+  };
+
+  const handleComparisonToChange = (value: string) => {
+    const nextTo = value || '';
+    const normalizedTo = nextTo || null;
+    setComparisonToDate(normalizedTo);
+
+    if (!comparisonFromDate) {
+      setComparisonIncome(null);
+      return;
+    }
+
+    void loadComparisonIncomeForRange(comparisonFromDate, normalizedTo);
+  };
 
   // GASTOS por grupo en Estado de Resultados
   const expenseItems = financialData.expenses;
@@ -1441,22 +1799,40 @@ export default function FinancialStatementsPage() {
         {activeTab === 'expenses' && (
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
-              {/* Header con botón de descarga */}
-              <div className="flex justify-end gap-2 mb-4 print-hidden">
-                <button
-                  onClick={downloadExpensesStatementExcel}
-                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-download-line mr-2"></i>
-                  Excel
-                </button>
-                <button
-                  onClick={() => window.print()}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-file-pdf-line mr-2"></i>
-                  PDF
-                </button>
+              {/* Header con selector de fechas y botón de descarga */}
+              <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Desde:</label>
+                  <input
+                    type="date"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={incomeFromDate}
+                    onChange={(e) => setIncomeFromDate(e.target.value)}
+                  />
+                  <span className="text-sm text-gray-700">Hasta:</span>
+                  <input
+                    type="date"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={incomeToDate || ''}
+                    onChange={(e) => setIncomeToDate(e.target.value || null)}
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={downloadExpensesStatementExcel}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-download-line mr-2"></i>
+                    Excel
+                  </button>
+                  <button
+                    onClick={() => window.print()}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-file-pdf-line mr-2"></i>
+                    PDF
+                  </button>
+                </div>
               </div>
 
               {/* Contenido para impresión */}
@@ -1466,7 +1842,7 @@ export default function FinancialStatementsPage() {
                 <h1 className="text-base font-semibold text-gray-800 mb-1">
                   RESUMEN DE LOS GASTOS DE PERSONAL, DE VENTAS Y ADMINISTRATIVOS
                 </h1>
-                <p className="text-sm text-gray-700 mb-0.5">{periodDates.periodLabel}</p>
+                <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -1606,22 +1982,40 @@ export default function FinancialStatementsPage() {
         {activeTab === 'costs' && (
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
-              {/* Header con botón de descarga */}
-              <div className="flex justify-end gap-2 mb-4 print-hidden">
-                <button
-                  onClick={downloadCostOfSalesExcel}
-                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-download-line mr-2"></i>
-                  Excel
-                </button>
-                <button
-                  onClick={() => window.print()}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-file-pdf-line mr-2"></i>
-                  PDF
-                </button>
+              {/* Header con selector de fechas y botón de descarga */}
+              <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Desde:</label>
+                  <input
+                    type="date"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={incomeFromDate}
+                    onChange={(e) => setIncomeFromDate(e.target.value)}
+                  />
+                  <span className="text-sm text-gray-700">Hasta:</span>
+                  <input
+                    type="date"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={incomeToDate || ''}
+                    onChange={(e) => setIncomeToDate(e.target.value || null)}
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={downloadCostOfSalesExcel}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-download-line mr-2"></i>
+                    Excel
+                  </button>
+                  <button
+                    onClick={() => window.print()}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-file-pdf-line mr-2"></i>
+                    PDF
+                  </button>
+                </div>
               </div>
 
               {/* Contenido para impresión */}
@@ -1629,7 +2023,7 @@ export default function FinancialStatementsPage() {
               {/* Header y título */}
               <div className="text-center mb-8">
                 <h1 className="text-base font-semibold text-gray-800 mb-1">NOTAS A LOS ESTADOS FINANCIEROS</h1>
-                <p className="text-sm text-gray-700 mb-0.5">{periodDates.periodLabel}</p>
+                <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -1658,14 +2052,6 @@ export default function FinancialStatementsPage() {
                       <span className="text-sm">Total Compras del Periodo</span>
                       <span className="text-sm tabular-nums">{formatCurrencyRD(costOfSalesData.totalPurchases)}</span>
                     </div>
-                  </div>
-                </div>
-
-                {/* Costos indirectos */}
-                <div className="space-y-1 pt-4">
-                  <div className="text-sm font-semibold text-gray-800 pl-2">Más:</div>
-                  <div className="pl-2">
-                    {renderBalanceLineIfNotZero('Costos Indirectos', costOfSalesData.indirectCosts)}
                   </div>
                 </div>
 
@@ -1883,39 +2269,111 @@ export default function FinancialStatementsPage() {
         {activeTab === 'income' && (
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
-              {/* Header con botón de descarga */}
-              <div className="flex justify-end gap-2 mb-4 print-hidden">
-                <button
-                  onClick={downloadIncomeStatementExcel}
-                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-download-line mr-2"></i>
-                  Excel
-                </button>
-                <button
-                  onClick={() => window.print()}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-file-pdf-line mr-2"></i>
-                  PDF
-                </button>
+              {/* Header con selector de período y botón de descarga */}
+              <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Desde:</label>
+                  <input
+                    type="date"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={incomeFromDate}
+                    onChange={(e) => setIncomeFromDate(e.target.value)}
+                  />
+                  <span className="text-sm text-gray-700">Hasta:</span>
+                  <input
+                    type="date"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={incomeToDate || ''}
+                    onChange={(e) => setIncomeToDate(e.target.value || null)}
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowComparisonControls((prev) => !prev)}
+                    className="bg-gray-100 text-gray-800 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap text-sm border border-gray-300"
+                  >
+                    <i className="ri-contrast-drop-line mr-2"></i>
+                    Comparativo
+                  </button>
+                  <button
+                    onClick={downloadIncomeStatementExcel}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-download-line mr-2"></i>
+                    Excel
+                  </button>
+                  <button
+                    onClick={() => window.print()}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-file-pdf-line mr-2"></i>
+                    PDF
+                  </button>
+                </div>
               </div>
+
+              {showComparisonControls && (
+                <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-700">Comparativo desde:</label>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonFromDate || ''}
+                      onChange={(e) => handleComparisonFromChange(e.target.value)}
+                    />
+                    <span className="text-xs text-gray-700">Hasta:</span>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonToDate || ''}
+                      onChange={(e) => handleComparisonToChange(e.target.value)}
+                    />
+                  </div>
+                  {comparisonFromDate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setComparisonFromDate(null);
+                        setComparisonToDate(null);
+                        setComparisonIncome(null);
+                      }}
+                      className="text-xs text-gray-600 hover:text-gray-800 underline"
+                    >
+                      Quitar comparativo
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Contenido para impresión */}
               <div id="printable-statement">
               {/* Título centrado estilo profesional */}
               <div className="text-center mb-8">
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE RESULTADOS</h1>
-                <p className="text-sm text-gray-700 mb-0.5">{periodDates.periodLabel}</p>
+                <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
+                {comparisonIncome && comparisonPeriodLabel && (
+                  <p className="text-xs text-gray-700 mb-0.5">
+                    Período comparativo: {comparisonPeriodLabel}
+                  </p>
+                )}
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
               <div className="max-w-3xl mx-auto space-y-6">
                 {/* INGRESOS / VENTAS */}
                 <div className={`${Math.abs(totals.totalRevenue) < 0.01 ? 'hide-zero-on-print' : ''}`}>
-                  <h2 className="text-base font-bold text-gray-900 mb-3 pb-1 border-b-2 border-gray-300">INGRESOS</h2>
+                  <h2 className="text-base font-bold text-gray-900 mb-3 pb-1 border-b-2 border-gray-300">
+                    INGRESOS
+                  </h2>
                   {financialData.revenue.map((item, index) => (
-                    <div key={index} className={`flex justify-between py-0.5 pl-4 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
+                    <div
+                      key={index}
+                      className={`flex justify-between py-0.5 pl-4 ${
+                        Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''
+                      }`}
+                    >
                       <span className="text-sm text-gray-700">{item.name}</span>
                       <span
                         className={`text-sm font-medium tabular-nums ${
@@ -1929,13 +2387,20 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Total Ventas</span>
-                      <span
-                        className={`text-sm tabular-nums ${
-                          totals.totalRevenue < 0 ? 'text-red-600' : 'text-gray-900'
-                        }`}
-                      >
-                        {formatCurrencyRD(totals.totalRevenue)}
-                      </span>
+                      <div className="flex items-center gap-6">
+                        <span
+                          className={`text-sm tabular-nums ${
+                            totals.totalRevenue < 0 ? 'text-red-600' : 'text-gray-900'
+                          }`}
+                        >
+                          {formatCurrencyRD(totals.totalRevenue)}
+                        </span>
+                        {comparisonIncome && (
+                          <span className="text-sm tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonIncome.totalRevenue)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1944,7 +2409,12 @@ export default function FinancialStatementsPage() {
                 <div className={`${Math.abs(totals.totalCosts) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                   <h2 className="text-sm font-bold text-gray-900 mb-2 underline">COSTO DE VENTAS</h2>
                   {costItemsForIncome.map((item, index) => (
-                    <div key={index} className={`flex justify-between py-0.5 pl-4 ${Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''}`}>
+                    <div
+                      key={index}
+                      className={`flex justify-between py-0.5 pl-4 ${
+                        Math.abs(item.amount) < 0.01 ? 'hide-zero-on-print' : ''
+                      }`}
+                    >
                       <span className="text-sm text-gray-700">{item.name}</span>
                       <span
                         className={`text-sm font-medium tabular-nums ${
@@ -1958,13 +2428,20 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Costo de Ventas</span>
-                      <span
-                        className={`text-sm tabular-nums ${
-                          totals.totalCosts < 0 ? 'text-red-600' : 'text-gray-900'
-                        }`}
-                      >
-                        {formatCurrencyRD(totals.totalCosts)}
-                      </span>
+                      <div className="flex items-center gap-6">
+                        <span
+                          className={`text-sm tabular-nums ${
+                            totals.totalCosts < 0 ? 'text-red-600' : 'text-gray-900'
+                          }`}
+                        >
+                          {formatCurrencyRD(totals.totalCosts)}
+                        </span>
+                        {comparisonIncome && (
+                          <span className="text-sm tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonIncome.totalCosts)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -1972,13 +2449,20 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-2 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">Beneficio Bruto</span>
-                      <span
-                        className={`text-base tabular-nums ${
-                          grossProfit < 0 ? 'text-red-600' : 'text-gray-900'
-                        }`}
-                      >
-                        {formatCurrencyRD(grossProfit)}
-                      </span>
+                      <div className="flex items-center gap-6">
+                        <span
+                          className={`text-base tabular-nums ${
+                            grossProfit < 0 ? 'text-red-600' : 'text-gray-900'
+                          }`}
+                        >
+                          {formatCurrencyRD(grossProfit)}
+                        </span>
+                        {comparisonIncome && (
+                          <span className="text-base tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonIncome.grossProfit)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1996,13 +2480,20 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                     <div className="flex justify-between font-semibold">
                       <span className="text-sm">Total Gastos de Operaciones</span>
-                      <span
-                        className={`text-sm tabular-nums ${
-                          operatingExpenses < 0 ? 'text-red-600' : 'text-gray-900'
-                        }`}
-                      >
-                        {formatCurrencyRD(operatingExpenses)}
-                      </span>
+                      <div className="flex items-center gap-6">
+                        <span
+                          className={`text-sm tabular-nums ${
+                            operatingExpenses < 0 ? 'text-red-600' : 'text-gray-900'
+                          }`}
+                        >
+                          {formatCurrencyRD(operatingExpenses)}
+                        </span>
+                        {comparisonIncome && (
+                          <span className="text-sm tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonIncome.operatingExpenses)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -2010,13 +2501,20 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-400 pt-2 mb-4">
                     <div className="flex justify-between font-bold">
                       <span className="text-sm">Beneficios netos operacionales</span>
-                      <span
-                        className={`text-sm tabular-nums ${
-                          operatingIncome < 0 ? 'text-red-600' : 'text-gray-900'
-                        }`}
-                      >
-                        {formatCurrencyRD(operatingIncome)}
-                      </span>
+                      <div className="flex items-center gap-6">
+                        <span
+                          className={`text-sm tabular-nums ${
+                            operatingIncome < 0 ? 'text-red-600' : 'text-gray-900'
+                          }`}
+                        >
+                          {formatCurrencyRD(operatingIncome)}
+                        </span>
+                        {comparisonIncome && (
+                          <span className="text-sm tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonIncome.operatingIncome)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2030,13 +2528,20 @@ export default function FinancialStatementsPage() {
                   <div className="border-t border-gray-300 pt-2 mt-2">
                     <div className="flex justify-between font-bold">
                       <span className="text-sm">Beneficios (pérdida) antes de ISR y Reservas</span>
-                      <span
-                        className={`text-sm tabular-nums ${
-                          incomeBeforeTaxReserves < 0 ? 'text-red-600' : 'text-gray-900'
-                        }`}
-                      >
-                        {formatCurrencyRD(incomeBeforeTaxReserves)}
-                      </span>
+                      <div className="flex items-center gap-6">
+                        <span
+                          className={`text-sm tabular-nums ${
+                            incomeBeforeTaxReserves < 0 ? 'text-red-600' : 'text-gray-900'
+                          }`}
+                        >
+                          {formatCurrencyRD(incomeBeforeTaxReserves)}
+                        </span>
+                        {comparisonIncome && (
+                          <span className="text-sm tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonIncome.incomeBeforeTaxReserves)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2067,13 +2572,20 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-3 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">UTILIDAD NETA</span>
-                      <span
-                        className={`text-base tabular-nums ${
-                          totals.netIncome < 0 ? 'text-red-600' : 'text-green-600'
-                        }`}
-                      >
-                        {formatCurrencyRD(totals.netIncome)}
-                      </span>
+                      <div className="flex items-center gap-6">
+                        <span
+                          className={`text-base tabular-nums ${
+                            totals.netIncome < 0 ? 'text-red-600' : 'text-green-600'
+                          }`}
+                        >
+                          {formatCurrencyRD(totals.netIncome)}
+                        </span>
+                        {comparisonIncome && (
+                          <span className="text-base tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonIncome.netIncome)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2086,22 +2598,40 @@ export default function FinancialStatementsPage() {
         {activeTab === 'cashflow' && (
           <div className="bg-white rounded-lg shadow">
             <div className="p-6">
-              {/* Header con botón de descarga */}
-              <div className="flex justify-end gap-2 mb-4 print-hidden">
-                <button
-                  onClick={downloadCashFlowExcel}
-                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-download-line mr-2"></i>
-                  Excel
-                </button>
-                <button
-                  onClick={() => window.print()}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
-                >
-                  <i className="ri-file-pdf-line mr-2"></i>
-                  PDF
-                </button>
+              {/* Header con selector de fechas y botón de descarga */}
+              <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Desde:</label>
+                  <input
+                    type="date"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={incomeFromDate}
+                    onChange={(e) => setIncomeFromDate(e.target.value)}
+                  />
+                  <span className="text-sm text-gray-700">Hasta:</span>
+                  <input
+                    type="date"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                    value={incomeToDate || ''}
+                    onChange={(e) => setIncomeToDate(e.target.value || null)}
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={downloadCashFlowExcel}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-download-line mr-2"></i>
+                    Excel
+                  </button>
+                  <button
+                    onClick={() => window.print()}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap text-sm"
+                  >
+                    <i className="ri-file-pdf-line mr-2"></i>
+                    PDF
+                  </button>
+                </div>
               </div>
 
               {/* Contenido para impresión */}
@@ -2109,7 +2639,7 @@ export default function FinancialStatementsPage() {
               {/* Título centrado estilo profesional */}
               <div className="text-center mb-8">
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE FLUJOS DE EFECTIVO</h1>
-                <p className="text-sm text-gray-700 mb-0.5">{periodDates.periodLabel}</p>
+                <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 

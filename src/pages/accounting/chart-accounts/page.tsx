@@ -996,30 +996,32 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
     return (
       <div key={account.id}>
         {/* Desktop View */}
-        <div className="hidden md:flex items-center px-2 sm:px-4 py-2 border-b border-gray-100 hover:bg-gray-50">
-          <div
-            className="flex items-center flex-1"
-            style={{ paddingLeft: `${(account.level - 1) * 16}px` }}
-          >
-            {hasChildren && (
-              <button
-                onClick={() => toggleExpanded(account.id)}
-                className="mr-2 text-gray-400 hover:text-gray-600"
-              >
-                <i className={`ri-arrow-${isExpanded ? 'down' : 'right'}-s-line`}></i>
-              </button>
-            )}
-            <div className="flex-1 grid grid-cols-9 gap-2 items-center text-sm">
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={selectedIds.includes(account.id)}
-                  onChange={() => toggleSelectOne(account.id)}
-                />
-              </div>
-              <div className="font-semibold text-gray-900 tabular-nums pr-2">{account.code}</div>
-              <div className="text-gray-900 break-words px-2" title={account.name}>{account.name}</div>
-              <div className="flex justify-center">
+        <div className="hidden md:flex items-stretch px-2 sm:px-4 py-2 border-b border-gray-100 hover:bg-gray-50">
+          <div className="flex-1 grid grid-cols-[auto,auto,minmax(0,3fr),auto,auto,auto,auto,auto,auto] gap-x-6 items-start text-sm">
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(account.id)}
+                onChange={() => toggleSelectOne(account.id)}
+              />
+            </div>
+            <div className="font-semibold text-gray-900 tabular-nums pr-2">{account.code}</div>
+            <div
+              className="text-gray-900 break-words pl-2 pr-6 flex items-center"
+              title={account.name}
+              style={{ paddingLeft: `${(account.level - 1) * 16}px` }}
+            >
+              {hasChildren && (
+                <button
+                  onClick={() => toggleExpanded(account.id)}
+                  className="mr-2 text-gray-400 hover:text-gray-600"
+                >
+                  <i className={`ri-arrow-${isExpanded ? 'down' : 'right'}-s-line`}></i>
+                </button>
+              )}
+              <span>{account.name}</span>
+            </div>
+              <div className="flex justify-start pl-2">
                 <span
                   className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${getAccountTypeColor(
                     account.type
@@ -1042,32 +1044,31 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                 RD${Math.abs(account.balance).toLocaleString()}
                 {account.balance < 0 && ' (Cr)'}
               </div>
-              <div className="flex justify-center">
-                <span
-                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
-                    account.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                  }`}
-                >
-                  {account.isActive ? 'Activa' : 'Inactiva'}
-                </span>
-              </div>
-              <div className="flex items-center justify-center gap-3 text-base">
-                <button
-                  onClick={() => {
-                    setEditingAccount(account);
-                    setShowEditModal(true);
-                  }}
-                  className="text-blue-600 hover:text-blue-900"
-                >
-                  <i className="ri-edit-line"></i>
-                </button>
-                <button
-                  onClick={() => handleDeleteAccount(account.id)}
-                  className="text-red-600 hover:text-red-900"
-                >
-                  <i className="ri-delete-bin-line"></i>
-                </button>
-              </div>
+            <div className="flex justify-center">
+              <span
+                className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
+                  account.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                }`}
+              >
+                {account.isActive ? 'Activa' : 'Inactiva'}
+              </span>
+            </div>
+            <div className="flex items-center justify-center gap-3 text-base">
+              <button
+                onClick={() => {
+                  setEditingAccount(account);
+                  setShowEditModal(true);
+                }}
+                className="text-blue-600 hover:text-blue-900"
+              >
+                <i className="ri-edit-line"></i>
+              </button>
+              <button
+                onClick={() => handleDeleteAccount(account.id)}
+                className="text-red-600 hover:text-red-900"
+              >
+                <i className="ri-delete-bin-line"></i>
+              </button>
             </div>
           </div>
         </div>
@@ -1261,7 +1262,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
         {/* Chart of Accounts */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="px-2 sm:px-4 py-2 border-b border-gray-200 bg-gray-50 hidden md:block">
-            <div className="grid grid-cols-9 gap-1 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            <div className="grid grid-cols-[auto,auto,minmax(0,3fr),auto,auto,auto,auto,auto,auto] gap-x-6 text-xs font-semibold text-gray-500 uppercase tracking-wide">
               <div className="flex items-center">
                 <input
                   type="checkbox"
@@ -1270,7 +1271,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
                 />
               </div>
               <div className="text-left">Código</div>
-              <div className="text-left">Nombre de la cuenta</div>
+              <div className="text-left pl-2">Nombre de la cuenta</div>
               <div className="text-center">Grupos</div>
               <div className="text-center w-6">Nivel</div>
               <div className="text-center">Tipo</div>
@@ -1279,7 +1280,7 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
               <div className="text-center">Acciones</div>
             </div>
           </div>
-          <div className="max-h-96 overflow-y-auto">
+          <div className="max-h-[70vh] overflow-y-auto">
             {topLevelAccounts.length === 0 ? (
               <div className="p-8 text-center text-gray-500">
                 <i className="ri-file-list-line text-4xl mb-4 block"></i>

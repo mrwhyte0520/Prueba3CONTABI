@@ -2291,7 +2291,7 @@ export const chartAccountsService = {
 
       const { error: insertError } = await supabase
         .from('chart_accounts')
-        .insert(rowsToInsert, {
+        .upsert(rowsToInsert, {
           onConflict: 'user_id,code',
           ignoreDuplicates: true,
         });
@@ -6180,9 +6180,14 @@ export const invoicesService = {
         // Las cuentas de ingreso pueden venir de los productos y usar la
         // cuenta de ventas global solo como respaldo.
         if (arAccountId) {
-          const subtotal = Number(invoiceData.subtotal) || 0;
-          const taxAmount = Number(invoiceData.tax_amount) || 0;
-          const totalAmount = Number(invoiceData.total_amount) || subtotal + taxAmount;
+          // Normalizar importes a 2 decimales y calcular el total a partir de
+          // subtotal + impuestos, para evitar pequeñas diferencias de
+          // redondeo con invoice.total_amount que desbalanceen el asiento.
+          const rawSubtotal = Number(invoiceData.subtotal) || 0;
+          const rawTax = Number(invoiceData.tax_amount) || 0;
+          const subtotal = Number(rawSubtotal.toFixed(2));
+          const taxAmount = Number(rawTax.toFixed(2));
+          const totalAmount = Number((subtotal + taxAmount).toFixed(2));
 
           const entryLines: any[] = [
             {
@@ -8385,8 +8390,31 @@ export const supplierPaymentsService = {
         try {
           // Obtener configuración contable global
           const settings = await accountingSettingsService.get(data.user_id);
-          const apAccountId = settings?.ap_account_id;
+          let apAccountId = settings?.ap_account_id as string | null | undefined;
           const defaultApBankAccountId = settings?.ap_bank_account_id;
+
+          // Si no hay cuenta de CxP configurada, intentar usar automáticamente la cuenta 2001
+          if (!apAccountId) {
+            try {
+              const { data: apAccountRow, error: apAccError } = await supabase
+                .from('chart_accounts')
+                .select('id, code')
+                .eq('user_id', data.user_id)
+                .order('code', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+
+              if (!apAccError && apAccountRow?.id) {
+                const rawCode = String(apAccountRow.code || '');
+                const normalized = rawCode.replace(/\./g, '');
+                if (normalized.startsWith('2001')) {
+                  apAccountId = apAccountRow.id as string;
+                }
+              }
+            } catch (resolveApError) {
+              console.error('No se pudo resolver cuenta 2001 como CxP por defecto:', resolveApError);
+            }
+          }
 
           const amount = Number(data.amount) || 0;
           const paymentMethod = String(data.method || '').toLowerCase();
@@ -10775,12 +10803,23 @@ export const settingsService = {
   // Accounting Settings
   async getAccountingSettings(userId?: string) {
     try {
+      let tenantId: string | null = null;
+
+      if (userId) {
+        tenantId = await resolveTenantId(userId);
+      } else {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        tenantId = user?.id ? await resolveTenantId(user.id) : null;
+      }
+
       const query = supabase
         .from('accounting_settings')
         .select('*');
 
-      if (userId) {
-        query.eq('user_id', userId).limit(1);
+      if (tenantId) {
+        query.eq('user_id', tenantId).limit(1);
       } else {
         query.limit(1);
       }
@@ -10797,9 +10836,20 @@ export const settingsService = {
 
   async saveAccountingSettings(settings: any, userId?: string) {
     try {
+      let tenantId: string | null = null;
+
+      if (userId) {
+        tenantId = await resolveTenantId(userId);
+      } else {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        tenantId = user?.id ? await resolveTenantId(user.id) : null;
+      }
+
       const payload = {
         ...settings,
-        user_id: userId ?? settings.user_id ?? null,
+        user_id: tenantId ?? settings.user_id ?? null,
       };
 
       // Nunca enviar el id en el upsert para evitar conflictos con la PK

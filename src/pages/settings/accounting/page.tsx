@@ -54,8 +54,9 @@ export default function AccountingSettingsPage() {
   const [loadingAccounts, setLoadingAccounts] = useState(false);
 
   useEffect(() => {
+    if (!user) return;
     loadSettings();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     const loadAccounts = async () => {

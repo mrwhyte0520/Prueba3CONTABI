@@ -5,7 +5,18 @@ import 'jspdf-autotable';
 import * as ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
-import { customersService, invoicesService, settingsService, inventoryService, taxService, customerTypesService } from '../../../services/database';
+import {
+  customersService,
+  invoicesService,
+  settingsService,
+  inventoryService,
+  taxService,
+  customerTypesService,
+  customerPaymentsService,
+  accountingSettingsService,
+  chartAccountsService,
+  journalEntriesService,
+} from '../../../services/database';
 
 interface Invoice {
   id: string;
@@ -59,6 +70,8 @@ export default function InvoicesPage() {
 
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [customerTypes, setCustomerTypes] = useState<any[]>([]);
+
+  const [cashAccounts, setCashAccounts] = useState<{ id: string; code: string; name: string }[]>([]);
 
   type NewItem = { itemId?: string; description: string; quantity: number; price: number; total: number };
 
@@ -196,6 +209,32 @@ export default function InvoicesPage() {
   }, [user?.id]);
 
   useEffect(() => {
+    const loadCashAccounts = async () => {
+      if (!user?.id) return;
+      try {
+        const data = await chartAccountsService.getAll(user.id as string);
+        const normalizeCode = (code: string | null | undefined) => String(code || '').replace(/\./g, '');
+        const filtered = (data || [])
+          .filter((acc: any) => {
+            const norm = normalizeCode(acc.code);
+            return norm === '100101'; // Solo Efectivo en Caja (100101)
+          })
+          .map((acc: any) => ({
+            id: String(acc.id),
+            code: String(acc.code || ''),
+            name: String(acc.name || ''),
+          }));
+        setCashAccounts(filtered);
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('Error cargando cuenta 100101 para pagos de clientes:', error);
+      }
+    };
+
+    loadCashAccounts();
+  }, [user?.id]);
+
+  useEffect(() => {
     const loadTaxConfig = async () => {
       try {
         const data = await taxService.getTaxConfiguration();
@@ -219,6 +258,12 @@ export default function InvoicesPage() {
     };
     loadCompanyInfo();
   }, [user?.id]);
+
+  const getCustomerTotalBalance = (customerId: string) => {
+    return invoices
+      .filter((inv) => inv.customerId === customerId && inv.status !== 'paid')
+      .reduce((sum, inv) => sum + inv.balance, 0);
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -482,8 +527,7 @@ export default function InvoicesPage() {
 
     // Formato numérico en columnas de montos (Monto, Pagado, Saldo)
     ['I', 'J', 'K'].forEach((col) => {
-      const column = worksheet.getColumn(col);
-      column.numFmt = '#,##0.00';
+      worksheet.getColumn(col).numFmt = '#,##0.00';
     });
 
     const buffer = await workbook.xlsx.writeBuffer();
@@ -806,6 +850,9 @@ export default function InvoicesPage() {
       : String(formData.get('invoice_id') || '');
 
     const amountToPay = Number(formData.get('amount_to_pay') || 0);
+    const paymentMethod = String(formData.get('payment_method') || 'cash');
+    const reference = String(formData.get('reference') || '').trim();
+    const cashAccountId = String(formData.get('cash_account_id') || '');
 
     if (!invoiceId) {
       alert('Debes seleccionar una factura');
@@ -827,18 +874,103 @@ export default function InvoicesPage() {
     const effectivePayment = Math.min(amountToPay, currentInvoice.balance);
     const change = amountToPay - effectivePayment;
 
+    if (!cashAccountId) {
+      alert('Debes seleccionar la cuenta contable 100101 donde se registrará el cobro.');
+      return;
+    }
+
     const newPaid = currentInvoice.paidAmount + effectivePayment;
     const newBalance = currentInvoice.amount - newPaid;
     const newStatus: Invoice['status'] = newBalance > 0 ? 'partial' : 'paid';
 
     try {
+      const paymentDate = new Date().toISOString().slice(0, 10);
+
+      // 1) Registrar pago en tabla customer_payments
+      const paymentPayload: any = {
+        customer_id: currentInvoice.customerId,
+        invoice_id: invoiceId,
+        bank_account_id: null,
+        amount: effectivePayment,
+        payment_method: paymentMethod,
+        payment_date: paymentDate,
+        reference: reference || null,
+      };
+
+      const createdPayment = await customerPaymentsService.create(user.id, paymentPayload);
+
+      // 2) Actualizar saldos de la factura
       await invoicesService.updatePayment(invoiceId, newPaid, newStatus);
       await loadInvoices();
+
+      // 3) Crear asiento contable (Caja/Banco vs Cuentas por Cobrar)
+      try {
+        const settings = await accountingSettingsService.get(user.id);
+        const arAccountId = settings?.ar_account_id as string | undefined;
+
+        if (!arAccountId) {
+          alert(
+            'Pago registrado, pero no se pudo crear el asiento contable: configure la cuenta de Cuentas por Cobrar en Ajustes Contables.',
+          );
+        } else {
+          const paymentAmount = effectivePayment;
+
+          const lines: any[] = [
+            {
+              account_id: cashAccountId,
+              description: 'Cobro de cliente - Caja/Banco',
+              debit_amount: paymentAmount,
+              credit_amount: 0,
+              line_number: 1,
+            },
+            {
+              account_id: arAccountId,
+              description: 'Cobro de cliente - Cuentas por Cobrar',
+              debit_amount: 0,
+              credit_amount: paymentAmount,
+              line_number: 2,
+            },
+          ];
+
+          const customerName = currentInvoice.customerName;
+          const description = customerName
+            ? `Pago factura ${currentInvoice.invoiceNumber} - ${customerName}`
+            : `Pago factura ${currentInvoice.invoiceNumber}`;
+
+          const refText = reference || '';
+          const entryReference = createdPayment?.id
+            ? refText
+              ? `Pago:${createdPayment.id} Ref:${refText}`
+              : `Pago:${createdPayment.id}`
+            : refText || undefined;
+
+          const entryPayload = {
+            entry_number: createdPayment?.id || `CP-${Date.now()}`,
+            entry_date: paymentDate,
+            description,
+            reference: entryReference ?? null,
+            status: 'posted' as const,
+          };
+
+          await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+        }
+      } catch (jeError) {
+        // eslint-disable-next-line no-console
+        console.error('Error creando asiento contable para pago de factura:', jeError);
+        alert('Pago registrado, pero ocurrió un error al crear el asiento contable.');
+      }
+
       if (change > 0) {
-        alert(`Pago registrado correctamente. Devuelta: RD$ ${change.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+        alert(
+          `Pago registrado correctamente. Devuelta: RD$ ${change.toLocaleString('es-DO', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`,
+        );
       } else {
         alert('Pago registrado exitosamente');
       }
+
       setShowPaymentModal(false);
       setSelectedInvoice(null);
     } catch (error: any) {
@@ -1397,9 +1529,30 @@ export default function InvoicesPage() {
               
               {selectedInvoice && (
                 <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Factura: <span className="font-medium">{selectedInvoice.invoiceNumber}</span></p>
-                  <p className="text-sm text-gray-600">Cliente: <span className="font-medium">{selectedInvoice.customerName}</span></p>
-                  <p className="text-lg font-semibold text-blue-600">Saldo: RD${selectedInvoice.balance.toLocaleString()}</p>
+                  <p className="text-sm text-gray-600">
+                    Factura: <span className="font-medium">{selectedInvoice.invoiceNumber}</span>
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    Cliente: <span className="font-medium">{selectedInvoice.customerName}</span>
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    Deuda total del cliente:{' '}
+                    <span className="font-semibold">
+                      RD$
+                      {getCustomerTotalBalance(selectedInvoice.customerId).toLocaleString('es-DO', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
+                  </p>
+                  <p className="text-lg font-semibold text-blue-600">
+                    Saldo de esta factura:{' '}
+                    RD$
+                    {selectedInvoice.balance.toLocaleString('es-DO', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </p>
                 </div>
               )}
               
@@ -1436,6 +1589,24 @@ export default function InvoicesPage() {
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="0.00"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta contable de efectivo / banco
+                  </label>
+                  <select
+                    name="cash_account_id"
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    defaultValue=""
+                  >
+                    <option value="">Seleccionar cuenta (100101)</option>
+                    {cashAccounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 
                 <div>
