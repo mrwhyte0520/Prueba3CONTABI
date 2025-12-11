@@ -7,6 +7,7 @@ import {
   chartAccountsService,
   bankCurrenciesService,
   bankExchangeRatesService,
+  bankReconciliationService,
 } from '../../services/database';
 
 interface Bank {
@@ -82,8 +83,25 @@ export default function BankAccountsPage() {
       const today = new Date().toISOString().slice(0, 10);
 
       const mapped: Bank[] = await Promise.all((rows || []).map(async (b: any) => {
-        const balance = Number(b.current_balance ?? b.initial_balance ?? 0);
+        let balance = Number(b.current_balance ?? b.initial_balance ?? 0);
         const currency = (b.currency as string) || baseCode;
+        const bankId = b.id as string;
+
+        try {
+          if (bankId) {
+            const bookBalance = await bankReconciliationService.getBookBalanceForBankAccount(
+              uid,
+              bankId,
+              today,
+            );
+            if (bookBalance !== null && !Number.isNaN(bookBalance)) {
+              balance = bookBalance;
+            }
+          }
+        } catch (error) {
+          console.error('Error calculando saldo contable para banco', error);
+        }
+
         let baseBalance: number | null = balance;
 
         if (currency !== baseCode) {

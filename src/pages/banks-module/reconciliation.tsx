@@ -259,8 +259,9 @@ export default function BankReconciliationPage() {
           selectedBankAccountId,
           reconciliationDate,
         );
+        const normalizedBalance = Number.isNaN(balance) ? null : balance;
         if (!cancelled) {
-          setBookBalance(balance);
+          setBookBalance(normalizedBalance);
         }
       } catch (err) {
         // eslint-disable-next-line no-console

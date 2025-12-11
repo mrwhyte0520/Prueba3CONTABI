@@ -101,7 +101,21 @@ export default function PaymentsPage() {
     }
     try {
       const rows = await apInvoicesService.getAll(user.id);
-      const pending = (rows || []).filter((inv: any) => inv.status !== 'paid');
+      const pending = (rows || []).filter((inv: any) => {
+        const status = inv.status || 'pending';
+        const totalToPay = Number(inv.total_to_pay ?? inv.total_gross ?? 0) || 0;
+        const paidAmount = Number((inv as any).paid_amount ?? 0) || 0;
+        const explicitBalance = Number((inv as any).balance_amount ?? 0) || 0;
+
+        // Priorizar balance_amount si existe; si no, calcularlo como total_to_pay - paid_amount
+        let balance = explicitBalance;
+        if (balance === 0 && totalToPay > 0) {
+          balance = Math.max(totalToPay - paidAmount, 0);
+        }
+
+        // Solo mostrar facturas que NO estén marcadas como pagadas y que tengan saldo pendiente > 0.01
+        return status !== 'paid' && balance > 0.01;
+      });
       setApInvoices(pending);
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -188,6 +202,7 @@ export default function PaymentsPage() {
     try {
       await supplierPaymentsService.updateStatus(String(id), 'Completado');
       await loadPayments();
+      await loadApInvoices();
       alert('Pago aprobado exitosamente');
     } catch (error) {
       // eslint-disable-next-line no-console

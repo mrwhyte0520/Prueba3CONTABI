@@ -9,13 +9,33 @@ import * as XLSX from 'xlsx';
 const printStyles = `
   @media print {
     @page { size: landscape; margin: 0.5cm; }
+
     body * { visibility: hidden; }
     #printable-ledger, #printable-ledger * { visibility: visible; }
-    #printable-ledger { position: absolute; left: 0; top: 0; width: 100%; }
+
+    /* Asegurar que el contenedor de impresión ocupe toda la página y no tenga scroll interno */
+    #printable-ledger {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+    }
+
+    /* Eliminar barras de scroll horizontales en impresión y dejar que la tabla use todo el ancho disponible */
+    #printable-ledger .overflow-x-auto {
+      overflow: visible !important;
+    }
+
+    #printable-ledger table {
+      width: 100%;
+      table-layout: auto;
+      page-break-inside: avoid;
+      font-size: 10pt;
+    }
+
     body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
     .print-title { text-align: center; font-size: 18pt; font-weight: bold; margin-bottom: 10px; }
     .print-account { text-align: center; font-size: 14pt; margin-bottom: 20px; }
-    table { page-break-inside: avoid; font-size: 10pt; }
     thead { display: table-header-group; }
     tr { page-break-inside: avoid; }
   }

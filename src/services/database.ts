@@ -3477,7 +3477,9 @@ export const bankReconciliationService = {
 
       const chartAccountId = (bank as any)?.chart_account_id as string | null | undefined;
       if (!chartAccountId) {
-        return 0;
+        // Sin cuenta contable asociada: no podemos calcular saldo en libros.
+        // Devolvemos NaN para que la UI mantenga el saldo inicial del banco.
+        return Number.NaN;
       }
 
       const trial = await financialReportsService.getTrialBalance(
@@ -3487,7 +3489,11 @@ export const bankReconciliationService = {
       );
 
       const accountRow = (trial || []).find((acc: any) => acc.account_id === chartAccountId);
-      const balance = accountRow ? Number(accountRow.balance) || 0 : 0;
+      if (!accountRow) {
+        return Number.NaN;
+      }
+
+      const balance = Number(accountRow.balance) || 0;
       return balance;
     } catch (error) {
       console.error(
