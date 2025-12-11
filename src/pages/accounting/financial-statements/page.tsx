@@ -1981,6 +1981,11 @@ export default function FinancialStatementsPage() {
                   RESUMEN DE LOS GASTOS DE PERSONAL, DE VENTAS Y ADMINISTRATIVOS
                 </h1>
                 <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
+                {comparisonPeriodLabel && (
+                  <p className="text-xs text-gray-700 mb-0.5">
+                    Período comparativo: {comparisonPeriodLabel}
+                  </p>
+                )}
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -2213,6 +2218,11 @@ export default function FinancialStatementsPage() {
               <div className="text-center mb-8">
                 <h1 className="text-base font-semibold text-gray-800 mb-1">NOTAS A LOS ESTADOS FINANCIEROS</h1>
                 <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
+                {comparisonPeriodLabel && (
+                  <p className="text-xs text-gray-700 mb-0.5">
+                    Período comparativo: {comparisonPeriodLabel}
+                  </p>
+                )}
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -2368,6 +2378,11 @@ export default function FinancialStatementsPage() {
               <div className="text-center mb-8">
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE SITUACIÓN FINANCIERA</h1>
                 <p className="text-sm text-gray-700 mb-0.5">{periodDates.asOfDateLabel}</p>
+                {comparisonPeriodLabel && (
+                  <p className="text-xs text-gray-700 mb-0.5">
+                    Período comparativo: {comparisonPeriodLabel}
+                  </p>
+                )}
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
@@ -2649,7 +2664,7 @@ export default function FinancialStatementsPage() {
               <div className="text-center mb-8">
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE RESULTADOS</h1>
                 <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
-                {comparisonIncome && comparisonPeriodLabel && (
+                {comparisonPeriodLabel && (
                   <p className="text-xs text-gray-700 mb-0.5">
                     Período comparativo: {comparisonPeriodLabel}
                   </p>
@@ -2980,6 +2995,11 @@ export default function FinancialStatementsPage() {
               <div className="text-center mb-8">
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE FLUJOS DE EFECTIVO</h1>
                 <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
+                {comparisonPeriodLabel && (
+                  <p className="text-xs text-gray-700 mb-0.5">
+                    Período comparativo: {comparisonPeriodLabel}
+                  </p>
+                )}
                 <p className="text-xs text-gray-600">VALORES EN RD$</p>
               </div>
 
