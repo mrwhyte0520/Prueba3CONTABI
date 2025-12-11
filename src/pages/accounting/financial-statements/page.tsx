@@ -59,6 +59,20 @@ interface FinancialData {
   expenses: { code: string; name: string; amount: number }[];
 }
 
+interface FinancialTotals {
+  totalCurrentAssets: number;
+  totalNonCurrentAssets: number;
+  totalAssets: number;
+  totalCurrentLiabilities: number;
+  totalNonCurrentLiabilities: number;
+  totalLiabilities: number;
+  totalEquity: number;
+  totalRevenue: number;
+  totalCosts: number;
+  totalExpenses: number;
+  netIncome: number;
+}
+
 export default function FinancialStatementsPage() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<'statements' | 'balance' | 'income' | 'costs' | 'expenses' | 'cashflow'>('statements');
@@ -126,6 +140,16 @@ export default function FinancialStatementsPage() {
     openingCash: 0,
     closingCash: 0,
   });
+
+  const [comparisonTotals, setComparisonTotals] = useState<FinancialTotals | null>(null);
+  const [comparisonCashFlow, setComparisonCashFlow] = useState<{
+    operatingCashFlow: number;
+    investingCashFlow: number;
+    financingCashFlow: number;
+    netCashFlow: number;
+    openingCash: number;
+    closingCash: number;
+  } | null>(null);
 
   useEffect(() => {
     loadStatements();
@@ -653,7 +677,7 @@ export default function FinancialStatementsPage() {
     }
   };
 
-  const calculateTotalsFromData = (data: FinancialData) => {
+  const calculateTotalsFromData = (data: FinancialData): FinancialTotals => {
     const totalCurrentAssets = data.assets.current.reduce((sum, item) => sum + item.amount, 0);
     const totalNonCurrentAssets = data.assets.nonCurrent.reduce((sum, item) => sum + item.amount, 0);
     const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
@@ -698,6 +722,14 @@ export default function FinancialStatementsPage() {
   // Total Pasivos y Patrimonio incluyendo el resultado del período (utilidad o pérdida),
   // de forma que se cumpla la ecuación: Activos = Pasivos + Patrimonio + Resultado.
   const totalLiabilitiesAndEquity = totals.totalLiabilities + totals.totalEquity + totals.netIncome;
+
+  const comparisonLiabilitiesAndEquity = comparisonTotals
+    ? comparisonTotals.totalLiabilities + comparisonTotals.totalEquity + comparisonTotals.netIncome
+    : null;
+
+  const comparisonPatrimonioConResultado = comparisonTotals
+    ? comparisonTotals.totalEquity + comparisonTotals.netIncome
+    : null;
 
   // Función para obtener las fechas formateadas del período
   const getPeriodDates = () => {
@@ -877,11 +909,15 @@ export default function FinancialStatementsPage() {
     try {
       if (!user) {
         setComparisonIncome(null);
+        setComparisonTotals(null);
+        setComparisonCashFlow(null);
         return;
       }
 
       if (!fromInput) {
         setComparisonIncome(null);
+        setComparisonTotals(null);
+        setComparisonCashFlow(null);
         return;
       }
 
@@ -1017,6 +1053,7 @@ export default function FinancialStatementsPage() {
       });
 
       const totalsComp = calculateTotalsFromData(comparisonData);
+      setComparisonTotals(totalsComp);
       const grossProfitComp = totalsComp.totalRevenue - totalsComp.totalCosts;
 
       // Derivar gastos operativos y financieros para el comparativo usando los mismos prefijos
@@ -1049,10 +1086,63 @@ export default function FinancialStatementsPage() {
         incomeBeforeTaxReserves: incomeBeforeTaxReservesComp,
         netIncome: totalsComp.netIncome,
       });
+
+      try {
+        const resultCf = await chartAccountsService.generateCashFlowStatement(user.id, fromDate, toDate);
+
+        const fromDateObjCf = new Date(fromDate);
+        const prevToObjCf = new Date(fromDateObjCf.getTime() - 24 * 60 * 60 * 1000);
+        const prevToDateCf =
+          prevToObjCf.getFullYear() <= 1900
+            ? null
+            : prevToObjCf.toISOString().slice(0, 10);
+
+        const [prevTrialCf, finalTrialCf] = await Promise.all([
+          prevToDateCf
+            ? financialReportsService.getTrialBalance(user.id, '1900-01-01', prevToDateCf)
+            : Promise.resolve([]),
+          financialReportsService.getTrialBalance(user.id, '1900-01-01', toDate),
+        ]);
+
+        const sumCashCf = (trial: any[]) => {
+          return (trial || []).reduce((sum, acc: any) => {
+            const code = String(acc.code || '');
+            const normalizedCode = code.replace(/\./g, '');
+            const type = String(acc.type || '');
+            if (!(type === 'asset' || type === 'activo')) return sum;
+            if (
+              !normalizedCode.startsWith('10') &&
+              !normalizedCode.startsWith('110') &&
+              !normalizedCode.startsWith('111') &&
+              !normalizedCode.startsWith('1102')
+            ) {
+              return sum;
+            }
+            const balance = Number(acc.balance) || 0;
+            return sum + balance;
+          }, 0);
+        };
+
+        const openingCashComp = prevTrialCf ? sumCashCf(prevTrialCf as any[]) : 0;
+        const closingCashComp = sumCashCf(finalTrialCf as any[]);
+
+        setComparisonCashFlow({
+          operatingCashFlow: resultCf.operatingCashFlow || 0,
+          investingCashFlow: resultCf.investingCashFlow || 0,
+          financingCashFlow: resultCf.financingCashFlow || 0,
+          netCashFlow: resultCf.netCashFlow || 0,
+          openingCash: openingCashComp,
+          closingCash: closingCashComp,
+        });
+      } catch {
+        setComparisonCashFlow(null);
+      }
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error loading comparison income data:', error);
       setComparisonIncome(null);
+      setComparisonTotals(null);
+      setComparisonCashFlow(null);
     }
   };
 
@@ -1063,6 +1153,8 @@ export default function FinancialStatementsPage() {
 
     if (!normalizedFrom) {
       setComparisonIncome(null);
+      setComparisonTotals(null);
+      setComparisonCashFlow(null);
       return;
     }
 
@@ -1076,6 +1168,8 @@ export default function FinancialStatementsPage() {
 
     if (!comparisonFromDate) {
       setComparisonIncome(null);
+      setComparisonTotals(null);
+      setComparisonCashFlow(null);
       return;
     }
 
@@ -1819,6 +1913,14 @@ export default function FinancialStatementsPage() {
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
+                    type="button"
+                    onClick={() => setShowComparisonControls((prev) => !prev)}
+                    className="bg-gray-100 text-gray-800 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap text-sm border border-gray-300"
+                  >
+                    <i className="ri-contrast-drop-line mr-2"></i>
+                    Comparativo
+                  </button>
+                  <button
                     onClick={downloadExpensesStatementExcel}
                     className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
                   >
@@ -1834,6 +1936,42 @@ export default function FinancialStatementsPage() {
                   </button>
                 </div>
               </div>
+
+              {showComparisonControls && (
+                <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-700">Comparativo desde:</label>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonFromDate || ''}
+                      onChange={(e) => handleComparisonFromChange(e.target.value)}
+                    />
+                    <span className="text-xs text-gray-700">Hasta:</span>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonToDate || ''}
+                      onChange={(e) => handleComparisonToChange(e.target.value)}
+                    />
+                  </div>
+                  {comparisonFromDate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setComparisonFromDate(null);
+                        setComparisonToDate(null);
+                        setComparisonIncome(null);
+                        setComparisonTotals(null);
+                        setComparisonCashFlow(null);
+                      }}
+                      className="text-xs text-gray-600 hover:text-gray-800 underline"
+                    >
+                      Quitar comparativo
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Contenido para impresión */}
               <div id="printable-statement">
@@ -1970,7 +2108,14 @@ export default function FinancialStatementsPage() {
                 <div className="border-t-2 border-gray-800 pt-3 mt-3">
                   <div className="flex justify-between font-bold">
                     <span className="text-base">Total gastos del Periodo</span>
-                    <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalExpenses)}</span>
+                    <div className="flex items-center gap-6">
+                      <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalExpenses)}</span>
+                      {comparisonTotals && (
+                        <span className="text-base tabular-nums text-gray-500">
+                          {formatCurrencyRD(comparisonTotals.totalExpenses)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2002,6 +2147,14 @@ export default function FinancialStatementsPage() {
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
+                    type="button"
+                    onClick={() => setShowComparisonControls((prev) => !prev)}
+                    className="bg-gray-100 text-gray-800 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap text-sm border border-gray-300"
+                  >
+                    <i className="ri-contrast-drop-line mr-2"></i>
+                    Comparativo
+                  </button>
+                  <button
                     onClick={downloadCostOfSalesExcel}
                     className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
                   >
@@ -2017,6 +2170,42 @@ export default function FinancialStatementsPage() {
                   </button>
                 </div>
               </div>
+
+              {showComparisonControls && (
+                <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-700">Comparativo desde:</label>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonFromDate || ''}
+                      onChange={(e) => handleComparisonFromChange(e.target.value)}
+                    />
+                    <span className="text-xs text-gray-700">Hasta:</span>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonToDate || ''}
+                      onChange={(e) => handleComparisonToChange(e.target.value)}
+                    />
+                  </div>
+                  {comparisonFromDate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setComparisonFromDate(null);
+                        setComparisonToDate(null);
+                        setComparisonIncome(null);
+                        setComparisonTotals(null);
+                        setComparisonCashFlow(null);
+                      }}
+                      className="text-xs text-gray-600 hover:text-gray-800 underline"
+                    >
+                      Quitar comparativo
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Contenido para impresión */}
               <div id="printable-statement">
@@ -2076,7 +2265,14 @@ export default function FinancialStatementsPage() {
                 <div className="border-t-2 border-gray-800 pt-3 mt-3">
                   <div className="flex justify-between font-bold">
                     <span className="text-base">Costo de Venta del Periodo</span>
-                    <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalCosts)}</span>
+                    <div className="flex items-center gap-6">
+                      <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalCosts)}</span>
+                      {comparisonTotals && (
+                        <span className="text-base tabular-nums text-gray-500">
+                          {formatCurrencyRD(comparisonTotals.totalCosts)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2106,6 +2302,14 @@ export default function FinancialStatementsPage() {
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
+                    type="button"
+                    onClick={() => setShowComparisonControls((prev) => !prev)}
+                    className="bg-gray-100 text-gray-800 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap text-sm border border-gray-300"
+                  >
+                    <i className="ri-contrast-drop-line mr-2"></i>
+                    Comparativo
+                  </button>
+                  <button
                     onClick={downloadBalanceSheetExcel}
                     className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
                   >
@@ -2121,6 +2325,42 @@ export default function FinancialStatementsPage() {
                   </button>
                 </div>
               </div>
+
+              {showComparisonControls && (
+                <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-700">Comparativo desde:</label>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonFromDate || ''}
+                      onChange={(e) => handleComparisonFromChange(e.target.value)}
+                    />
+                    <span className="text-xs text-gray-700">Hasta:</span>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonToDate || ''}
+                      onChange={(e) => handleComparisonToChange(e.target.value)}
+                    />
+                  </div>
+                  {comparisonFromDate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setComparisonFromDate(null);
+                        setComparisonToDate(null);
+                        setComparisonIncome(null);
+                        setComparisonTotals(null);
+                        setComparisonCashFlow(null);
+                      }}
+                      className="text-xs text-gray-600 hover:text-gray-800 underline"
+                    >
+                      Quitar comparativo
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Contenido para impresión */}
               <div id="printable-statement">
@@ -2151,7 +2391,14 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Activos Corrientes</span>
-                        <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalCurrentAssets)}</span>
+                        <div className="flex items-center gap-6">
+                          <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalCurrentAssets)}</span>
+                          {comparisonTotals && (
+                            <span className="text-sm tabular-nums text-gray-500">
+                              {formatCurrencyRD(comparisonTotals.totalCurrentAssets)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2174,7 +2421,14 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Otros Activos</span>
-                        <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalNonCurrentAssets)}</span>
+                        <div className="flex items-center gap-6">
+                          <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalNonCurrentAssets)}</span>
+                          {comparisonTotals && (
+                            <span className="text-sm tabular-nums text-gray-500">
+                              {formatCurrencyRD(comparisonTotals.totalNonCurrentAssets)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2183,7 +2437,14 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-2 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">TOTAL ACTIVOS</span>
-                      <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalAssets)}</span>
+                      <div className="flex items-center gap-6">
+                        <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalAssets)}</span>
+                        {comparisonTotals && (
+                          <span className="text-base tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonTotals.totalAssets)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2203,7 +2464,14 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Pasivos Corrientes</span>
-                        <span className="text-sm tabular-nums">{formatCurrencyRD(pasivosCorrientes)}</span>
+                        <div className="flex items-center gap-6">
+                          <span className="text-sm tabular-nums">{formatCurrencyRD(pasivosCorrientes)}</span>
+                          {comparisonTotals && (
+                            <span className="text-sm tabular-nums text-gray-500">
+                              {formatCurrencyRD(comparisonTotals.totalCurrentLiabilities)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2216,7 +2484,14 @@ export default function FinancialStatementsPage() {
                       <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Total Pasivos a Largo Plazo</span>
-                          <span className="text-sm tabular-nums">{formatCurrencyRD(pasivosLargoPlazo)}</span>
+                          <div className="flex items-center gap-6">
+                            <span className="text-sm tabular-nums">{formatCurrencyRD(pasivosLargoPlazo)}</span>
+                            {comparisonTotals && (
+                              <span className="text-sm tabular-nums text-gray-500">
+                                {formatCurrencyRD(comparisonTotals.totalNonCurrentLiabilities)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -2226,7 +2501,14 @@ export default function FinancialStatementsPage() {
                   <div className={`border-t border-gray-400 pt-2 mb-4 ${Math.abs(totals.totalLiabilities) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                     <div className="flex justify-between font-bold">
                       <span className="text-sm">TOTAL PASIVOS</span>
-                      <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalLiabilities)}</span>
+                      <div className="flex items-center gap-6">
+                        <span className="text-sm tabular-nums">{formatCurrencyRD(totals.totalLiabilities)}</span>
+                        {comparisonTotals && (
+                          <span className="text-sm tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonTotals.totalLiabilities)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -2247,7 +2529,14 @@ export default function FinancialStatementsPage() {
                     <div className="border-t border-gray-300 mt-2 pt-1 pl-4">
                       <div className="flex justify-between font-semibold">
                         <span className="text-sm">Total Patrimonio</span>
-                        <span className="text-sm tabular-nums">{formatCurrencyRD(patrimonioConResultado)}</span>
+                        <div className="flex items-center gap-6">
+                          <span className="text-sm tabular-nums">{formatCurrencyRD(patrimonioConResultado)}</span>
+                          {comparisonPatrimonioConResultado !== null && (
+                            <span className="text-sm tabular-nums text-gray-500">
+                              {formatCurrencyRD(comparisonPatrimonioConResultado)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2256,7 +2545,14 @@ export default function FinancialStatementsPage() {
                   <div className="border-t-2 border-gray-800 pt-2 mt-3">
                     <div className="flex justify-between font-bold">
                       <span className="text-base">TOTAL PASIVOS Y PATRIMONIO</span>
-                      <span className="text-base tabular-nums">{formatCurrencyRD(totalLiabilitiesAndEquity)}</span>
+                      <div className="flex items-center gap-6">
+                        <span className="text-base tabular-nums">{formatCurrencyRD(totalLiabilitiesAndEquity)}</span>
+                        {comparisonLiabilitiesAndEquity !== null && (
+                          <span className="text-base tabular-nums text-gray-500">
+                            {formatCurrencyRD(comparisonLiabilitiesAndEquity)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2618,6 +2914,14 @@ export default function FinancialStatementsPage() {
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
+                    type="button"
+                    onClick={() => setShowComparisonControls((prev) => !prev)}
+                    className="bg-gray-100 text-gray-800 px-3 py-2 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap text-sm border border-gray-300"
+                  >
+                    <i className="ri-contrast-drop-line mr-2"></i>
+                    Comparativo
+                  </button>
+                  <button
                     onClick={downloadCashFlowExcel}
                     className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap text-sm"
                   >
@@ -2633,6 +2937,42 @@ export default function FinancialStatementsPage() {
                   </button>
                 </div>
               </div>
+
+              {showComparisonControls && (
+                <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-700">Comparativo desde:</label>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonFromDate || ''}
+                      onChange={(e) => handleComparisonFromChange(e.target.value)}
+                    />
+                    <span className="text-xs text-gray-700">Hasta:</span>
+                    <input
+                      type="date"
+                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                      value={comparisonToDate || ''}
+                      onChange={(e) => handleComparisonToChange(e.target.value)}
+                    />
+                  </div>
+                  {comparisonFromDate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setComparisonFromDate(null);
+                        setComparisonToDate(null);
+                        setComparisonIncome(null);
+                        setComparisonTotals(null);
+                        setComparisonCashFlow(null);
+                      }}
+                      className="text-xs text-gray-600 hover:text-gray-800 underline"
+                    >
+                      Quitar comparativo
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Contenido para impresión */}
               <div id="printable-statement">
@@ -2695,6 +3035,11 @@ export default function FinancialStatementsPage() {
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Total ajustes</span>
                           <span className="text-sm tabular-nums">{formatCurrencyRD(0)}</span>
+                          {comparisonTotals && (
+                            <span className="text-sm tabular-nums text-gray-500">
+                              {formatCurrencyRD(0)}
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -2702,9 +3047,16 @@ export default function FinancialStatementsPage() {
                       <div className="border-t-2 border-gray-800 pt-2 mt-3">
                         <div className="flex justify-between font-bold">
                           <span className="text-base">Efectivo neto (usado) provisto por actividades operativas</span>
-                          <span className="text-base tabular-nums">
-                            {formatCurrency(cashFlow.operatingCashFlow)}
-                          </span>
+                          <div className="flex items-center gap-6">
+                            <span className="text-base tabular-nums">
+                              {formatCurrency(cashFlow.operatingCashFlow)}
+                            </span>
+                            {comparisonCashFlow && (
+                              <span className="text-base tabular-nums text-gray-500">
+                                {formatCurrency(comparisonCashFlow.operatingCashFlow)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2734,7 +3086,14 @@ export default function FinancialStatementsPage() {
                       <div className={`border-t border-gray-300 mt-2 pt-1 pl-4 ${Math.abs(cashFlow.investingCashFlow || 0) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Efectivo neto (usado) por actividades de Inversión</span>
-                          <span className="text-sm tabular-nums">{formatCurrency(cashFlow.investingCashFlow)}</span>
+                          <div className="flex items-center gap-6">
+                            <span className="text-sm tabular-nums">{formatCurrency(cashFlow.investingCashFlow)}</span>
+                            {comparisonCashFlow && (
+                              <span className="text-sm tabular-nums text-gray-500">
+                                {formatCurrency(comparisonCashFlow.investingCashFlow)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2760,7 +3119,14 @@ export default function FinancialStatementsPage() {
                       <div className={`border-t border-gray-300 mt-2 pt-1 pl-4 ${Math.abs(cashFlow.financingCashFlow || 0) < 0.01 ? 'hide-zero-on-print' : ''}`}>
                         <div className="flex justify-between font-semibold">
                           <span className="text-sm">Efectivo neto usado por actividades de Financiamiento</span>
-                          <span className="text-sm tabular-nums">{formatCurrency(cashFlow.financingCashFlow)}</span>
+                          <div className="flex items-center gap-6">
+                            <span className="text-sm tabular-nums">{formatCurrency(cashFlow.financingCashFlow)}</span>
+                            {comparisonCashFlow && (
+                              <span className="text-sm tabular-nums text-gray-500">
+                                {formatCurrency(comparisonCashFlow.financingCashFlow)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2770,18 +3136,39 @@ export default function FinancialStatementsPage() {
                       <div className="border-t border-gray-400 pt-2 mb-4">
                         <div className="flex justify-between font-bold">
                           <span className="text-sm">Aumento (Disminución) neta del efectivo</span>
-                          <span className="text-sm tabular-nums">{formatCurrency(netChange)}</span>
+                          <div className="flex items-center gap-6">
+                            <span className="text-sm tabular-nums">{formatCurrency(netChange)}</span>
+                            {comparisonCashFlow && (
+                              <span className="text-sm tabular-nums text-gray-500">
+                                {formatCurrency(comparisonCashFlow.netCashFlow)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
                       <div className="space-y-1 pl-4">
                         <div className="flex justify-between py-0.5">
                           <span className="text-sm text-gray-700">Efectivo neto al principio del año</span>
-                          <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(openingCash)}</span>
+                          <div className="flex items-center gap-6">
+                            <span className="text-sm text-gray-900 tabular-nums">{formatCurrency(openingCash)}</span>
+                            {comparisonCashFlow && (
+                              <span className="text-sm text-gray-500 tabular-nums">
+                                {formatCurrency(comparisonCashFlow.openingCash)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="flex justify-between py-0.5">
                           <span className="text-sm text-gray-700 font-semibold">EFECTIVO NETO al final del año</span>
-                          <span className="text-sm text-gray-900 font-semibold tabular-nums">{formatCurrency(endingCash)}</span>
+                          <div className="flex items-center gap-6">
+                            <span className="text-sm text-gray-900 font-semibold tabular-nums">{formatCurrency(endingCash)}</span>
+                            {comparisonCashFlow && (
+                              <span className="text-sm text-gray-500 font-semibold tabular-nums">
+                                {formatCurrency(comparisonCashFlow.closingCash)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
