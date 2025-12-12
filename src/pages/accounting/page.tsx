@@ -12,7 +12,7 @@ interface JournalEntry {
   description: string;
   reference: string;
   total_debit: number;
-  total_credit: number;
+  total_credit: number;  
   status: 'draft' | 'posted' | 'reversed';
   created_at: string;
   journal_entry_lines?: any[];
