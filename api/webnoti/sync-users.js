@@ -31,6 +31,15 @@ function getSupabaseAdmin() {
   return createClient(url, serviceKey, { auth: { persistSession: false } });
 }
 
+function readQuery(req) {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    return url.searchParams;
+  } catch {
+    return new URLSearchParams();
+  }
+}
+
 async function postBulkUsers(baseUrl, apiKey, payload) {
   const base = baseUrl.replace(/\/$/, '');
   const candidates = [
@@ -133,10 +142,16 @@ async function listAllUsers(supabaseAdmin, perPage = 1000) {
 }
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    res.setHeader('Allow', 'GET, POST');
     return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
   }
+
+  console.log('[webnoti][sync-users] invoked', {
+    method: req.method,
+    path: req.url,
+    at: new Date().toISOString(),
+  });
 
   const baseUrl = process.env.WEBNOTI_BASE_URL;
   const apiKey = process.env.WEBNOTI_API_KEY;
@@ -150,10 +165,13 @@ export default async function handler(req, res) {
     return res.status(500).json({ ok: false, error: 'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY' });
   }
 
-  const body = (await readJsonBody(req)) ?? {};
-  const dry_run = Boolean(body.dry_run);
+  const query = readQuery(req);
+  const body = req.method === 'POST' ? (await readJsonBody(req)) ?? {} : {};
+  const dry_run = req.method === 'GET'
+    ? ['1', 'true', 'yes'].includes(String(query.get('dry_run') || '').toLowerCase())
+    : Boolean(body.dry_run);
 
-  let perPage = Number(body.per_page ?? 1000);
+  let perPage = Number(req.method === 'GET' ? (query.get('per_page') ?? 1000) : (body.per_page ?? 1000));
   if (!Number.isFinite(perPage) || perPage <= 0) perPage = 1000;
   if (perPage > 1000) perPage = 1000;
 
