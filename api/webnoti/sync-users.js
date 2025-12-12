@@ -38,21 +38,43 @@ async function postBulkUsers(baseUrl, apiKey, payload) {
       url: `${base}/api/v1/app-users/bulk`,
       headers: { 'x-api-key': apiKey, 'content-type': 'application/json' },
       label: 'bulk + x-api-key',
+      method: 'POST',
     },
     {
       url: `${base}/api/v1/app-users/bulk?api_key=${encodeURIComponent(apiKey)}`,
       headers: { 'content-type': 'application/json' },
       label: 'bulk + api_key query',
+      method: 'POST',
     },
     {
       url: `${base}/api/v1/app-users/bulk/`,
       headers: { 'x-api-key': apiKey, 'content-type': 'application/json' },
       label: 'bulk/ + x-api-key',
+      method: 'POST',
     },
     {
       url: `${base}/api/v1/app-users/bulk/?api_key=${encodeURIComponent(apiKey)}`,
       headers: { 'content-type': 'application/json' },
       label: 'bulk/ + api_key query',
+      method: 'POST',
+    },
+    {
+      url: `${base}/api/app-users/bulk`,
+      headers: { 'x-api-key': apiKey, 'content-type': 'application/json' },
+      label: 'api bulk + x-api-key',
+      method: 'POST',
+    },
+    {
+      url: `${base}/api/app-users/bulk?api_key=${encodeURIComponent(apiKey)}`,
+      headers: { 'content-type': 'application/json' },
+      label: 'api bulk + api_key query',
+      method: 'POST',
+    },
+    {
+      url: `${base}/api/v1/app-users/bulk`,
+      headers: { 'x-api-key': apiKey, 'content-type': 'application/json' },
+      label: 'bulk PUT + x-api-key',
+      method: 'PUT',
     },
   ];
 
@@ -60,7 +82,7 @@ async function postBulkUsers(baseUrl, apiKey, payload) {
 
   for (const c of candidates) {
     const upstream = await fetch(c.url, {
-      method: 'POST',
+      method: c.method,
       headers: c.headers,
       body: JSON.stringify(payload),
     });
@@ -73,7 +95,15 @@ async function postBulkUsers(baseUrl, apiKey, payload) {
       data = text;
     }
 
-    attempts.push({ label: c.label, url: c.url, status: upstream.status, ok: upstream.ok, response: data });
+    attempts.push({
+      label: c.label,
+      method: c.method,
+      url: c.url,
+      status: upstream.status,
+      ok: upstream.ok,
+      allow: upstream.headers.get('allow'),
+      response: data,
+    });
 
     if (upstream.ok) {
       return { ok: true, data, attempt: { label: c.label, url: c.url, status: upstream.status } };
