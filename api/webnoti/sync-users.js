@@ -31,6 +31,58 @@ function getSupabaseAdmin() {
   return createClient(url, serviceKey, { auth: { persistSession: false } });
 }
 
+async function postBulkUsers(baseUrl, apiKey, payload) {
+  const base = baseUrl.replace(/\/$/, '');
+  const candidates = [
+    {
+      url: `${base}/api/v1/app-users/bulk`,
+      headers: { 'x-api-key': apiKey, 'content-type': 'application/json' },
+      label: 'bulk + x-api-key',
+    },
+    {
+      url: `${base}/api/v1/app-users/bulk?api_key=${encodeURIComponent(apiKey)}`,
+      headers: { 'content-type': 'application/json' },
+      label: 'bulk + api_key query',
+    },
+    {
+      url: `${base}/api/v1/app-users/bulk/`,
+      headers: { 'x-api-key': apiKey, 'content-type': 'application/json' },
+      label: 'bulk/ + x-api-key',
+    },
+    {
+      url: `${base}/api/v1/app-users/bulk/?api_key=${encodeURIComponent(apiKey)}`,
+      headers: { 'content-type': 'application/json' },
+      label: 'bulk/ + api_key query',
+    },
+  ];
+
+  const attempts = [];
+
+  for (const c of candidates) {
+    const upstream = await fetch(c.url, {
+      method: 'POST',
+      headers: c.headers,
+      body: JSON.stringify(payload),
+    });
+
+    const text = await upstream.text();
+    let data = text;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+
+    attempts.push({ label: c.label, url: c.url, status: upstream.status, ok: upstream.ok, response: data });
+
+    if (upstream.ok) {
+      return { ok: true, data, attempt: { label: c.label, url: c.url, status: upstream.status } };
+    }
+  }
+
+  return { ok: false, attempts };
+}
+
 async function listAllUsers(supabaseAdmin, perPage = 1000) {
   const users = [];
   let page = 1;
@@ -90,28 +142,16 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, dry_run: true, count: appUsers.length, sample: appUsers.slice(0, 5) });
   }
 
-  const url = `${baseUrl.replace(/\/$/, '')}/api/v1/app-users/bulk`;
-
-  const upstream = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ users: appUsers }),
-  });
-
-  const text = await upstream.text();
-  let data = text;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = text;
+  const result = await postBulkUsers(baseUrl, apiKey, { users: appUsers });
+  if (!result.ok) {
+    const status = result.attempts.find((a) => a.status)?.status ?? 502;
+    return res.status(status).json({
+      ok: false,
+      error: 'WebNotiCenter error',
+      sent: { count: appUsers.length },
+      attempts: result.attempts,
+    });
   }
 
-  if (!upstream.ok) {
-    return res.status(upstream.status).json({ ok: false, error: 'WebNotiCenter error', sent: { count: appUsers.length }, details: data });
-  }
-
-  return res.status(200).json({ ok: true, sent: { count: appUsers.length }, data });
+  return res.status(200).json({ ok: true, sent: { count: appUsers.length }, data: result.data, attempt: result.attempt });
 }
