@@ -3,6 +3,12 @@
   "buildCommand": "npm run build",
   "installCommand": "npm ci",
   "outputDirectory": "out",
+  "crons": [
+    {
+      "path": "/api/webnoti/sync-users",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/" }
