@@ -1,3 +1,14 @@
+async function readRawBody(req) {
+  return await new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (chunk) => {
+      data += chunk;
+    });
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -11,12 +22,21 @@ export default async function handler(req, res) {
 
   let body = req.body;
 
+  if (body == null || (typeof body === 'object' && Object.keys(body).length === 0)) {
+    const raw = await readRawBody(req);
+    body = raw;
+  }
+
   if (typeof body === 'string') {
     try {
       body = JSON.parse(body);
     } catch {
       return res.status(400).json({ ok: false, error: 'Invalid JSON' });
     }
+  }
+
+  if (body == null || typeof body !== 'object') {
+    return res.status(400).json({ ok: false, error: 'Invalid JSON' });
   }
 
   const event = body?.event;
