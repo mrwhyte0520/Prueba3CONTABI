@@ -1,3 +1,5 @@
+import { createClient } from '@supabase/supabase-js';
+
 async function readJsonBody(req) {
   const contentType = String(req.headers['content-type'] || '').toLowerCase();
   if (contentType.includes('application/json') && req.body && typeof req.body === 'object') {
@@ -27,8 +29,6 @@ function getSupabaseClient(accessToken) {
   const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseAnonKey) return null;
-
-  const { createClient } = require('@supabase/supabase-js');
   return createClient(supabaseUrl, supabaseAnonKey, {
     auth: { persistSession: false },
     global: {
