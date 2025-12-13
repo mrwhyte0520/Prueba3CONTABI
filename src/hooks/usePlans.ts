@@ -1,5 +1,26 @@
 
 import { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+
+async function postWebnotiPlanPurchaseEvent() {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data?.session?.access_token;
+    if (!accessToken) return;
+
+    await fetch('/api/webnoti/event', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        access_token: accessToken,
+        event: 'plan_purchase',
+        target: 'user',
+      }),
+    });
+  } catch {
+    // ignore
+  }
+}
 
 interface Plan {
   id: string;
@@ -217,6 +238,8 @@ export function usePlans() {
       
       localStorage.setItem('contard_current_plan', JSON.stringify(plan));
       localStorage.removeItem('contard_trial_expired');
+
+      await postWebnotiPlanPurchaseEvent();
       
       return { success: true };
     } catch (error) {

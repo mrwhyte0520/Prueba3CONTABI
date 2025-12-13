@@ -2,6 +2,22 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import type { User } from '@supabase/supabase-js';
 
+async function postWebnotiEvent(accessToken: string, event: 'login' | 'register') {
+  try {
+    await fetch('/api/webnoti/event', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        access_token: accessToken,
+        event,
+        target: 'user',
+      }),
+    });
+  } catch {
+    // ignore
+  }
+}
+
 export const useAuth = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,6 +87,11 @@ export const useAuth = () => {
 
       if (error) throw error;
 
+       const accessToken = data?.session?.access_token;
+       if (accessToken) {
+         await postWebnotiEvent(accessToken, 'register');
+       }
+
       return { data, error: null };
     } catch (error: any) {
       return { data: null, error: error.message };
@@ -85,6 +106,11 @@ export const useAuth = () => {
       });
 
       if (error) throw error;
+
+       const accessToken = data?.session?.access_token;
+       if (accessToken) {
+         await postWebnotiEvent(accessToken, 'login');
+       }
 
       return { data, error: null };
     } catch (error: any) {
