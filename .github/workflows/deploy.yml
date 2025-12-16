@@ -16,13 +16,8 @@ jobs:
 
       - name: Create source archive
         run: |
-          tar -czf source.tar.gz \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='.next' \
-            --exclude='.env.local' \
-            --exclude='source.tar.gz' \
-            .
+          # Create a tarball of the tracked files to avoid files changing during the tar run
+          git archive --format=tar.gz -o source.tar.gz HEAD
 
       - name: Setup SSH
         run: |
