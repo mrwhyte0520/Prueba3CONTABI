@@ -1,0 +1,82 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main  # Change to your desired branch
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create source archive
+        run: |
+          tar -czf source.tar.gz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            --exclude='.env.local' \
+            --exclude='source.tar.gz' \
+            .
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        run: |
+          # Transfer source archive
+          scp -i ~/.ssh/id_rsa source.tar.gz ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:/tmp/
+
+          # Execute deployment commands on EC2
+          ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
+            set -e
+            
+            # Navigate to application directory
+            cd /var/www/contabird.com
+            
+            # Extract source archive
+            tar -xzf /tmp/source.tar.gz
+            rm /tmp/source.tar.gz
+            
+            # Install dependencies
+            echo "Installing dependencies..."
+            npm ci
+            
+            # Build Next.js application
+            echo "Building Next.js application..."
+            NODE_ENV=production npm run build
+            
+            # Restart application with PM2
+            if pm2 describe contabird > /dev/null 2>&1; then
+              echo "Restarting existing PM2 process..."
+              pm2 restart contabird
+            else
+              echo "Starting new PM2 process..."
+              pm2 start npm --name "contabird" -- start
+              pm2 save
+            fi
+            
+            # Verify PM2 status
+            pm2 list
+          ENDSSH
+
+      - name: Verify deployment
+        run: |
+          echo "Deployment completed successfully!"
+          echo "Application should be running on port 3000"
+          echo "Access at: https://contabird.com"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa
+          rm -f source.tar.gz
