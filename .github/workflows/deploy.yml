@@ -1,23 +1,30 @@
-name: Deploy to AWS EC2
+name: Deploy Vite React to AWS EC2
 
 on:
   push:
     branches:
-      - main  # Change to your desired branch
+      - main
 
 jobs:
   deploy:
-    name: Deploy to Production
+    name: Build and Deploy
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create source archive
-        run: |
-          # Create a tarball of the tracked files to avoid files changing during the tar run
-          git archive --format=tar.gz -o source.tar.gz HEAD
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Vite app
+        run: npm run build
 
       - name: Setup SSH
         run: |
@@ -28,50 +35,14 @@ jobs:
 
       - name: Deploy to EC2
         run: |
-          # Transfer source archive
-          scp -i ~/.ssh/id_rsa source.tar.gz ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:/tmp/
+          rsync -avz --delete \
+            dist/ \
+            ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:/var/www/contabird.com
 
-          # Execute deployment commands on EC2
-          ssh -i ~/.ssh/id_rsa ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
-            set -e
-            
-            # Navigate to application directory
-            cd /var/www/contabird.com
-            
-            # Extract source archive
-            tar -xzf /tmp/source.tar.gz
-            rm /tmp/source.tar.gz
-            
-            # Install dependencies
-            echo "Installing dependencies..."
-            npm ci
-            
-            # Build Next.js application
-            echo "Building Next.js application..."
-            NODE_ENV=production npm run build
-            
-            # Restart application with PM2
-            if pm2 describe contabird > /dev/null 2>&1; then
-              echo "Restarting existing PM2 process..."
-              pm2 restart contabird
-            else
-              echo "Starting new PM2 process..."
-              pm2 start npm --name "contabird" -- start
-              pm2 save
-            fi
-            
-            # Verify PM2 status
-            pm2 list
-          ENDSSH
-
-      - name: Verify deployment
+      - name: Reload Nginx
         run: |
-          echo "Deployment completed successfully!"
-          echo "Application should be running on port 3000"
-          echo "Access at: https://contabird.com"
+          ssh ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} "sudo nginx -t && sudo systemctl reload nginx"
 
       - name: Cleanup
         if: always()
-        run: |
-          rm -f ~/.ssh/id_rsa
-          rm -f source.tar.gz
+        run: rm -f ~/.ssh/id_rsa
