@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
 import { bankReconciliationsListService } from '../../services/database';
+import { formatDateEsDO } from '../../utils/date';
+import { formatAmount } from '../../utils/numberFormat';
 
 interface Reconciliation {
   id: string;
@@ -46,18 +48,10 @@ export default function BankReconciliationsHistoryPage() {
     load();
   }, [user?.id]);
 
-  const formatCurrency = (value: number | null | undefined) => {
-    const n = Number(value) || 0;
-    return n.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-  };
-
   const formatDate = (value: string | null | undefined) => {
     if (!value) return '';
     try {
-      return new Date(value).toLocaleDateString();
+      return formatDateEsDO(value);
     } catch {
       return value;
     }
@@ -123,14 +117,14 @@ export default function BankReconciliationsHistoryPage() {
                           {bankLabel || '-'}
                         </td>
                         <td className="px-4 py-2 text-right font-mono text-xs">
-                          {formatCurrency(rec.bank_statement_balance)}
+                          {formatAmount(rec.bank_statement_balance)}
                         </td>
                         <td className="px-4 py-2 text-right font-mono text-xs">
-                          {formatCurrency(rec.book_balance)}
+                          {formatAmount(rec.book_balance)}
                         </td>
                         <td className="px-4 py-2 text-right font-mono text-xs">
                           <span className={Math.abs(diff) < 0.01 ? 'text-emerald-600' : 'text-red-600'}>
-                            {formatCurrency(diff)}
+                            {formatAmount(diff)}
                           </span>
                         </td>
                         <td className="px-4 py-2 text-xs">

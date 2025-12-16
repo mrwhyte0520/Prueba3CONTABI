@@ -4,6 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { fixedAssetsService, assetDisposalService, settingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface AssetDisposal {
   id: string;
@@ -367,10 +368,7 @@ export default function AssetDisposalPage() {
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('es-DO', {
-      style: 'currency',
-      currency: 'DOP'
-    }).format(amount);
+    return formatMoney(amount, 'RD$');
   };
 
   return (

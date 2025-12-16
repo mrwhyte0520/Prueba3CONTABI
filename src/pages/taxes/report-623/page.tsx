@@ -1,10 +1,10 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface Report623Data {
   beneficiary_name: string;
@@ -375,7 +375,7 @@ export default function Report623Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total USD</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    US$ {totals.total_usd.toLocaleString('en-US')}
+                    {formatMoney(totals.total_usd, 'US$')}
                   </p>
                 </div>
               </div>
@@ -388,7 +388,7 @@ export default function Report623Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total RD$</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.total_dop.toLocaleString('es-DO')}
+                    {formatMoney(totals.total_dop, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -401,7 +401,7 @@ export default function Report623Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Impuesto Retenido</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.total_tax.toLocaleString('es-DO')}
+                    {formatMoney(totals.total_tax, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -462,16 +462,16 @@ export default function Report623Page() {
                       {new Date(payment.payment_date).toLocaleDateString('es-DO')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      US$ {payment.amount_usd.toLocaleString('en-US')}
+                      {formatMoney(payment.amount_usd, 'US$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {payment.amount_dop.toLocaleString('es-DO')}
+                      {formatMoney(payment.amount_dop, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {payment.exchange_rate}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {payment.tax_withheld.toLocaleString('es-DO')}
+                      {formatMoney(payment.tax_withheld, 'RD$')}
                     </td>
                   </tr>
                 ))}

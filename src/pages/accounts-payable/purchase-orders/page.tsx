@@ -4,6 +4,7 @@ import * as ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
 import { purchaseOrdersService, purchaseOrderItemsService, suppliersService, inventoryService, chartAccountsService, settingsService } from '../../../services/database';
+import { formatMoney } from '../../../utils/numberFormat';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -448,14 +449,14 @@ export default function PurchaseOrdersPage() {
     doc.text('Órdenes de Compra', 20, 20);
 
     doc.setFontSize(12);
-    doc.text(`Fecha de Generación: ${new Date().toLocaleDateString()}`, 20, 40);
+    doc.text(`Fecha de Generación: ${new Date().toLocaleDateString('es-DO')}`, 20, 40);
     doc.text(`Total de Órdenes: ${filteredOrders.length}`, 20, 50);
 
     const tableData = filteredOrders.map((order) => [
       order.number,
       order.date,
       order.supplier,
-      `RD$ ${order.total.toLocaleString()}`,
+      `${formatMoney(order.total, 'RD$')}`,
       order.deliveryDate,
       order.status,
     ]);
@@ -479,7 +480,7 @@ export default function PurchaseOrdersPage() {
 
     (doc as any).autoTable({
       body: [
-        ['Total en Órdenes:', `RD$ ${totalAmount.toLocaleString()}`],
+        ['Total en Órdenes:', `${formatMoney(totalAmount, 'RD$')}`],
         ['Órdenes Pendientes:', `${pendingOrders}`],
         ['Órdenes Aprobadas:', `${approvedOrders}`],
       ],
@@ -504,7 +505,7 @@ export default function PurchaseOrdersPage() {
     csvContent += 'Número,Fecha,Proveedor,Subtotal,ITBIS,Total,Fecha Entrega,Estado,Notas\n';
 
     filteredOrders.forEach((order) => {
-      csvContent += `${order.number},${order.date},"${order.supplier}",${order.subtotal},${order.itbis},${order.total},${order.deliveryDate},"${order.status}","${order.notes}"\n`;
+      csvContent += `${order.number},${order.date},"${order.supplier}",${formatMoney(order.subtotal, 'RD$')},${formatMoney(order.itbis, 'RD$')},${formatMoney(order.total, 'RD$')},${order.deliveryDate},"${order.status}","${order.notes}"\n`;
     });
 
     csvContent += '\n\nDetalle de Productos\n';
@@ -513,7 +514,7 @@ export default function PurchaseOrdersPage() {
     filteredOrders.forEach((order) => {
       (order.products || []).forEach((product: any) => {
         const lineTotal = Number(product.quantity || 0) * Number(product.price || 0);
-        csvContent += `${order.number},"${product.name}",${product.quantity},${product.price},${lineTotal}\n`;
+        csvContent += `${order.number},"${product.name}",${product.quantity},${formatMoney(product.price, 'RD$')},${formatMoney(lineTotal, 'RD$')}\n`;
       });
     });
 
@@ -522,7 +523,7 @@ export default function PurchaseOrdersPage() {
     const approvedOrders = filteredOrders.filter((o) => o.status === 'Aprobada').length;
 
     csvContent += '\nEstadísticas\n';
-    csvContent += `Total en Órdenes,${totalAmount}\n`;
+    csvContent += `Total en Órdenes,${formatMoney(totalAmount, 'RD$')}\n`;
     csvContent += `Órdenes Pendientes,${pendingOrders}\n`;
     csvContent += `Órdenes Aprobadas,${approvedOrders}\n`;
     csvContent += `Total Órdenes,${filteredOrders.length}\n`;
@@ -557,15 +558,15 @@ export default function PurchaseOrdersPage() {
 
     const rowsHtml = (order.products || [])
       .map((product: any) => {
-        const qty = Number(product.quantity) || 0;
-        const price = Number(product.price) || 0;
+        const qty = Number(product.quantity || 0);
+        const price = Number(product.price || 0);
         const lineTotal = qty * price;
         return `
               <tr>
                 <td>${product.name || ''}</td>
                 <td style="text-align:right;">${qty.toLocaleString()}</td>
-                <td style="text-align:right;">RD$ ${price.toLocaleString()}</td>
-                <td style="text-align:right;">RD$ ${lineTotal.toLocaleString()}</td>
+                <td style="text-align:right;">${formatMoney(price, 'RD$')}</td>
+                <td style="text-align:right;">${formatMoney(lineTotal, 'RD$')}</td>
               </tr>`;
       })
       .join('');
@@ -615,15 +616,15 @@ export default function PurchaseOrdersPage() {
             <tfoot>
               <tr>
                 <td colspan="3" class="total">Subtotal:</td>
-                <td class="total">RD$ ${Number(order.subtotal || 0).toLocaleString()}</td>
+                <td class="total">${formatMoney(Number(order.subtotal || 0), 'RD$')}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">ITBIS:</td>
-                <td class="total">RD$ ${Number(order.itbis || 0).toLocaleString()}</td>
+                <td class="total">${formatMoney(Number(order.itbis || 0), 'RD$')}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">Total:</td>
-                <td class="total">RD$ ${Number(order.total || 0).toLocaleString()}</td>
+                <td class="total">${formatMoney(Number(order.total || 0), 'RD$')}</td>
               </tr>
             </tfoot>
           </table>
@@ -697,15 +698,15 @@ export default function PurchaseOrdersPage() {
       worksheet.addRow([
         product.name || '',
         qty,
-        price,
-        lineTotal,
+        formatMoney(price, 'RD$'),
+        formatMoney(lineTotal, 'RD$'),
       ]);
     });
 
     worksheet.addRow([]);
-    worksheet.addRow(['', '', 'Subtotal', order.subtotal]);
-    worksheet.addRow(['', '', 'ITBIS', order.itbis]);
-    worksheet.addRow(['', '', 'Total', order.total]);
+    worksheet.addRow(['', '', 'Subtotal', formatMoney(order.subtotal, 'RD$')]);
+    worksheet.addRow(['', '', 'ITBIS', formatMoney(order.itbis, 'RD$')]);
+    worksheet.addRow(['', '', 'Total', formatMoney(order.total, 'RD$')]);
 
     worksheet.columns = [
       { width: 40 },
@@ -802,7 +803,7 @@ export default function PurchaseOrdersPage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-600">Valor Total</p>
-                <p className="text-2xl font-bold text-gray-900">RD$ {orders.reduce((sum, o) => sum + o.total, 0).toLocaleString()}</p>
+                <p className="text-2xl font-bold text-gray-900">{formatMoney(orders.reduce((sum, o) => sum + o.total, 0), 'RD$')}</p>
               </div>
             </div>
           </div>
@@ -876,7 +877,7 @@ export default function PurchaseOrdersPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.supplier}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{order.deliveryDate}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-semibold text-gray-900">
-                      RD$ {order.total.toLocaleString()}
+                      {formatMoney(order.total, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {order.orderedQtyTotal > 0 ? (
@@ -1117,7 +1118,7 @@ export default function PurchaseOrdersPage() {
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-medium text-gray-900">
-                            RD$ {(item.quantity * item.price).toLocaleString()}
+                            {formatMoney(item.quantity * item.price, 'RD$')}
                           </span>
                           {formData.products.length > 1 && (
                             <button 
@@ -1134,13 +1135,13 @@ export default function PurchaseOrdersPage() {
                   </div>
                   <div className="mt-4 text-right">
                     <p className="text-lg font-bold text-gray-900">
-                      Subtotal: RD$ {calculateSubtotal().toLocaleString()}
+                      Subtotal: {formatMoney(calculateSubtotal(), 'RD$')}
                     </p>
                     <p className="text-lg font-bold text-gray-900">
-                      ITBIS: RD$ {calculateItbis().toLocaleString()}
+                      ITBIS: {formatMoney(calculateItbis(), 'RD$')}
                     </p>
                     <p className="text-lg font-bold text-gray-900">
-                      Total: RD$ {calculateTotal().toLocaleString()}
+                      Total: {formatMoney(calculateTotal(), 'RD$')}
                     </p>
                   </div>
                 </div>

@@ -279,7 +279,7 @@ export default function DeliveryNotesPage() {
 
   const handlePost = async (note: DeliveryNote) => {
     if (!user?.id) return;
-    if (!confirm('¿Postear este conduce y afectar inventario y contabilidad?')) return;
+    if (!confirm('¿Postear este conduce y afectar inventario?')) return;
     try {
       await deliveryNotesService.post(user.id, note.id);
       await loadDeliveryNotes();

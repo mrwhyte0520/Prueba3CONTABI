@@ -4,6 +4,7 @@
  import { supabase } from '../../lib/supabase';
  import { departmentsService, positionsService, employeesService, payrollService, taxService, settingsService, resolveTenantId } from '../../services/database';
  import { exportToExcelWithHeaders } from '../../utils/exportImportUtils';
+ import { formatMoney } from '../../utils/numberFormat';
 
 interface Employee {
   id: string;
@@ -549,7 +550,7 @@ export default function PayrollPage() {
 
       if (budgetViolations.length > 0) {
         const details = budgetViolations
-          .map(v => `${v.departmentName}: nómina RD$ ${v.payroll.toLocaleString('es-DO')} vs presupuesto RD$ ${v.budget.toLocaleString('es-DO')}`)
+          .map(v => `${v.departmentName}: nómina ${formatMoney(v.payroll, 'RD$')} vs presupuesto ${formatMoney(v.budget, 'RD$')}`)
           .join('\n');
         alert(
           `La nómina calculada supera el presupuesto de uno o más departamentos:\n\n${details}\n\nAjuste salarios, asignaciones o presupuestos antes de procesar.`
@@ -692,7 +693,7 @@ export default function PayrollPage() {
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-500">Nómina Total</p>
-                <p className="text-2xl font-semibold text-gray-900">RD${stats.totalSalaries.toLocaleString()}</p>
+                <p className="text-2xl font-semibold text-gray-900">{formatMoney(stats.totalSalaries, 'RD$')}</p>
               </div>
             </div>
           </div>
@@ -704,7 +705,7 @@ export default function PayrollPage() {
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-500">Salario Promedio</p>
-                <p className="text-2xl font-semibold text-gray-900">RD${Math.round(stats.avgSalary).toLocaleString()}</p>
+                <p className="text-2xl font-semibold text-gray-900">{formatMoney(Math.round(stats.avgSalary), 'RD$')}</p>
               </div>
             </div>
           </div>
@@ -729,7 +730,7 @@ export default function PayrollPage() {
                         <p className="text-sm text-gray-500">{deptEmployees.length} empleados</p>
                       </div>
                       <div className="text-right">
-                        <p className="font-medium text-gray-900">RD${deptSalaries.toLocaleString()}</p>
+                        <p className="font-medium text-gray-900">{formatMoney(deptSalaries, 'RD$')}</p>
                         <p className="text-sm text-gray-500">Nómina mensual</p>
                       </div>
                     </div>
@@ -763,7 +764,7 @@ export default function PayrollPage() {
                          period.status === 'closed' ? 'Cerrado' :
                          period.status === 'processing' ? 'Procesando' : 'Abierto'}
                       </span>
-                      <p className="text-sm text-gray-500 mt-1">RD${period.total_net.toLocaleString()}</p>
+                      <p className="text-sm text-gray-500 mt-1">{formatMoney(period.total_net, 'RD$')}</p>
                     </div>
                   </div>
                 ))}
@@ -964,7 +965,7 @@ export default function PayrollPage() {
                         {employee.first_name} {employee.last_name}
                       </div>
                       <div className="text-sm text-gray-500">
-                        Contratado: {new Date(employee.hire_date).toLocaleDateString()}
+                        Contratado: {new Date(employee.hire_date).toLocaleDateString('es-DO')}
                       </div>
                     </div>
                   </td>
@@ -979,7 +980,7 @@ export default function PayrollPage() {
                     {getPositionTitle(employee.position_id)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    RD${employee.salary.toLocaleString()}
+                    {formatMoney(employee.salary, 'RD$')}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
@@ -1052,12 +1053,12 @@ export default function PayrollPage() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-500">Nómina mensual:</span>
-                  <span className="text-sm font-medium">RD${deptSalaries.toLocaleString()}</span>
+                  <span className="text-sm font-medium">{formatMoney(deptSalaries, 'RD$')}</span>
                 </div>
                 {department.budget && (
                   <div className="flex justify-between">
                     <span className="text-sm text-gray-500">Presupuesto:</span>
-                    <span className="text-sm font-medium">RD${department.budget.toLocaleString()}</span>
+                    <span className="text-sm font-medium">{formatMoney(department.budget, 'RD$')}</span>
                   </div>
                 )}
               </div>
@@ -1114,7 +1115,7 @@ export default function PayrollPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {position.min_salary && position.max_salary ? (
-                        `RD$${position.min_salary.toLocaleString()} - RD$${position.max_salary.toLocaleString()}`
+                        `${formatMoney(position.min_salary, 'RD$')} - ${formatMoney(position.max_salary, 'RD$')}`
                       ) : 'No definido'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -1174,20 +1175,20 @@ export default function PayrollPage() {
               </span>
             </div>
             <div className="space-y-2 text-sm text-gray-600">
-              <p>Inicio: {new Date(period.start_date).toLocaleDateString()}</p>
-              <p>Fin: {new Date(period.end_date).toLocaleDateString()}</p>
-              <p>Pago: {new Date(period.pay_date).toLocaleDateString()}</p>
+              <p>Inicio: {new Date(period.start_date).toLocaleDateString('es-DO')}</p>
+              <p>Fin: {new Date(period.end_date).toLocaleDateString('es-DO')}</p>
+              <p>Pago: {new Date(period.pay_date).toLocaleDateString('es-DO')}</p>
               <p>Empleados: {period.employee_count}</p>
               {period.total_net > 0 && (
                 <>
                   <p className="font-semibold text-gray-900">
-                    Bruto: RD${period.total_gross.toLocaleString()}
+                    Bruto: {formatMoney(period.total_gross, 'RD$')}
                   </p>
                   <p className="text-red-600">
-                    Deducciones: RD${period.total_deductions.toLocaleString()}
+                    Deducciones: {formatMoney(period.total_deductions, 'RD$')}
                   </p>
                   <p className="font-semibold text-green-600">
-                    Neto: RD${period.total_net.toLocaleString()}
+                    Neto: {formatMoney(period.total_net, 'RD$')}
                   </p>
                 </>
               )}
@@ -1287,7 +1288,7 @@ export default function PayrollPage() {
                 Departamento: dept.name,
                 Descripción: dept.description,
                 'Número de Empleados': deptEmployees.length,
-                'Nómina Total': totalSalaries,
+                'Nómina Total': formatMoney(totalSalaries, 'RD$'),
                 'Salario Promedio': deptEmployees.length > 0 ? Math.round(totalSalaries / deptEmployees.length) : 0,
                 Presupuesto: dept.budget || 0
               };
@@ -1354,8 +1355,8 @@ export default function PayrollPage() {
               exportToExcel([
                 { Métrica: 'Total de Empleados', Valor: stats.totalEmployees },
                 { Métrica: 'Empleados Activos', Valor: stats.activeEmployees },
-                { Métrica: 'Nómina Total Mensual', Valor: stats.totalSalaries },
-                { Métrica: 'Salario Promedio', Valor: Math.round(stats.avgSalary) },
+                { Métrica: 'Nómina Total Mensual', Valor: formatMoney(stats.totalSalaries, 'RD$') },
+                { Métrica: 'Salario Promedio', Valor: formatMoney(Math.round(stats.avgSalary), 'RD$') },
                 ...Object.entries(salaryRanges).map(([rango, cantidad]) => ({
                   Métrica: `Empleados con salario ${rango}`,
                   Valor: cantidad
@@ -1446,11 +1447,11 @@ export default function PayrollPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Salario</label>
-                  <p className="text-sm text-gray-900">RD${selectedItem.salary.toLocaleString()}</p>
+                  <p className="text-sm text-gray-900">{formatMoney(selectedItem.salary, 'RD$')}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Fecha de Contratación</label>
-                  <p className="text-sm text-gray-900">{new Date(selectedItem.hire_date).toLocaleDateString()}</p>
+                  <p className="text-sm text-gray-900">{new Date(selectedItem.hire_date).toLocaleDateString('es-DO')}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Cuenta Bancaria</label>
@@ -1495,15 +1496,15 @@ export default function PayrollPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Fecha Inicio</label>
-                  <p className="text-sm text-gray-900">{new Date(selectedItem.start_date).toLocaleDateString()}</p>
+                  <p className="text-sm text-gray-900">{new Date(selectedItem.start_date).toLocaleDateString('es-DO')}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Fecha Fin</label>
-                  <p className="text-sm text-gray-900">{new Date(selectedItem.end_date).toLocaleDateString()}</p>
+                  <p className="text-sm text-gray-900">{new Date(selectedItem.end_date).toLocaleDateString('es-DO')}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Fecha de Pago</label>
-                  <p className="text-sm text-gray-900">{new Date(selectedItem.pay_date).toLocaleDateString()}</p>
+                  <p className="text-sm text-gray-900">{new Date(selectedItem.pay_date).toLocaleDateString('es-DO')}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Empleados Procesados</label>
@@ -1511,11 +1512,11 @@ export default function PayrollPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Total Bruto</label>
-                  <p className="text-sm text-gray-900">RD${Number(selectedItem.total_gross || 0).toLocaleString()}</p>
+                  <p className="text-sm text-gray-900">{formatMoney(Number(selectedItem.total_gross || 0), 'RD$')}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Total Neto</label>
-                  <p className="text-sm text-gray-900">RD${Number(selectedItem.total_net || 0).toLocaleString()}</p>
+                  <p className="text-sm text-gray-900">{formatMoney(Number(selectedItem.total_net || 0), 'RD$')}</p>
                 </div>
               </div>
 
@@ -1548,9 +1549,9 @@ export default function PayrollPage() {
                           return (
                             <tr key={entry.id} className="hover:bg-gray-50">
                               <td className="px-4 py-2 whitespace-nowrap text-gray-900">{employeeName}</td>
-                              <td className="px-4 py-2 whitespace-nowrap text-right">RD${Number(entry.gross_salary || 0).toLocaleString()}</td>
-                              <td className="px-4 py-2 whitespace-nowrap text-right text-red-600">RD${Number(entry.deductions || 0).toLocaleString()}</td>
-                              <td className="px-4 py-2 whitespace-nowrap text-right text-green-600">RD${Number(entry.net_salary || 0).toLocaleString()}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-right">{formatMoney(Number(entry.gross_salary || 0), 'RD$')}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-right text-red-600">{formatMoney(Number(entry.deductions || 0), 'RD$')}</td>
+                              <td className="px-4 py-2 whitespace-nowrap text-right text-green-600">{formatMoney(Number(entry.net_salary || 0), 'RD$')}</td>
                               <td className="px-4 py-2 whitespace-nowrap text-right">
                                 <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                                   entry.status === 'paid'

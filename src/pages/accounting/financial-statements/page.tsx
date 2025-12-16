@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { exportToExcel } from '../../../lib/excel';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { financialReportsService, chartAccountsService, financialStatementsService, accountingSettingsService } from '../../../services/database';
+import { financialReportsService, chartAccountsService, financialStatementsService, accountingSettingsService, inventoryService, settingsService } from '../../../services/database';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+import { formatAmount, formatMoney } from '../../../utils/numberFormat';
 
 // Estilos CSS para impresión
 const printStyles = `
@@ -78,8 +79,15 @@ export default function FinancialStatementsPage() {
   const [activeTab, setActiveTab] = useState<'statements' | 'balance' | 'income' | 'costs' | 'expenses' | 'cashflow'>('statements');
   const [statements, setStatements] = useState<FinancialStatement[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState(() => new Date().toISOString().slice(0, 7)); // YYYY-MM
-  const [incomeFromDate, setIncomeFromDate] = useState(() => new Date().toISOString().slice(0, 10)); // YYYY-MM-DD
-  const [incomeToDate, setIncomeToDate] = useState<string | null>(null); // YYYY-MM-DD (fin de rango opcional)
+  const [incomeFromDate, setIncomeFromDate] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  }); // YYYY-MM-DD
+  const [incomeToDate, setIncomeToDate] = useState<string | null>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+  }); // YYYY-MM-DD (fin de rango opcional)
+  const [useCustomRange, setUseCustomRange] = useState(false);
   const [comparisonFromDate, setComparisonFromDate] = useState<string | null>(null);
   const [comparisonToDate, setComparisonToDate] = useState<string | null>(null);
   const [comparisonIncome, setComparisonIncome] = useState<{
@@ -156,6 +164,17 @@ export default function FinancialStatementsPage() {
   }, [user, selectedPeriod]);
 
   useEffect(() => {
+    const period = selectedPeriod || new Date().toISOString().slice(0, 7);
+    const [yearStr, monthStr] = period.split('-');
+    const baseYear = parseInt(yearStr, 10);
+    const baseMonth = parseInt(monthStr, 10);
+    if (!baseYear || !baseMonth) return;
+    setIncomeFromDate(new Date(baseYear, baseMonth - 1, 1).toISOString().slice(0, 10));
+    setIncomeToDate(new Date(baseYear, baseMonth, 0).toISOString().slice(0, 10));
+    setUseCustomRange(false);
+  }, [selectedPeriod]);
+
+  useEffect(() => {
     // Cargar datos financieros / cash flow cuando cambie el período o la pestaña relevante
     if (!user) return;
 
@@ -180,8 +199,8 @@ export default function FinancialStatementsPage() {
 
     // Para Estado de Resultados, Costos, Gastos y Flujo de Efectivo usamos rango diario configurable
     if (activeTab === 'income' || activeTab === 'costs' || activeTab === 'expenses' || activeTab === 'cashflow') {
-      let from = incomeFromDate || monthFromDate;
-      let to = incomeToDate || from;
+      const from = useCustomRange ? incomeFromDate || monthFromDate : monthFromDate;
+      const to = useCustomRange ? incomeToDate || from : monthToDate;
 
       let fromObj = new Date(from);
       let toObj = new Date(to);
@@ -416,16 +435,13 @@ export default function FinancialStatementsPage() {
     } else if (activeTab === 'cashflow') {
       void loadCashFlow();
     }
-  }, [user, selectedPeriod, incomeFromDate, incomeToDate, activeTab]);
+  }, [user, selectedPeriod, incomeFromDate, incomeToDate, useCustomRange, activeTab]);
 
-  // Cargar el código de la cuenta de ITBIS en compras para el Balance:
-  // 1) Usar la cuenta configurada en ajustes (itbis_receivable_account_id) si existe
-  // 2) En caso contrario, usar el código 110201 como estándar
   useEffect(() => {
     const loadItbisAccountCode = async () => {
       try {
         if (!user) {
-          setItbisAccountCode(null);
+          setItbisAccountCode('110201');
           return;
         }
 
@@ -477,9 +493,10 @@ export default function FinancialStatementsPage() {
         const monthFromDate = new Date(baseYear, baseMonth - 1, 1).toISOString().slice(0, 10);
         const monthToDate = new Date(baseYear, baseMonth, 0).toISOString().slice(0, 10);
 
-        // Usar el mismo rango diario configurable que el Estado de Resultados
-        let from = incomeFromDate || monthFromDate;
-        let to = incomeToDate || from;
+        // Por defecto, usar el mes completo (para que Inventario Inicial sea el cierre del mes anterior).
+        // Si el usuario selecciona fechas manualmente, usar el día/rango seleccionado.
+        let from = useCustomRange ? incomeFromDate || monthFromDate : monthFromDate;
+        let to = useCustomRange ? incomeToDate || from : monthToDate;
 
         let fromObj = new Date(from);
         let toObj = new Date(to);
@@ -497,7 +514,7 @@ export default function FinancialStatementsPage() {
         const fromDate = fromObj.toISOString().slice(0, 10);
         const toDate = toObj.toISOString().slice(0, 10);
 
-        // Calcular rango del MES ANTERIOR para Inventario Inicial
+        // Inventario Inicial: saldo al cierre del día anterior al rango seleccionado
         const fromDateObj = new Date(fromDate);
         const prevToObj = new Date(fromDateObj.getTime() - 24 * 60 * 60 * 1000);
         const prevToDate =
@@ -505,46 +522,119 @@ export default function FinancialStatementsPage() {
             ? null
             : prevToObj.toISOString().slice(0, 10);
 
-        let prevFromDate: string | null = null;
-        if (prevToDate) {
-          const prevFromObj = new Date(fromDateObj);
-          prevFromObj.setMonth(prevFromObj.getMonth() - 1);
-          prevFromObj.setDate(1);
-          prevFromDate = prevFromObj.toISOString().slice(0, 10);
-        }
-
-        // Rango efectivo para inventario inicial (mes anterior), respetando fecha de arranque
-        let prevTrialPromise: Promise<any[]> = Promise.resolve([]);
-        if (prevFromDate && prevToDate && prevToDate >= SYSTEM_START_DATE) {
-          const effPrevFrom = prevFromDate < SYSTEM_START_DATE ? SYSTEM_START_DATE : prevFromDate;
-          prevTrialPromise = financialReportsService.getTrialBalance(user.id, effPrevFrom, prevToDate);
-        }
-
-        // Rango efectivo para inventario final (desde fecha de arranque hasta fin del período)
-        const invFromDate = fromDate < SYSTEM_START_DATE ? SYSTEM_START_DATE : fromDate;
-
         // Rango efectivo para compras del período (no antes de la fecha de arranque)
         const periodFromDate = fromDate < SYSTEM_START_DATE ? SYSTEM_START_DATE : fromDate;
 
-        const [prevTrial, finalTrial, periodTrial] = await Promise.all([
-          prevTrialPromise,
-          financialReportsService.getTrialBalance(user.id, invFromDate, toDate),
+        // Para saldos (inventario), usar acumulado desde la fecha de arranque hasta el corte
+        const openingTrialPromise: Promise<any[]> =
+          prevToDate && prevToDate >= SYSTEM_START_DATE
+            ? financialReportsService.getTrialBalance(user.id, SYSTEM_START_DATE, prevToDate)
+            : Promise.resolve([]);
+
+        const closingTrialPromise: Promise<any[]> =
+          toDate >= SYSTEM_START_DATE
+            ? financialReportsService.getTrialBalance(user.id, SYSTEM_START_DATE, toDate)
+            : Promise.resolve([]);
+
+        const inventoryAccountIdsPromise = (async () => {
+          const ids = new Set<string>();
+          try {
+            const [settings, items, warehouses] = await Promise.all([
+              accountingSettingsService.get(user.id),
+              inventoryService.getItems(user.id),
+              settingsService.getWarehouses(),
+            ]);
+            const defaultInv = (settings as any)?.default_inventory_asset_account_id as string | null | undefined;
+            if (defaultInv) ids.add(String(defaultInv));
+            (items || []).forEach((it: any) => {
+              const accId = it?.inventory_account_id as string | null | undefined;
+              if (accId) ids.add(String(accId));
+            });
+            (warehouses || []).forEach((w: any) => {
+              const accId = w?.inventory_account_id as string | null | undefined;
+              if (accId) ids.add(String(accId));
+            });
+          } catch (invAccErr) {
+            // eslint-disable-next-line no-console
+            console.error('[CostOfSales] Error resolving inventory accounts:', invAccErr);
+          }
+          return ids;
+        })();
+
+        const [openingTrial, closingTrial, periodTrial, inventoryAccountIds] = await Promise.all([
+          openingTrialPromise,
+          closingTrialPromise,
           financialReportsService.getTrialBalance(user.id, periodFromDate, toDate),
+          inventoryAccountIdsPromise,
         ]);
 
-        const sumInventory = (trial: any[]) => {
+        const shouldDebugCostOfSales =
+          typeof window !== 'undefined' && window.localStorage.getItem('debug_cost_of_sales') === '1';
+
+        const sumInventory = (trial: any[], invIds: Set<string>) => {
+          const shouldUseIds = invIds && invIds.size > 0;
           return (trial || []).reduce((sum, acc: any) => {
-            const code = String(acc.code || '');
-            const type = String(acc.type || '');
+            const type = String(acc.type || '').toLowerCase();
             if (!(type === 'asset' || type === 'activo')) return sum;
-            if (!code.startsWith('12')) return sum; // Inventarios
+            if (shouldUseIds) {
+              const accountId = String(acc.account_id || '');
+              if (!accountId || !invIds.has(accountId)) return sum;
+            } else {
+              const code = String(acc.code || '');
+              const normalizedCode = code.replace(/\./g, '');
+              if (!normalizedCode.startsWith('12')) return sum; // Inventarios
+            }
             const balance = Number(acc.balance) || 0;
             return sum + balance;
           }, 0);
         };
 
-        const openingInventory = prevTrial ? sumInventory(prevTrial as any[]) : 0;
-        const closingInventory = sumInventory(finalTrial as any[]);
+        if (shouldDebugCostOfSales) {
+          const inventoryLines = (trial: any[]) =>
+            (trial || [])
+              .filter((acc: any) => {
+                const type = String(acc.type || '').toLowerCase();
+                if (!(type === 'asset' || type === 'activo')) return false;
+                if (inventoryAccountIds && inventoryAccountIds.size > 0) {
+                  const accountId = String(acc.account_id || '');
+                  return !!accountId && inventoryAccountIds.has(accountId);
+                }
+                const code = String(acc.code || '');
+                const normalizedCode = code.replace(/\./g, '');
+                return normalizedCode.startsWith('12');
+              })
+              .map((acc: any) => ({
+                code: String(acc.code || ''),
+                name: String(acc.name || ''),
+                total_debit: Number(acc.total_debit) || 0,
+                total_credit: Number(acc.total_credit) || 0,
+                balance: Number(acc.balance) || 0,
+              }))
+              .sort((a: any, b: any) => String(a.code).localeCompare(String(b.code)));
+
+          // eslint-disable-next-line no-console
+          console.group('[CostOfSales Debug] Inventarios (12xx)');
+          // eslint-disable-next-line no-console
+          console.log('Rango:', { fromDate, toDate, prevToDate, SYSTEM_START_DATE });
+          // eslint-disable-next-line no-console
+          console.table({
+            openingInventory: sumInventory(openingTrial as any[], inventoryAccountIds),
+            closingInventory: sumInventory(closingTrial as any[], inventoryAccountIds),
+          });
+          // eslint-disable-next-line no-console
+          console.log('Detalle Inventario Inicial (al corte prevToDate):');
+          // eslint-disable-next-line no-console
+          console.table(inventoryLines(openingTrial as any[]));
+          // eslint-disable-next-line no-console
+          console.log('Detalle Inventario Final (al corte toDate):');
+          // eslint-disable-next-line no-console
+          console.table(inventoryLines(closingTrial as any[]));
+          // eslint-disable-next-line no-console
+          console.groupEnd();
+        }
+
+        const openingInventory = sumInventory(openingTrial as any[], inventoryAccountIds);
+        const closingInventory = sumInventory(closingTrial as any[], inventoryAccountIds);
 
         const sumCostByPrefixes = (trial: any[], prefixes: string[]) => {
           return (trial || []).reduce((sum, acc: any) => {
@@ -569,13 +659,37 @@ export default function FinancialStatementsPage() {
           }, 0);
         };
 
-        // Compras locales: incluir tanto 5001 (Costos de venta genérico) como 500101 (Compras locales específicas)
+        const sumInventoryDebitsCreditsForPeriod = (trial: any[], invIds: Set<string>) => {
+          const shouldUseIds = invIds && invIds.size > 0;
+          return (trial || []).reduce(
+            (accum, acc: any) => {
+              const type = String(acc.type || '').toLowerCase();
+              if (!(type === 'asset' || type === 'activo')) return accum;
+              if (shouldUseIds) {
+                const accountId = String(acc.account_id || '');
+                if (!accountId || !invIds.has(accountId)) return accum;
+              } else {
+                const code = String(acc.code || '');
+                const normalizedCode = code.replace(/\./g, '');
+                if (!normalizedCode.startsWith('12')) return accum;
+              }
+              accum.debit += Number(acc.total_debit) || 0;
+              accum.credit += Number(acc.total_credit) || 0;
+              return accum;
+            },
+            { debit: 0, credit: 0 }
+          );
+        };
+
+        const invPeriodTotals = sumInventoryDebitsCreditsForPeriod(periodTrial as any[], inventoryAccountIds);
+
+        // Fallback: Compras locales/importaciones por cuentas 5001xx (modelo anterior)
         const rawLocal = sumCostByPrefixes(periodTrial as any[], ['5001', '500101']);
         const rawImports = sumCostByPrefixes(periodTrial as any[], ['500102']);
 
-        // Modelo B: tomar directamente los montos de las cuentas de compras/costo
-        const purchasesLocal = rawLocal;
-        const purchasesImports = rawImports;
+        // Preferir compras por movimiento de inventario (débitos a 12xx), que cuadra con InvInicial + Compras - COGS = InvFinal
+        const purchasesLocal = invPeriodTotals.debit > 0 ? invPeriodTotals.debit : rawLocal;
+        const purchasesImports = invPeriodTotals.debit > 0 ? 0 : rawImports;
         const totalPurchases = purchasesLocal + purchasesImports;
 
         const indirectCosts = 0; // Placeholder para futuros desarrollos
@@ -609,7 +723,7 @@ export default function FinancialStatementsPage() {
     if (activeTab === 'costs' && user) {
       void loadCostOfSales();
     }
-  }, [user, selectedPeriod, incomeFromDate, incomeToDate, activeTab, financialData.costs]);
+  }, [user, selectedPeriod, incomeFromDate, incomeToDate, useCustomRange, activeTab, financialData.costs]);
 
   const loadStatements = async () => {
     try {
@@ -645,17 +759,11 @@ export default function FinancialStatementsPage() {
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('es-DO', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(amount);
+    return formatAmount(amount);
   };
 
   const formatCurrencyRD = (amount: number) => {
-    return new Intl.NumberFormat('es-DO', {
-      style: 'currency',
-      currency: 'DOP',
-    }).format(amount);
+    return formatMoney(amount);
   };
 
   const getStatusColor = (status: string) => {
@@ -1578,6 +1686,9 @@ export default function FinancialStatementsPage() {
     try {
       const dataRows: any[] = [];
 
+      const costOfSalesForStatement =
+        (Number(costOfSalesData.availableForSale) || 0) - (Number(costOfSalesData.closingInventory) || 0);
+
       if (Math.abs(costOfSalesData.openingInventory) >= 0.01) {
         dataRows.push(['Inventario Inicial', costOfSalesData.openingInventory]);
       }
@@ -1599,7 +1710,7 @@ export default function FinancialStatementsPage() {
       if (Math.abs(costOfSalesData.closingInventory) >= 0.01) {
         dataRows.push(['Inventario Final', costOfSalesData.closingInventory]);
       }
-      dataRows.push(['Costo de Venta del Periodo', totals.totalCosts]);
+      dataRows.push(['Costo de Venta del Periodo', costOfSalesForStatement]);
 
       const today = new Date().toISOString().split('T')[0];
 
@@ -1720,7 +1831,7 @@ export default function FinancialStatementsPage() {
         let content = `${getTypeLabel(statement.type)} - ${statement.name}\n`;
         content += `Período: ${statement.period}\n`;
         content += `Estado: ${statement.status === 'draft' ? 'Borrador' : statement.status === 'final' ? 'Final' : 'Aprobado'}\n`;
-        content += `Fecha de Creación: ${new Date(statement.created_at).toLocaleDateString()}\n\n`;
+        content += `Fecha de Creación: ${new Date(statement.created_at).toLocaleDateString('es-DO')}\n\n`;
         content += 'Este estado financiero está en desarrollo.\n';
         content += 'Próximamente estará disponible la descarga completa.';
 
@@ -1901,14 +2012,20 @@ export default function FinancialStatementsPage() {
                     type="date"
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeFromDate}
-                    onChange={(e) => setIncomeFromDate(e.target.value)}
+                    onChange={(e) => {
+                      setUseCustomRange(true);
+                      setIncomeFromDate(e.target.value);
+                    }}
                   />
                   <span className="text-sm text-gray-700">Hasta:</span>
                   <input
                     type="date"
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeToDate || ''}
-                    onChange={(e) => setIncomeToDate(e.target.value || null)}
+                    onChange={(e) => {
+                      setUseCustomRange(true);
+                      setIncomeToDate(e.target.value || null);
+                    }}
                   />
                 </div>
                 <div className="flex justify-end gap-2">
@@ -2140,14 +2257,20 @@ export default function FinancialStatementsPage() {
                     type="date"
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeFromDate}
-                    onChange={(e) => setIncomeFromDate(e.target.value)}
+                    onChange={(e) => {
+                      setUseCustomRange(true);
+                      setIncomeFromDate(e.target.value);
+                    }}
                   />
                   <span className="text-sm text-gray-700">Hasta:</span>
                   <input
                     type="date"
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeToDate || ''}
-                    onChange={(e) => setIncomeToDate(e.target.value || null)}
+                    onChange={(e) => {
+                      setUseCustomRange(true);
+                      setIncomeToDate(e.target.value || null);
+                    }}
                   />
                 </div>
                 <div className="flex justify-end gap-2">
@@ -2276,7 +2399,9 @@ export default function FinancialStatementsPage() {
                   <div className="flex justify-between font-bold">
                     <span className="text-base">Costo de Venta del Periodo</span>
                     <div className="flex items-center gap-6">
-                      <span className="text-base tabular-nums">{formatCurrencyRD(totals.totalCosts)}</span>
+                      <span className="text-base tabular-nums">
+                        {formatCurrencyRD(costOfSalesData.availableForSale - costOfSalesData.closingInventory)}
+                      </span>
                       {comparisonTotals && (
                         <span className="text-base tabular-nums text-gray-500">
                           {formatCurrencyRD(comparisonTotals.totalCosts)}
@@ -2588,14 +2713,20 @@ export default function FinancialStatementsPage() {
                     type="date"
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeFromDate}
-                    onChange={(e) => setIncomeFromDate(e.target.value)}
+                    onChange={(e) => {
+                      setUseCustomRange(true);
+                      setIncomeFromDate(e.target.value);
+                    }}
                   />
                   <span className="text-sm text-gray-700">Hasta:</span>
                   <input
                     type="date"
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeToDate || ''}
-                    onChange={(e) => setIncomeToDate(e.target.value || null)}
+                    onChange={(e) => {
+                      setUseCustomRange(true);
+                      setIncomeToDate(e.target.value || null);
+                    }}
                   />
                 </div>
                 <div className="flex justify-end gap-2">
@@ -2917,14 +3048,20 @@ export default function FinancialStatementsPage() {
                     type="date"
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeFromDate}
-                    onChange={(e) => setIncomeFromDate(e.target.value)}
+                    onChange={(e) => {
+                      setUseCustomRange(true);
+                      setIncomeFromDate(e.target.value);
+                    }}
                   />
                   <span className="text-sm text-gray-700">Hasta:</span>
                   <input
                     type="date"
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeToDate || ''}
-                    onChange={(e) => setIncomeToDate(e.target.value || null)}
+                    onChange={(e) => {
+                      setUseCustomRange(true);
+                      setIncomeToDate(e.target.value || null);
+                    }}
                   />
                 </div>
                 <div className="flex justify-end gap-2">
@@ -3301,7 +3438,7 @@ export default function FinancialStatementsPage() {
                   <div>
                     <span className="text-sm font-medium text-gray-500">Fecha Creación:</span>
                     <span className="ml-2 text-sm text-gray-900">
-                      {new Date(selectedStatement.created_at).toLocaleDateString()}
+                      {new Date(selectedStatement.created_at).toLocaleDateString('es-DO')}
                     </span>
                   </div>
                 </div>

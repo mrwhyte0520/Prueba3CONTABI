@@ -4,6 +4,8 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
+import { formatDateEsDO } from '../../../utils/date';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface Report607Data {
   rnc_cedula: string;
@@ -27,7 +29,6 @@ export default function Report607Page() {
   const navigate = useNavigate();
   const [reportData, setReportData] = useState<Report607Data[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState('');
-  const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [companyInfo, setCompanyInfo] = useState<any | null>(null);
 
@@ -119,17 +120,17 @@ export default function Report607Page() {
         row.tipo_identificacion,
         row.numero_comprobante_fiscal,
         row.fecha_comprobante,
-        row.monto_facturado,
-        row.itbis_facturado,
-        row.itbis_retenido,
-        row.monto_propina_legal,
-        row.itbis_retenido_propina,
-        row.itbis_percibido_ventas,
-        row.retencion_renta_terceros,
-        row.isr_percibido_ventas,
-        row.impuesto_selectivo_consumo,
-        row.otros_impuestos_tasas,
-        row.monto_propina_legal_2
+        formatMoney(row.monto_facturado, 'RD$'),
+        formatMoney(row.itbis_facturado, 'RD$'),
+        formatMoney(row.itbis_retenido, 'RD$'),
+        formatMoney(row.monto_propina_legal, 'RD$'),
+        formatMoney(row.itbis_retenido_propina, 'RD$'),
+        formatMoney(row.itbis_percibido_ventas, 'RD$'),
+        formatMoney(row.retencion_renta_terceros, 'RD$'),
+        formatMoney(row.isr_percibido_ventas, 'RD$'),
+        formatMoney(row.impuesto_selectivo_consumo, 'RD$'),
+        formatMoney(row.otros_impuestos_tasas, 'RD$'),
+        formatMoney(row.monto_propina_legal_2, 'RD$')
       ].join(separator))
     ].join('\n');
 
@@ -153,17 +154,17 @@ export default function Report607Page() {
       'Tipo Identificación': row.tipo_identificacion,
       'NCF': row.numero_comprobante_fiscal,
       'Fecha Comprobante': row.fecha_comprobante,
-      'Monto Facturado': row.monto_facturado,
-      'ITBIS Facturado': row.itbis_facturado,
-      'ITBIS Retenido': row.itbis_retenido,
-      'Propina Legal': row.monto_propina_legal,
-      'ITBIS Ret. Propina': row.itbis_retenido_propina,
-      'ITBIS Percibido Ventas': row.itbis_percibido_ventas,
-      'Retención Renta Terceros': row.retencion_renta_terceros,
-      'ISR Percibido Ventas': row.isr_percibido_ventas,
-      'Impuesto Selectivo Consumo': row.impuesto_selectivo_consumo,
-      'Otros Impuestos/Tasas': row.otros_impuestos_tasas,
-      'Propina Legal 2': row.monto_propina_legal_2,
+      'Monto Facturado': formatMoney(row.monto_facturado, 'RD$'),
+      'ITBIS Facturado': formatMoney(row.itbis_facturado, 'RD$'),
+      'ITBIS Retenido': formatMoney(row.itbis_retenido, 'RD$'),
+      'Propina Legal': formatMoney(row.monto_propina_legal, 'RD$'),
+      'ITBIS Ret. Propina': formatMoney(row.itbis_retenido_propina, 'RD$'),
+      'ITBIS Percibido Ventas': formatMoney(row.itbis_percibido_ventas, 'RD$'),
+      'Retención Renta Terceros': formatMoney(row.retencion_renta_terceros, 'RD$'),
+      'ISR Percibido Ventas': formatMoney(row.isr_percibido_ventas, 'RD$'),
+      'Impuesto Selectivo Consumo': formatMoney(row.impuesto_selectivo_consumo, 'RD$'),
+      'Otros Impuestos/Tasas': formatMoney(row.otros_impuestos_tasas, 'RD$'),
+      'Propina Legal 2': formatMoney(row.monto_propina_legal_2, 'RD$'),
     }));
 
     const companyName =
@@ -222,13 +223,13 @@ export default function Report607Page() {
 
     let txtContent = `REPORTE 607 - VENTAS Y SERVICIOS\n`;
     txtContent += `Período: ${selectedPeriod}\n`;
-    txtContent += `Fecha de generación: ${new Date().toLocaleDateString()}\n\n`;
+    txtContent += `Fecha de generación: ${formatDateEsDO(new Date())}\n\n`;
 
     txtContent += `RESUMEN:\n`;
-    txtContent += `Total vendido: RD$ ${totals.monto_facturado.toLocaleString('es-DO')}\n`;
-    txtContent += `ITBIS cobrado: RD$ ${totals.itbis_facturado.toLocaleString('es-DO')}\n`;
-    txtContent += `ITBIS retenido: RD$ ${totals.itbis_retenido.toLocaleString('es-DO')}\n`;
-    txtContent += `ISR retenido: RD$ ${totals.retencion_renta_terceros.toLocaleString('es-DO')}\n\n`;
+    txtContent += `Total vendido: ${formatMoney(totals.monto_facturado, 'RD$')}\n`;
+    txtContent += `ITBIS cobrado: ${formatMoney(totals.itbis_facturado, 'RD$')}\n`;
+    txtContent += `ITBIS retenido: ${formatMoney(totals.itbis_retenido, 'RD$')}\n`;
+    txtContent += `ISR retenido: ${formatMoney(totals.retencion_renta_terceros, 'RD$')}\n\n`;
 
     txtContent += `DETALLE:\n`;
     txtContent += `${'='.repeat(120)}\n`;
@@ -237,10 +238,10 @@ export default function Report607Page() {
       txtContent += `${index + 1}. RNC/Cédula: ${row.rnc_cedula || 'N/A'}\n`;
       txtContent += `   NCF: ${row.numero_comprobante_fiscal}\n`;
       txtContent += `   Fecha: ${new Date(row.fecha_comprobante).toLocaleDateString('es-DO')}\n`;
-      txtContent += `   Monto facturado: RD$ ${row.monto_facturado.toLocaleString('es-DO')}\n`;
-      txtContent += `   ITBIS facturado: RD$ ${row.itbis_facturado.toLocaleString('es-DO')}\n`;
-      txtContent += `   ITBIS retenido: RD$ ${row.itbis_retenido.toLocaleString('es-DO')}\n`;
-      txtContent += `   ISR retenido: RD$ ${row.retencion_renta_terceros.toLocaleString('es-DO')}\n`;
+      txtContent += `   Monto facturado: ${formatMoney(row.monto_facturado, 'RD$')}\n`;
+      txtContent += `   ITBIS facturado: ${formatMoney(row.itbis_facturado, 'RD$')}\n`;
+      txtContent += `   ITBIS retenido: ${formatMoney(row.itbis_retenido, 'RD$')}\n`;
+      txtContent += `   ISR retenido: ${formatMoney(row.retencion_renta_terceros, 'RD$')}\n`;
       txtContent += `${'-'.repeat(80)}\n`;
     });
 
@@ -259,10 +260,10 @@ export default function Report607Page() {
         rnc_cedula: row.rnc_cedula,
         ncf: row.numero_comprobante_fiscal,
         fecha: new Date(row.fecha_comprobante).toLocaleDateString('es-DO'),
-        monto_facturado: row.monto_facturado,
-        itbis_facturado: row.itbis_facturado,
-        itbis_retenido: row.itbis_retenido,
-        isr_retenido: row.retencion_renta_terceros,
+        monto_facturado: formatMoney(row.monto_facturado, 'RD$'),
+        itbis_facturado: formatMoney(row.itbis_facturado, 'RD$'),
+        itbis_retenido: formatMoney(row.itbis_retenido, 'RD$'),
+        isr_retenido: formatMoney(row.retencion_renta_terceros, 'RD$'),
       }));
 
       const columns = [
@@ -403,7 +404,7 @@ export default function Report607Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total Vendido</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.monto_facturado.toLocaleString('es-DO')}
+                    {formatMoney(totals.monto_facturado, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -416,7 +417,7 @@ export default function Report607Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">ITBIS Cobrado</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.itbis_facturado.toLocaleString('es-DO')}
+                    {formatMoney(totals.itbis_facturado, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -429,7 +430,7 @@ export default function Report607Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">ITBIS Retenido</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.itbis_retenido.toLocaleString('es-DO')}
+                    {formatMoney(totals.itbis_retenido, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -442,7 +443,7 @@ export default function Report607Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">ISR Retenido</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.retencion_renta_terceros.toLocaleString('es-DO')}
+                    {formatMoney(totals.retencion_renta_terceros, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -497,16 +498,16 @@ export default function Report607Page() {
                       {new Date(row.fecha_comprobante).toLocaleDateString('es-DO')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {row.monto_facturado.toLocaleString('es-DO')}
+                      {formatMoney(row.monto_facturado, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {row.itbis_facturado.toLocaleString('es-DO')}
+                      {formatMoney(row.itbis_facturado, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {row.itbis_retenido.toLocaleString('es-DO')}
+                      {formatMoney(row.itbis_retenido, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {row.retencion_renta_terceros.toLocaleString('es-DO')}
+                      {formatMoney(row.retencion_renta_terceros, 'RD$')}
                     </td>
                   </tr>
                 ))}

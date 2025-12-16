@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { resolveTenantId, settingsService } from '../../../services/database';
+import { formatAmount } from '../../../utils/numberFormat';
 
 // Estilos CSS para mejorar la impresión
 const printStyles = `
@@ -80,7 +81,7 @@ const getEntryDocumentType = (entry: JournalEntry): string => {
   return 'Otro';
 };
 
-const GeneralJournalPage: React.FC = () => {
+const GeneralJournalPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
@@ -191,163 +192,157 @@ const GeneralJournalPage: React.FC = () => {
   const handleSaveEntry = async () => {
     if (!user) return;
 
+    // Validar que los débitos y créditos estén balanceados
+    const totalDebit = formData.lines.reduce((sum, line) => sum + (line.debit_amount || 0), 0);
+    const totalCredit = formData.lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
+
+    // Validar que ninguna línea tenga simultáneamente débito y crédito
+    const invalidLines = formData.lines.filter(line =>
+      (line.debit_amount || 0) > 0 && (line.credit_amount || 0) > 0
+    );
+
+    if (invalidLines.length > 0) {
+      alert('Cada línea debe tener solo débito o solo crédito, no ambos.');
+      return;
+    }
+
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+      alert('Los débitos y créditos deben estar balanceados');
+      return;
+    }
+
+    if (totalDebit === 0 || totalCredit === 0) {
+      alert('Debe ingresar al menos un débito y un crédito');
+      return;
+    }
+
+    const validLines = formData.lines.filter(line =>
+      line.account_id && ((line.debit_amount || 0) > 0 || (line.credit_amount || 0) > 0)
+    );
+
+    console.log('=== DEBUG JOURNAL ENTRY ==');
+    console.log('All lines:', formData.lines);
+    console.log('Valid lines to save:', validLines);
+    console.log('Total Debit:', totalDebit, 'Total Credit:', totalCredit);
+
+    const tenantId = await resolveTenantId(user.id);
+    if (!tenantId) {
+      alert('Error: No se pudo resolver el tenant');
+      return;
+    }
+
     try {
-      // Validar que los débitos y créditos estén balanceados
-      const totalDebit = formData.lines.reduce((sum, line) => sum + (line.debit_amount || 0), 0);
-      const totalCredit = formData.lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
-
-      // Validar que ninguna línea tenga simultáneamente débito y crédito
-      const invalidLines = formData.lines.filter(line =>
-        (line.debit_amount || 0) > 0 && (line.credit_amount || 0) > 0
-      );
-
-      if (invalidLines.length > 0) {
-        alert('Cada línea debe tener solo débito o solo crédito, no ambos.');
-        return;
-      }
-
-      if (Math.abs(totalDebit - totalCredit) > 0.01) {
-        alert('Los débitos y créditos deben estar balanceados');
-        return;
-      }
-
-      if (totalDebit === 0 || totalCredit === 0) {
-        alert('Debe ingresar al menos un débito y un crédito');
-        return;
-      }
-
-      const validLines = formData.lines.filter(line =>
-        line.account_id && ((line.debit_amount || 0) > 0 || (line.credit_amount || 0) > 0)
-      );
-
-      console.log('=== DEBUG JOURNAL ENTRY ==');
-      console.log('All lines:', formData.lines);
-      console.log('Valid lines to save:', validLines);
-      console.log('Total Debit:', totalDebit, 'Total Credit:', totalCredit);
-
-      const tenantId = await resolveTenantId(user.id);
-      if (!tenantId) {
-        alert('Error: No se pudo resolver el tenant');
-        return;
-      }
-
-      try {
-        if (isEditing && editingEntryId) {
-          // Actualizar asiento existente
-          const { data: updatedEntry, error: entryError } = await supabase
-            .from('journal_entries')
-            .update({
-              entry_date: formData.entry_date,
-              description: formData.description,
-              reference: formData.reference,
-              total_debit: totalDebit,
-              total_credit: totalCredit,
-            })
-            .eq('id', editingEntryId)
-            .eq('user_id', tenantId)
-            .select()
-            .single();
-
-          if (entryError) throw entryError;
-
-          // Reemplazar líneas del asiento
-          const { error: deleteError } = await supabase
-            .from('journal_entry_lines')
-            .delete()
-            .eq('journal_entry_id', editingEntryId);
-
-          if (deleteError) throw deleteError;
-
-          const linesData = validLines.map((line, index) => ({
-            journal_entry_id: updatedEntry.id,
-            account_id: line.account_id,
-            debit_amount: Number(line.debit_amount) || 0,
-            credit_amount: Number(line.credit_amount) || 0,
-            description: line.description,
-            line_number: index + 1,
-          }));
-
-          console.log('Lines data to update:', linesData);
-
-          const { error: linesError } = await supabase
-            .from('journal_entry_lines')
-            .insert(linesData);
-
-          if (linesError) throw linesError;
-        } else {
-          // Crear nuevo asiento
-          const entryDate = formData.entry_date || new Date().toISOString().split('T')[0];
-          const [year, month] = entryDate.split('-');
-          const prefix = `ED-${year}${month}`;
-
-          const { data: existingEntries, error: existingEntriesError } = await supabase
-            .from('journal_entries')
-            .select('entry_number')
-            .eq('user_id', tenantId)
-            .like('entry_number', `${prefix}%`)
-            .order('entry_number', { ascending: false })
-            .limit(1);
-
-          if (existingEntriesError) {
-            console.error('Error generating journal entry number:', existingEntriesError);
-            alert('No se pudo generar el número de asiento. Intente nuevamente.');
-            return;
-          }
-
-          let nextSeq = 1;
-          if (existingEntries && existingEntries.length > 0) {
-            const lastNumber = existingEntries[0].entry_number || '';
-            const seqStr = lastNumber.slice(prefix.length);
-            const parsed = parseInt(seqStr, 10);
-            if (!Number.isNaN(parsed)) {
-              nextSeq = parsed + 1;
-            }
-          }
-
-          const entryNumber = `${prefix}${nextSeq.toString().padStart(2, '0')}`;
-
-          const entryData = {
-            user_id: tenantId,
-            entry_number: entryNumber,
+      if (isEditing && editingEntryId) {
+        // Actualizar asiento existente
+        const { data: updatedEntry, error: entryError } = await supabase
+          .from('journal_entries')
+          .update({
             entry_date: formData.entry_date,
             description: formData.description,
             reference: formData.reference,
             total_debit: totalDebit,
             total_credit: totalCredit,
-            status: 'posted'
-          };
+          })
+          .eq('id', editingEntryId)
+          .eq('user_id', tenantId)
+          .select()
+          .single();
 
-          const { data: entry, error: entryError } = await supabase
-            .from('journal_entries')
-            .insert([entryData])
-            .select()
-            .single();
+        if (entryError) throw entryError;
 
-          if (entryError) throw entryError;
+        // Reemplazar líneas del asiento
+        const { error: deleteError } = await supabase
+          .from('journal_entry_lines')
+          .delete()
+          .eq('journal_entry_id', editingEntryId);
 
-          const linesData = validLines.map((line, index) => ({
-            journal_entry_id: entry.id,
-            account_id: line.account_id,
-            debit_amount: Number(line.debit_amount) || 0,
-            credit_amount: Number(line.credit_amount) || 0,
-            description: line.description,
-            line_number: index + 1,
-          }));
+        if (deleteError) throw deleteError;
 
-          console.log('Lines data to insert:', linesData);
+        const linesData = validLines.map((line, index) => ({
+          journal_entry_id: updatedEntry.id,
+          account_id: line.account_id,
+          debit_amount: Number(line.debit_amount) || 0,
+          credit_amount: Number(line.credit_amount) || 0,
+          description: line.description,
+          line_number: index + 1,
+        }));
 
-          const { error: linesError } = await supabase
-            .from('journal_entry_lines')
-            .insert(linesData);
+        console.log('Lines data to update:', linesData);
 
-          if (linesError) throw linesError;
+        const { error: linesError } = await supabase
+          .from('journal_entry_lines')
+          .insert(linesData);
+
+        if (linesError) throw linesError;
+      } else {
+        // Crear nuevo asiento
+        const entryDate = formData.entry_date || new Date().toISOString().split('T')[0];
+        const [year, month] = entryDate.split('-');
+        const prefix = `ED-${year}${month}`;
+
+        const { data: existingEntries, error: existingEntriesError } = await supabase
+          .from('journal_entries')
+          .select('entry_number')
+          .eq('user_id', tenantId)
+          .like('entry_number', `${prefix}%`)
+          .order('entry_number', { ascending: false })
+          .limit(1);
+
+        if (existingEntriesError) {
+          console.error('Error generating journal entry number:', existingEntriesError);
+          alert('No se pudo generar el número de asiento. Intente nuevamente.');
+          return;
         }
-      } catch (supabaseError) {
-        console.error('Supabase error:', supabaseError);
-        alert('No se pudo guardar el asiento en la base de datos. Inténtelo nuevamente.');
-        return;
+
+        let nextSeq = 1;
+        if (existingEntries && existingEntries.length > 0) {
+          const lastNumber = existingEntries[0].entry_number || '';
+          const seqStr = lastNumber.slice(prefix.length);
+          const parsed = parseInt(seqStr, 10);
+          if (!Number.isNaN(parsed)) {
+            nextSeq = parsed + 1;
+          }
+        }
+
+        const entryNumber = `${prefix}${nextSeq.toString().padStart(2, '0')}`;
+
+        const entryData = {
+          user_id: tenantId,
+          entry_number: entryNumber,
+          entry_date: formData.entry_date,
+          description: formData.description,
+          reference: formData.reference,
+          total_debit: totalDebit,
+          total_credit: totalCredit,
+          status: 'posted'
+        };
+
+        const { data: entry, error: entryError } = await supabase
+          .from('journal_entries')
+          .insert([entryData])
+          .select()
+          .single();
+
+        if (entryError) throw entryError;
+
+        const linesData = validLines.map((line, index) => ({
+          journal_entry_id: entry.id,
+          account_id: line.account_id,
+          debit_amount: Number(line.debit_amount) || 0,
+          credit_amount: Number(line.credit_amount) || 0,
+          description: line.description,
+          line_number: index + 1,
+        }));
+
+        console.log('Lines data to insert:', linesData);
+
+        const { error: linesError } = await supabase
+          .from('journal_entry_lines')
+          .insert(linesData);
+
+        if (linesError) throw linesError;
       }
-      
+
       // Resetear formulario
       setFormData({
         entry_date: new Date().toISOString().split('T')[0],
@@ -355,8 +350,8 @@ const GeneralJournalPage: React.FC = () => {
         reference: '',
         lines: [
           { account_id: '', debit_amount: 0, credit_amount: 0, description: '' },
-          { account_id: '', debit_amount: 0, credit_amount: 0, description: '' }
-        ]
+          { account_id: '', debit_amount: 0, credit_amount: 0, description: '' },
+        ],
       });
       setIsEditing(false);
       setEditingEntryId(null);
@@ -381,111 +376,34 @@ const GeneralJournalPage: React.FC = () => {
         .eq('id', entryId);
 
       if (error) throw error;
-      
-      setEntries(prev => prev.filter(entry => entry.id !== entryId));
+      setEntries((prev) => prev.filter((entry) => entry.id !== entryId));
       alert('Asiento eliminado exitosamente');
     } catch (error) {
       console.error('Error deleting entry:', error);
       // Eliminar localmente si Supabase falla
-      setEntries(prev => prev.filter(entry => entry.id !== entryId));
+      setEntries((prev) => prev.filter((entry) => entry.id !== entryId));
       alert('Asiento eliminado exitosamente');
     }
   };
 
-  const downloadExcel = () => {
-    try {
-      // Crear contenido CSV
-      let csvContent = 'Diario General\n';
-      csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
-      csvContent += 'Número,Fecha,Descripción,Referencia,Débito,Crédito,Estado\n';
-      
-      filteredEntries.forEach(entry => {
-        const row = [
-          entry.entry_number,
-          new Date(entry.entry_date).toLocaleDateString(),
-          `"${entry.description}"`,
-          entry.reference,
-          entry.total_debit.toLocaleString(),
-          entry.total_credit.toLocaleString(),
-          entry.status === 'posted' ? 'Contabilizado' : entry.status === 'draft' ? 'Borrador' : 'Reversado'
-        ].join(',');
-        csvContent += row + '\n';
-      });
-
-      // Agregar detalle de líneas
-      csvContent += '\n\nDetalle de Líneas:\n';
-      csvContent += 'Asiento,Cuenta,Descripción,Débito,Crédito\n';
-      
-      filteredEntries.forEach(entry => {
-        entry.journal_entry_lines?.forEach(line => {
-          const detailRow = [
-            entry.entry_number,
-            `${line.chart_accounts?.code} - ${line.chart_accounts?.name}`,
-            `"${line.description}"`,
-            line.debit_amount > 0 ? line.debit_amount.toLocaleString() : '',
-            line.credit_amount > 0 ? line.credit_amount.toLocaleString() : ''
-          ].join(',');
-          csvContent += detailRow + '\n';
-        });
-      });
-
-      // Agregar resumen
-      csvContent += '\nResumen:\n';
-      csvContent += `Total Asientos:,${filteredEntries.length}\n`;
-      csvContent += `Total Débitos:,RD$${filteredEntries.reduce((sum, entry) => sum + entry.total_debit, 0).toLocaleString()}\n`;
-      csvContent += `Total Créditos:,RD$${filteredEntries.reduce((sum, entry) => sum + entry.total_credit, 0).toLocaleString()}\n`;
-
-      // Crear y descargar archivo
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `diario_general_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (error) {
-      console.error('Error downloading Excel:', error);
-      alert('Error al descargar el archivo');
-    }
-  };
-
   const addLine = () => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
-      lines: [...prev.lines, { account_id: '', debit_amount: 0, credit_amount: 0, description: '' }]
+      lines: [...prev.lines, { account_id: '', debit_amount: 0, credit_amount: 0, description: '' }],
     }));
-  };
-
-  const handleEditClick = (entry: JournalEntry) => {
-    setIsEditing(true);
-    setEditingEntryId(entry.id);
-    setFormData({
-      entry_date: entry.entry_date.slice(0, 10),
-      description: entry.description || '',
-      reference: entry.reference || '',
-      lines: entry.journal_entry_lines.map(line => ({
-        account_id: line.account_id,
-        debit_amount: line.debit_amount || 0,
-        credit_amount: line.credit_amount || 0,
-        description: line.description || '',
-      }))
-    });
-    setShowCreateModal(true);
   };
 
   const removeLine = (index: number) => {
     if (formData.lines.length > 2) {
-      setFormData(prev => ({
+      setFormData((prev) => ({
         ...prev,
-        lines: prev.lines.filter((_, i) => i !== index)
+        lines: prev.lines.filter((_, i) => i !== index),
       }));
     }
   };
 
   const updateLine = (index: number, field: string, value: any) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       lines: prev.lines.map((line, i) => {
         if (i !== index) return line;
@@ -499,42 +417,72 @@ const GeneralJournalPage: React.FC = () => {
         }
 
         return { ...line, [field]: value };
-      })
+      }),
     }));
+  };
+
+  const handleEditClick = (entry: JournalEntry) => {
+    setIsEditing(true);
+    setEditingEntryId(entry.id);
+    setFormData({
+      entry_date: entry.entry_date.slice(0, 10),
+      description: entry.description || '',
+      reference: entry.reference || '',
+      lines: entry.journal_entry_lines.map((line) => ({
+        account_id: line.account_id,
+        debit_amount: line.debit_amount || 0,
+        credit_amount: line.credit_amount || 0,
+        description: line.description || '',
+      })),
+    });
+    setShowCreateModal(true);
   };
 
   const exportToExcel = () => {
     try {
       // Preparar los datos para la exportación
-      const dataToExport = entries.flatMap(entry => {
-        return entry.journal_entry_lines.map(line => ({
-          'Fecha': new Date(entry.entry_date).toLocaleDateString('es-ES'),
+      const dataToExport = entries.flatMap((entry) => {
+        return entry.journal_entry_lines.map((line) => ({
+          Fecha: new Date(entry.entry_date).toLocaleDateString('es-DO'),
           'Número Asiento': entry.entry_number,
-          'Descripción': entry.description,
-          'Referencia': entry.reference,
-          'Cuenta': `${line.chart_accounts.code} - ${line.chart_accounts.name}`,
-          'Débito': line.debit_amount || '',
-          'Crédito': line.credit_amount || '',
-          'Estado': entry.status === 'posted' ? 'Publicado' : 'Borrador'
+          Descripción: entry.description,
+          Referencia: entry.reference,
+          Cuenta: `${line.chart_accounts.code} - ${line.chart_accounts.name}`,
+          Débito: line.debit_amount || '',
+          Crédito: line.credit_amount || '',
+          Estado: entry.status === 'posted' ? 'Publicado' : 'Borrador',
         }));
       });
+
+      if (dataToExport.length === 0) {
+        alert('No hay datos para exportar');
+        return;
+      }
 
       const companyName =
         (companyInfo as any)?.name ||
         (companyInfo as any)?.company_name ||
         'ContaBi';
 
+      const columns = Object.keys(dataToExport[0] || {});
+      const totalColumns = columns.length || 1;
+      const centerIndex = Math.floor((totalColumns - 1) / 2);
+
       const headerRows: (string | number)[][] = [];
-      headerRows.push([companyName]);
-      headerRows.push(['Diario General']);
-      headerRows.push([
-        `Generado: ${new Date().toLocaleDateString('es-DO', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        })}`,
-      ]);
-      headerRows.push([]);
+
+      const row1 = new Array(totalColumns).fill('');
+      row1[centerIndex] = companyName;
+      headerRows.push(row1);
+
+      const row2 = new Array(totalColumns).fill('');
+      row2[centerIndex] = 'Diario General';
+      headerRows.push(row2);
+
+      const row3 = new Array(totalColumns).fill('');
+      row3[centerIndex] = `Generado: ${new Date().toLocaleDateString('es-DO')}`;
+      headerRows.push(row3);
+
+      headerRows.push(new Array(totalColumns).fill(''));
 
       // Crear un nuevo libro de trabajo
       const wb = XLSX.utils.book_new();
@@ -543,92 +491,28 @@ const GeneralJournalPage: React.FC = () => {
 
       XLSX.utils.sheet_add_aoa(ws, headerRows, { origin: 'A1' });
 
-      // Centrar el encabezado sobre todas las columnas
-      const totalColumns = dataToExport.length > 0 ? Object.keys(dataToExport[0]).length : 1;
-      const merges: any[] = (ws as any)['!merges'] || [];
-
-      // Las filas de encabezado son todas menos la última (que es vacía)
-      for (let rowIndex = 0; rowIndex < headerRows.length - 1; rowIndex++) {
-        merges.push({
-          s: { r: rowIndex, c: 0 },
-          e: { r: rowIndex, c: totalColumns - 1 },
-        });
-
-        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: 0 });
-        const cell = (ws as any)[cellAddress];
-        if (cell) {
-          const existingStyle = (cell as any).s || {};
-          (cell as any).s = {
-            ...existingStyle,
-            alignment: {
-              ...(existingStyle.alignment || {}),
-              horizontal: 'center',
-              vertical: 'center',
-            },
-            font: {
-              ...(existingStyle.font || {}),
-              bold: true,
-            },
-          };
-        }
-      }
-
-      (ws as any)['!merges'] = merges;
-
-      // Ajustar el ancho de las columnas
-      const colWidths = [
-        { wch: 12 }, // Fecha
-        { wch: 15 }, // Número Asiento
-        { wch: 30 }, // Descripción
-        { wch: 15 }, // Referencia
-        { wch: 40 }, // Cuenta
-        { wch: 15 }, // Débito
-        { wch: 15 }, // Crédito
-        { wch: 12 }  // Estado
+      (ws as any)['!cols'] = [
+        { wch: 12 },
+        { wch: 16 },
+        { wch: 40 },
+        { wch: 18 },
+        { wch: 45 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 14 },
       ];
-      ws['!cols'] = colWidths;
 
-      // Agregar la hoja al libro
-      XLSX.utils.book_append_sheet(wb, ws, 'Libro Diario');
-
-      // Generar el archivo Excel
-      const fileName = `libro_diario_${new Date().toISOString().split('T')[0]}.xlsx`;
-      XLSX.writeFile(wb, fileName);
-      
+      XLSX.utils.book_append_sheet(wb, ws, 'Diario General');
+      XLSX.writeFile(wb, `diario_general_${new Date().toISOString().split('T')[0]}.xlsx`);
     } catch (error) {
       console.error('Error al exportar a Excel:', error);
       alert('Error al generar el archivo Excel. Por favor, intente nuevamente.');
     }
   };
 
-  const documentTypes = Array.from(
-    new Set(entries.map((entry) => getEntryDocumentType(entry)))
-  ).sort();
-
-  const filteredEntries = entries.filter(entry => {
-    const matchesSearch = entry.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         entry.entry_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         entry.reference.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesFrom = !dateFrom || entry.entry_date >= dateFrom;
-    const matchesTo = !dateTo || entry.entry_date <= dateTo;
-    const matchesDate = matchesFrom && matchesTo;
-    const matchesStatus = statusFilter === 'all' || entry.status === statusFilter;
-    const matchesAccount =
-      !selectedAccountId ||
-      entry.journal_entry_lines?.some(line => line.account_id === selectedAccountId);
-    const entryType = getEntryDocumentType(entry);
-    const matchesDocumentType = documentTypeFilter === 'all' || entryType === documentTypeFilter;
-    
-    return matchesSearch && matchesDate && matchesStatus && matchesAccount && matchesDocumentType;
-  });
-
-  const totalDebitsFiltered = filteredEntries.reduce((sum, entry) => sum + (entry.total_debit || 0), 0);
-  const totalCreditsFiltered = filteredEntries.reduce((sum, entry) => sum + (entry.total_credit || 0), 0);
-
   const totalDebit = formData.lines.reduce((sum, line) => sum + (line.debit_amount || 0), 0);
   const totalCredit = formData.lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
-  const isBalanced = Math.abs(totalDebit - totalCredit) < 0.01;
+  const isBalanced = Math.abs(totalDebit - totalCredit) <= 0.01;
 
   const hasValidLines = formData.lines.some(line =>
     line.account_id && ((line.debit_amount || 0) > 0 || (line.credit_amount || 0) > 0)
@@ -651,6 +535,40 @@ const GeneralJournalPage: React.FC = () => {
 
   const visiblePeriods = periods.filter((p) => !selectedFiscalYear || p.fiscal_year === selectedFiscalYear);
 
+  const documentTypes = Array.from(
+    new Set(entries.map((entry) => getEntryDocumentType(entry))),
+  ).sort();
+
+  const filteredEntries = entries.filter((entry) => {
+    const entryDate = (entry.entry_date || '').slice(0, 10);
+
+    if (dateFrom && entryDate && entryDate < dateFrom) return false;
+    if (dateTo && entryDate && entryDate > dateTo) return false;
+
+    if (statusFilter !== 'all' && entry.status !== statusFilter) return false;
+
+    if (selectedAccountId) {
+      const hasAccount = (entry.journal_entry_lines || []).some((l) => l.account_id === selectedAccountId);
+      if (!hasAccount) return false;
+    }
+
+    if (documentTypeFilter !== 'all' && getEntryDocumentType(entry) !== documentTypeFilter) return false;
+
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      const hit =
+        (entry.entry_number || '').toLowerCase().includes(q) ||
+        (entry.description || '').toLowerCase().includes(q) ||
+        (entry.reference || '').toLowerCase().includes(q);
+      if (!hit) return false;
+    }
+
+    return true;
+  });
+
+  const totalDebitsFiltered = filteredEntries.reduce((sum, entry) => sum + (entry.total_debit || 0), 0);
+  const totalCreditsFiltered = filteredEntries.reduce((sum, entry) => sum + (entry.total_credit || 0), 0);
+
   const handlePeriodChange = (periodId: string) => {
     setSelectedPeriodId(periodId);
     const period = periods.find((p) => p.id === periodId);
@@ -666,13 +584,13 @@ const GeneralJournalPage: React.FC = () => {
 
     const doc = printWindow.document;
     const companyName = companyInfo?.name || 'Diario General';
-    const entryDate = new Date(entry.entry_date).toLocaleDateString();
+    const entryDate = new Date(entry.entry_date).toLocaleDateString('es-DO');
 
     const linesHtml = (entry.journal_entry_lines || [])
       .map((line) => {
         const accountLabel = `${line.chart_accounts?.code || ''} - ${line.chart_accounts?.name || ''}`;
-        const debit = line.debit_amount > 0 ? line.debit_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
-        const credit = line.credit_amount > 0 ? line.credit_amount.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+        const debit = line.debit_amount > 0 ? formatAmount(line.debit_amount) : '';
+        const credit = line.credit_amount > 0 ? formatAmount(line.credit_amount) : '';
         return `
           <tr>
             <td style="padding:4px 8px; border-bottom:1px solid #e5e7eb;">${accountLabel}</td>
@@ -745,14 +663,14 @@ const GeneralJournalPage: React.FC = () => {
                 <th>Descripción</th>
               </tr>
             </thead>
-            <tbody>
+          <tbody>
               ${linesHtml}
             </tbody>
           </table>
 
           <div style="margin-top:12px; text-align:right; font-weight:600;">
-            <div>Total Débito: RD$ ${entry.total_debit.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-            <div>Total Crédito: RD$ ${entry.total_credit.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            <div>Total Débito: RD$ ${formatAmount(entry.total_debit)}</div>
+            <div>Total Crédito: RD$ ${formatAmount(entry.total_credit)}</div>
           </div>
         </body>
       </html>
@@ -786,10 +704,7 @@ const GeneralJournalPage: React.FC = () => {
       )}
       <div className="hidden print:block print-title">DIARIO GENERAL</div>
       <div className="hidden print:block print-date">
-        Generado el {new Date().toLocaleDateString('es-DO', { year: 'numeric', month: 'long', day: 'numeric' })}
-        {(dateFrom || dateTo) && ` - Período: ${dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} a ${
-          dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'
-        }`}
+        Generado el {new Date().toLocaleDateString('es-DO')} {(dateFrom || dateTo) && ` - Período: ${dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} a ${dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'}`}
       </div>
 
       {/* Header con botón de regreso */}
@@ -856,7 +771,7 @@ const GeneralJournalPage: React.FC = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Débitos</p>
               <p className="text-2xl font-bold text-gray-900">
-                RD${entries.reduce((sum, entry) => sum + entry.total_debit, 0).toLocaleString()}
+                RD${formatAmount(entries.reduce((sum, entry) => sum + entry.total_debit, 0))}
               </p>
             </div>
           </div>
@@ -870,7 +785,7 @@ const GeneralJournalPage: React.FC = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Créditos</p>
               <p className="text-2xl font-bold text-gray-900">
-                RD${entries.reduce((sum, entry) => sum + entry.total_credit, 0).toLocaleString()}
+                RD${formatAmount(entries.reduce((sum, entry) => sum + entry.total_credit, 0))}
               </p>
             </div>
           </div>
@@ -1027,7 +942,7 @@ const GeneralJournalPage: React.FC = () => {
                     {entry.entry_number}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(entry.entry_date).toLocaleDateString()}
+                    {new Date(entry.entry_date).toLocaleDateString('es-DO')}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {getEntryDocumentType(entry)}
@@ -1039,10 +954,10 @@ const GeneralJournalPage: React.FC = () => {
                     {entry.reference}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    RD${entry.total_debit.toLocaleString()}
+                    RD${formatAmount(entry.total_debit)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    RD${entry.total_credit.toLocaleString()}
+                    RD${formatAmount(entry.total_credit)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
@@ -1095,10 +1010,10 @@ const GeneralJournalPage: React.FC = () => {
                   Totales del reporte:
                 </td>
                 <td className="px-6 py-3 font-bold text-gray-900">
-                  RD${totalDebitsFiltered.toLocaleString()}
+                  RD${formatAmount(totalDebitsFiltered)}
                 </td>
                 <td className="px-6 py-3 font-bold text-gray-900">
-                  RD${totalCreditsFiltered.toLocaleString()}
+                  RD${formatAmount(totalCreditsFiltered)}
                 </td>
                 <td colSpan={2}></td>
               </tr>
@@ -1232,7 +1147,7 @@ const GeneralJournalPage: React.FC = () => {
                           <td className="px-4 py-3">
                             <input
                               type="text"
-                              value={line.debit_amount > 0 ? line.debit_amount.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : ''}
+                              value={line.debit_amount > 0 ? formatAmount(line.debit_amount) : ''}
                               onChange={(e) => {
                                 const value = e.target.value.replace(/[^0-9.]/g, '');
                                 updateLine(index, 'debit_amount', parseFloat(value) || 0);
@@ -1244,7 +1159,7 @@ const GeneralJournalPage: React.FC = () => {
                           <td className="px-4 py-3">
                             <input
                               type="text"
-                              value={line.credit_amount > 0 ? line.credit_amount.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : ''}
+                              value={line.credit_amount > 0 ? formatAmount(line.credit_amount) : ''}
                               onChange={(e) => {
                                 const value = e.target.value.replace(/[^0-9.]/g, '');
                                 updateLine(index, 'credit_amount', parseFloat(value) || 0);
@@ -1272,10 +1187,10 @@ const GeneralJournalPage: React.FC = () => {
                           Totales:
                         </td>
                         <td className="px-4 py-3 font-bold text-gray-900">
-                          RD${totalDebit.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                          RD${formatAmount(totalDebit)}
                         </td>
                         <td className="px-4 py-3 font-bold text-gray-900">
-                          RD${totalCredit.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                          RD${formatAmount(totalCredit)}
                         </td>
                         <td className="px-4 py-3"></td>
                       </tr>
@@ -1342,7 +1257,7 @@ const GeneralJournalPage: React.FC = () => {
                     <div>
                       <span className="text-sm font-medium text-gray-500">Fecha:</span>
                       <span className="ml-2 text-sm text-gray-900">
-                        {new Date(selectedEntry.entry_date).toLocaleDateString()}
+                        {new Date(selectedEntry.entry_date).toLocaleDateString('es-DO')}
                       </span>
                     </div>
                     <div>
@@ -1371,19 +1286,19 @@ const GeneralJournalPage: React.FC = () => {
                     <div>
                       <span className="text-sm font-medium text-gray-500">Total Débito:</span>
                       <span className="ml-2 text-sm font-bold text-gray-900">
-                        RD${selectedEntry.total_debit.toLocaleString()}
+                        RD${formatAmount(selectedEntry.total_debit)}
                       </span>
                     </div>
                     <div>
                       <span className="text-sm font-medium text-gray-500">Total Crédito:</span>
                       <span className="ml-2 text-sm font-bold text-gray-900">
-                        RD${selectedEntry.total_credit.toLocaleString()}
+                        RD${formatAmount(selectedEntry.total_credit)}
                       </span>
                     </div>
                     <div>
                       <span className="text-sm font-medium text-gray-500">Diferencia:</span>
                       <span className="ml-2 text-sm font-bold text-green-600">
-                        RD${Math.abs(selectedEntry.total_debit - selectedEntry.total_credit).toLocaleString()}
+                        RD${formatAmount(Math.abs(selectedEntry.total_debit - selectedEntry.total_credit))}
                       </span>
                     </div>
                   </div>
@@ -1427,10 +1342,10 @@ const GeneralJournalPage: React.FC = () => {
                             {line.description}
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-900">
-                            {line.debit_amount > 0 ? `RD$${line.debit_amount.toLocaleString()}` : '-'}
+                            {line.debit_amount > 0 ? `RD$${formatAmount(line.debit_amount)}` : '-'}
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-900">
-                            {line.credit_amount > 0 ? `RD$${line.credit_amount.toLocaleString()}` : '-'}
+                            {line.credit_amount > 0 ? `RD$${formatAmount(line.credit_amount)}` : '-'}
                           </td>
                         </tr>
                       ))}

@@ -3,6 +3,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { toast } from 'sonner';
 import { useAuth } from '../../../hooks/useAuth';
 import { bankAccountsService, chartAccountsService } from '../../../services/database';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface Bank {
   id: string;
@@ -36,11 +37,8 @@ export default function BanksPage() {
 
   // Función para formatear moneda
   const formatCurrency = (value: number, currency: string = 'DOP') => {
-    return new Intl.NumberFormat('es-DO', {
-      style: 'currency',
-      currency: currency,
-      minimumFractionDigits: 2
-    }).format(value);
+    const label = currency === 'DOP' ? 'RD$' : currency === 'USD' ? '$' : currency;
+    return formatMoney(value, label);
   };
 
   const loadBanks = async () => {
@@ -49,13 +47,14 @@ export default function BanksPage() {
       return;
     }
     try {
-      const rows = await bankAccountsService.getAll(user.id);
+      const today = new Date().toISOString().slice(0, 10);
+      const rows = await bankAccountsService.getBalancesAsOf(user.id, today);
       const mapped: Bank[] = (rows || []).map((b: any) => ({
         id: b.id,
         name: b.bank_name,
         account_number: b.account_number,
         account_type: b.account_type,
-        balance: Number(b.current_balance ?? b.initial_balance ?? 0),
+        balance: Number(b.accounting_balance ?? 0),
         currency: b.currency || 'DOP',
         is_active: b.is_active !== false,
         bank_code: b.bank_code || '',

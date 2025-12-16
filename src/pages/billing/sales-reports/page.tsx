@@ -6,6 +6,7 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
 import { invoicesService, receiptsService } from '../../../services/database';
+import { formatDateEsDO } from '../../../utils/date';
 
 export default function SalesReportsPage() {
   const { user } = useAuth();
@@ -242,7 +243,7 @@ export default function SalesReportsPage() {
           name: c.name,
           invoices: c.invoices,
           revenue: `RD$ ${c.revenue.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
-          lastPurchase: new Date(c.last).toLocaleDateString(),
+          lastPurchase: formatDateEsDO(c.last),
         }));
       setTopCustomers(customerArray);
 
@@ -325,7 +326,7 @@ export default function SalesReportsPage() {
     // Encabezados
     worksheet.addRow([reportTitle]);
     worksheet.addRow([`Período: ${periodTitle}`]);
-    worksheet.addRow([`Generado el: ${new Date().toLocaleDateString()}`]);
+    worksheet.addRow([`Generado el: ${formatDateEsDO(new Date())}`]);
     worksheet.addRow([]);
 
     // Datos según el tipo de reporte seleccionado
@@ -421,7 +422,7 @@ export default function SalesReportsPage() {
     doc.setFontSize(12);
     doc.setTextColor(100);
     doc.text(`Período: ${periodTitle}`, 14, 30);
-    doc.text(`Generado el: ${new Date().toLocaleDateString()}`, 14, 36);
+    doc.text(`Generado el: ${formatDateEsDO(new Date())}`, 14, 36);
     
     // Datos según el tipo de reporte
     if (selectedReport === 'sales-summary') {

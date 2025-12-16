@@ -6,6 +6,7 @@ import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
 import { customersService, invoicesService, creditDebitNotesService, accountingSettingsService, journalEntriesService, chartAccountsService, settingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface CreditNote {
   id: string;
@@ -201,9 +202,9 @@ export default function CreditNotesPage() {
     
     const summaryData = [
       ['Concepto', 'Valor'],
-      ['Total Notas de Crédito', `RD$ ${totalAmount.toLocaleString()}`],
-      ['Total Aplicado', `RD$ ${totalApplied.toLocaleString()}`],
-      ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
+      ['Total Notas de Crédito', `${formatMoney(totalAmount, 'RD$')}`],
+      ['Total Aplicado', `${formatMoney(totalApplied, 'RD$')}`],
+      ['Saldo Pendiente', `${formatMoney(totalBalance, 'RD$')}`],
       ['Notas Pendientes', pendingNotes.toString()],
       ['Total de Notas', activeNotes.length.toString()]
     ];
@@ -224,9 +225,9 @@ export default function CreditNotesPage() {
       note.noteNumber,
       note.customerName,
       note.date,
-      `RD$ ${note.amount.toLocaleString()}`,
-      `RD$ ${note.appliedAmount.toLocaleString()}`,
-      `RD$ ${note.balance.toLocaleString()}`,
+      `${formatMoney(note.amount, 'RD$')}`,
+      `${formatMoney(note.appliedAmount, 'RD$')}`,
+      `${formatMoney(note.balance, 'RD$')}`,
       note.reason,
       getStatusName(note.status)
     ]);
@@ -269,9 +270,9 @@ export default function CreditNotesPage() {
       noteNumber: note.noteNumber,
       customerName: note.customerName,
       date: note.date,
-      amount: note.amount,
-      appliedAmount: note.appliedAmount,
-      balance: note.balance,
+      amount: formatMoney(note.amount, 'RD$'),
+      appliedAmount: formatMoney(note.appliedAmount, 'RD$'),
+      balance: formatMoney(note.balance, 'RD$'),
       reason: note.reason,
       concept: note.concept,
       status: getStatusName(note.status),
@@ -549,7 +550,7 @@ export default function CreditNotesPage() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Notas</p>
                 <p className="text-2xl font-bold text-blue-600">
-                  RD${filteredNotes.reduce((sum, n) => sum + n.amount, 0).toLocaleString()}
+                  {formatMoney(filteredNotes.reduce((sum, n) => sum + n.amount, 0), 'RD$')}
                 </p>
               </div>
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -563,7 +564,7 @@ export default function CreditNotesPage() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Saldo Disponible</p>
                 <p className="text-2xl font-bold text-green-600">
-                  RD${filteredNotes.reduce((sum, n) => sum + n.balance, 0).toLocaleString()}
+                  {formatMoney(filteredNotes.reduce((sum, n) => sum + n.balance, 0), 'RD$')}
                 </p>
               </div>
               <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
@@ -577,7 +578,7 @@ export default function CreditNotesPage() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Monto Aplicado</p>
                 <p className="text-2xl font-bold text-purple-600">
-                  RD${filteredNotes.reduce((sum, n) => sum + n.appliedAmount, 0).toLocaleString()}
+                  {formatMoney(filteredNotes.reduce((sum, n) => sum + n.appliedAmount, 0), 'RD$')}
                 </p>
               </div>
               <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
@@ -699,13 +700,13 @@ export default function CreditNotesPage() {
                       {note.date}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD${note.amount.toLocaleString()}
+                      {formatMoney(note.amount, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD${note.appliedAmount.toLocaleString()}
+                      {formatMoney(note.appliedAmount, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600">
-                      RD${note.balance.toLocaleString()}
+                      {formatMoney(note.balance, 'RD$')}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900 max-w-xs truncate">
                       {note.reason}
@@ -941,7 +942,7 @@ export default function CreditNotesPage() {
               <div className="mb-4 p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600">Nota: <span className="font-medium">{selectedNote.noteNumber}</span></p>
                 <p className="text-sm text-gray-600">Cliente: <span className="font-medium">{selectedNote.customerName}</span></p>
-                <p className="text-lg font-semibold text-green-600">Saldo disponible: RD${selectedNote.balance.toLocaleString()}</p>
+                <p className="text-lg font-semibold text-green-600">Saldo disponible: {formatMoney(selectedNote.balance, 'RD$')}</p>
               </div>
               
               <form onSubmit={handleSaveApplication} className="space-y-4">
@@ -1049,7 +1050,7 @@ export default function CreditNotesPage() {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Monto Original</label>
-                    <p className="text-2xl font-bold text-blue-600">RD${selectedNote.amount.toLocaleString()}</p>
+                    <p className="text-2xl font-bold text-blue-600">{formatMoney(selectedNote.amount, 'RD$')}</p>
                   </div>
                 </div>
                 
@@ -1068,12 +1069,12 @@ export default function CreditNotesPage() {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Monto Aplicado</label>
-                    <p className="text-lg font-semibold text-purple-600">RD${selectedNote.appliedAmount.toLocaleString()}</p>
+                    <p className="text-lg font-semibold text-purple-600">{formatMoney(selectedNote.appliedAmount, 'RD$')}</p>
                   </div>
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Saldo Disponible</label>
-                    <p className="text-2xl font-bold text-green-600">RD${selectedNote.balance.toLocaleString()}</p>
+                    <p className="text-2xl font-bold text-green-600">{formatMoney(selectedNote.balance, 'RD$')}</p>
                   </div>
                 </div>
               </div>

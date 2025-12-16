@@ -1,10 +1,10 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface Report608Data {
   ncf: string;
@@ -390,7 +390,7 @@ export default function Report608Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Monto Total Cancelado</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.total_amount.toLocaleString('es-DO')}
+                    {formatMoney(totals.total_amount, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -403,7 +403,7 @@ export default function Report608Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">ITBIS Cancelado</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.total_tax.toLocaleString('es-DO')}
+                    {formatMoney(totals.total_tax, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -467,10 +467,10 @@ export default function Report608Page() {
                       {doc.customer_rnc}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {doc.amount.toLocaleString('es-DO')}
+                      {formatMoney(doc.amount, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {doc.tax_amount.toLocaleString('es-DO')}
+                      {formatMoney(doc.tax_amount, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {doc.reason}

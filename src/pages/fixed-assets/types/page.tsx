@@ -4,6 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
 import { assetTypesService, chartAccountsService, settingsService } from '../../../services/database';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface AssetType {
   id: string;
@@ -254,10 +255,7 @@ export default function AssetTypesPage() {
 
     // Función auxiliar para formatear moneda
     const formatCurrency = (amount: number) => {
-      return new Intl.NumberFormat('es-DO', {
-        style: 'currency',
-        currency: 'DOP'
-      }).format(amount);
+      return formatMoney(amount, 'RD$');
     };
 
     // Generar contenido HTML para el PDF

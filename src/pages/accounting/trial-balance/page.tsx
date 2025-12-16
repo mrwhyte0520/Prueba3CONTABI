@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState, type FC } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { financialReportsService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
+import { formatMoney } from '../../../utils/numberFormat';
 
 // Estilos CSS para impresión
 const printStyles = `
@@ -45,7 +46,7 @@ interface TrialBalanceRow {
   allowPosting?: boolean | null;
 }
 
-const TrialBalancePage: React.FC = () => {
+const TrialBalancePage: FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -337,8 +338,7 @@ const TrialBalancePage: React.FC = () => {
   };
 
   const formatAmount = (value: number) => {
-    if (!value) return '-';
-    return `RD$${value.toLocaleString('es-DO', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    return formatMoney(value);
   };
 
   const totalPrevDebit = rows.reduce((sum, r) => sum + r.prevDebit, 0);

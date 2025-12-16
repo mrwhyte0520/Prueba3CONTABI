@@ -1,9 +1,10 @@
-
 import { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../../components/layout/DashboardLayout';
 import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
+import { formatDateEsDO } from '../../../utils/date';
+import { formatAmount } from '../../../utils/numberFormat';
 
 interface Report606Data {
   id: string;
@@ -339,14 +340,14 @@ export default function Report606Page() {
 
     let txtContent = `REPORTE 606 - COMPRAS Y SERVICIOS\n`;
     txtContent += `Período: ${selectedPeriod}\n`;
-    txtContent += `Fecha de generación: ${new Date().toLocaleDateString()}\n\n`;
+    txtContent += `Fecha de generación: ${formatDateEsDO(new Date())}\n\n`;
 
     if (summary) {
       txtContent += `RESUMEN:\n`;
       txtContent += `Total de registros: ${summary.totalRecords}\n`;
-      txtContent += `Monto total: RD$ ${summary.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })}\n`;
-      txtContent += `Total ITBIS: RD$ ${summary.totalItbis.toLocaleString('es-DO', { minimumFractionDigits: 2 })}\n`;
-      txtContent += `Total retenciones: RD$ ${summary.totalRetention.toLocaleString('es-DO', { minimumFractionDigits: 2 })}\n\n`;
+      txtContent += `Monto total: RD$ ${formatAmount(summary.totalAmount)}\n`;
+      txtContent += `Total ITBIS: RD$ ${formatAmount(summary.totalItbis)}\n`;
+      txtContent += `Total retenciones: RD$ ${formatAmount(summary.totalRetention)}\n\n`;
     }
 
     txtContent += `DETALLE:\n`;
@@ -356,8 +357,8 @@ export default function Report606Page() {
       txtContent += `${index + 1}. RNC/Cédula: ${row.rnc_cedula}\n`;
       txtContent += `   NCF: ${row.ncf}\n`;
       txtContent += `   Fecha: ${row.fecha_comprobante}\n`;
-      txtContent += `   Monto: RD$ ${row.monto_facturado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}\n`;
-      txtContent += `   ITBIS: RD$ ${row.itbis_facturado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}\n`;
+      txtContent += `   Monto: RD$ ${formatAmount(row.monto_facturado)}\n`;
+      txtContent += `   ITBIS: RD$ ${formatAmount(row.itbis_facturado)}\n`;
       txtContent += `   Forma de pago: ${row.forma_pago}\n`;
       txtContent += `${'-'.repeat(80)}\n`;
     });
@@ -493,21 +494,21 @@ export default function Report606Page() {
                   
                   <div className="bg-green-50 p-4 rounded-lg">
                     <div className="text-2xl font-bold text-green-600">
-                      RD$ {summary.totalAmount.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                      RD$ {formatAmount(summary.totalAmount)}
                     </div>
                     <div className="text-sm text-gray-600">Monto Total</div>
                   </div>
                   
                   <div className="bg-yellow-50 p-4 rounded-lg">
                     <div className="text-2xl font-bold text-yellow-600">
-                      RD$ {summary.totalItbis.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                      RD$ {formatAmount(summary.totalItbis)}
                     </div>
                     <div className="text-sm text-gray-600">Total ITBIS</div>
                   </div>
                   
                   <div className="bg-red-50 p-4 rounded-lg">
                     <div className="text-2xl font-bold text-red-600">
-                      RD$ {summary.totalRetention.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                      RD$ {formatAmount(summary.totalRetention)}
                     </div>
                     <div className="text-sm text-gray-600">Total Retenciones</div>
                   </div>
@@ -602,13 +603,13 @@ export default function Report606Page() {
                           {row.fecha_comprobante}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          RD$ {row.monto_facturado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                          RD$ {formatAmount(row.monto_facturado)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          RD$ {row.itbis_facturado.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                          RD$ {formatAmount(row.itbis_facturado)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          RD$ {row.itbis_retenido.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                          RD$ {formatAmount(row.itbis_retenido)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {row.forma_pago}

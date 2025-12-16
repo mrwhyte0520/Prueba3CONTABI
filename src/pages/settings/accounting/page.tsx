@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent, type FormEvent } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
-import { settingsService, chartAccountsService } from '../../../services/database';
+import { auxiliariesReconciliationService, settingsService, chartAccountsService } from '../../../services/database';
 import { useAuth } from '../../../hooks/useAuth';
 
 interface AccountingSettings {
@@ -50,6 +50,8 @@ export default function AccountingSettingsPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [reconcilingAuxiliaries, setReconcilingAuxiliaries] = useState(false);
+  const [recalculatingBalances, setRecalculatingBalances] = useState(false);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
 
@@ -94,7 +96,7 @@ export default function AccountingSettingsPage() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
     setLoading(true);
@@ -111,10 +113,9 @@ export default function AccountingSettingsPage() {
   };
 
   const handleInputChange = (field: keyof AccountingSettings, value: any) => {
-    setSettings(prev => ({ ...prev, [field]: value }));
+    setSettings((prev) => ({ ...prev, [field]: value }));
   };
 
-  // ----- Quick Actions: Chart of Accounts (localStorage based) -----
   const COA_KEY = 'contabi_chart_of_accounts';
 
   const baseChartOfAccounts = [
@@ -125,7 +126,7 @@ export default function AccountingSettingsPage() {
     { code: '2', name: 'Pasivos', type: 'group' },
     { code: '3', name: 'Patrimonio', type: 'group' },
     { code: '4', name: 'Ingresos', type: 'group' },
-    { code: '5', name: 'Gastos', type: 'group' }
+    { code: '5', name: 'Gastos', type: 'group' },
   ];
 
   const triggerImport = () => fileInputRef.current?.click();
@@ -133,18 +134,24 @@ export default function AccountingSettingsPage() {
   const parseCsv = (text: string) => {
     const lines = text.split(/\r?\n/).filter(Boolean);
     const [h, ...rows] = lines;
-    const headers = h.split(',').map(s => s.trim().toLowerCase());
+    const headers = h.split(',').map((s) => s.trim().toLowerCase());
     const idxCode = headers.indexOf('code');
     const idxName = headers.indexOf('name');
     const idxType = headers.indexOf('type');
     if (idxCode === -1 || idxName === -1) return [] as any[];
-    return rows.map(r => {
-      const cols = r.split(',');
-      return { code: (cols[idxCode]||'').trim(), name: (cols[idxName]||'').trim(), type: (cols[idxType]||'account').trim() };
-    }).filter(x => x.code && x.name);
+    return rows
+      .map((r) => {
+        const cols = r.split(',');
+        return {
+          code: (cols[idxCode] || '').trim(),
+          name: (cols[idxName] || '').trim(),
+          type: (cols[idxType] || 'account').trim(),
+        };
+      })
+      .filter((x) => x.code && x.name);
   };
 
-  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
@@ -158,12 +165,18 @@ export default function AccountingSettingsPage() {
         data = parseCsv(text);
       }
       if (!Array.isArray(data) || data.length === 0) throw new Error('Formato inválido o vacío');
-      // Normalize
-      const normalized = data.map((x: any) => ({ code: String(x.code||'').trim(), name: String(x.name||'').trim(), type: (x.type||'account').trim() }))
+
+      const normalized = data
+        .map((x: any) => ({
+          code: String(x.code || '').trim(),
+          name: String(x.name || '').trim(),
+          type: String(x.type || 'account').trim(),
+        }))
         .filter((x: any) => x.code && x.name);
+
       localStorage.setItem(COA_KEY, JSON.stringify(normalized));
       setMessage({ type: 'success', text: `Plan contable importado (${normalized.length} cuentas)` });
-    } catch (err) {
+    } catch {
       setMessage({ type: 'error', text: 'No se pudo importar el plan. Verifica el archivo (CSV/JSON).' });
     } finally {
       setImporting(false);
@@ -177,7 +190,7 @@ export default function AccountingSettingsPage() {
       const data = raw ? JSON.parse(raw) : baseChartOfAccounts;
       const toCsv = (rows: any[]) => {
         const header = 'code,name,type';
-        const body = rows.map(r => `${r.code},${r.name},${r.type||'account'}`).join('\r\n');
+        const body = rows.map((r) => `${r.code},${r.name},${r.type || 'account'}`).join('\r\n');
         return `\uFEFF${header}\r\n${body}\r\n`;
       };
       const csv = toCsv(data);
@@ -190,8 +203,8 @@ export default function AccountingSettingsPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      setMessage({ type: 'success', text: 'Plan contable exportado (CSV)'});
-    } catch (err) {
+      setMessage({ type: 'success', text: 'Plan contable exportado (CSV)' });
+    } catch {
       setMessage({ type: 'error', text: 'No se pudo exportar el plan.' });
     } finally {
       setExporting(false);
@@ -203,9 +216,54 @@ export default function AccountingSettingsPage() {
     setMessage({ type: 'success', text: 'Plan contable restablecido al plan base.' });
   };
 
+  const handleReconcileAuxiliaries = async () => {
+    if (!user?.id) return;
+    if (!confirm('¿Reconciliar auxiliares CxC/CxP? Esto creará asientos contables faltantes.')) return;
+    setReconcilingAuxiliaries(true);
+    setMessage(null);
+    try {
+      const { ar, ap } = await auxiliariesReconciliationService.reconcileAll(user.id);
+
+      setMessage({
+        type: 'success',
+        text:
+          `Reconciliación completada. ` +
+          `CxC: facturas ${ar.createdInvoiceEntries}, pagos ${ar.createdPaymentEntries}, omitidos ${ar.skipped}. ` +
+          `CxP: facturas ${ap.createdInvoiceEntries}, pagos ${ap.createdPaymentEntries}, omitidos ${ap.skipped}.`,
+      });
+    } catch (error) {
+      setMessage({ type: 'error', text: 'No se pudo reconciliar CxC/CxP. Revisa la consola.' });
+      // eslint-disable-next-line no-console
+      console.error('Error reconciliando auxiliares CxC/CxP:', error);
+    } finally {
+      setReconcilingAuxiliaries(false);
+    }
+  };
+
+  const handleRecalculateBalances = async () => {
+    if (!user?.id) return;
+    if (!confirm('¿Recalcular saldos auxiliares de clientes y suplidores? Esto actualizará current_balance.')) return;
+    setRecalculatingBalances(true);
+    setMessage(null);
+    try {
+      const res = await auxiliariesReconciliationService.recalculateAllBalances(user.id);
+      setMessage({
+        type: 'success',
+        text: `Saldos recalculados. Clientes actualizados: ${res.customersUpdated}, Suplidores actualizados: ${res.suppliersUpdated}.`,
+      });
+    } catch (error) {
+      setMessage({ type: 'error', text: 'No se pudieron recalcular los saldos. Revisa la consola.' });
+      // eslint-disable-next-line no-console
+      console.error('Error recalculando saldos auxiliares:', error);
+    } finally {
+      setRecalculatingBalances(false);
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
+
         {/* Header */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex items-center justify-between">
@@ -220,8 +278,37 @@ export default function AccountingSettingsPage() {
               className="flex items-center space-x-2 text-gray-600 hover:text-gray-900"
             >
               <i className="ri-arrow-left-line"></i>
-              <span>Volver a Configuración</span>
+              <span>Volver</span>
             </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Acciones rápidas</h2>
+              <p className="text-gray-600 text-sm mt-1">
+                Repara asientos faltantes para que CxC/CxP coincidan con contabilidad.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                type="button"
+                onClick={handleReconcileAuxiliaries}
+                disabled={reconcilingAuxiliaries}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {reconcilingAuxiliaries ? 'Reconciliando...' : 'Reconciliar auxiliares CxC/CxP'}
+              </button>
+              <button
+                type="button"
+                onClick={handleRecalculateBalances}
+                disabled={recalculatingBalances}
+                className="bg-gray-900 text-white px-4 py-2 rounded-lg hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {recalculatingBalances ? 'Recalculando...' : 'Recalcular saldos auxiliares'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -246,7 +333,7 @@ export default function AccountingSettingsPage() {
                 <input
                   type="date"
                   required
-                  value={settings.fiscal_year_start}
+                  value={settings.fiscal_year_start || ''}
                   onChange={(e) => handleInputChange('fiscal_year_start', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -258,7 +345,7 @@ export default function AccountingSettingsPage() {
                 <input
                   type="date"
                   required
-                  value={settings.fiscal_year_end}
+                  value={settings.fiscal_year_end || ''}
                   onChange={(e) => handleInputChange('fiscal_year_end', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -373,7 +460,7 @@ export default function AccountingSettingsPage() {
                   Moneda Principal *
                 </label>
                 <select
-                  value={settings.default_currency}
+                  value={settings.default_currency || 'DOP'}
                   onChange={(e) => handleInputChange('default_currency', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
@@ -387,7 +474,7 @@ export default function AccountingSettingsPage() {
                   Decimales *
                 </label>
                 <select
-                  value={settings.decimal_places}
+                  value={settings.decimal_places ?? 2}
                   onChange={(e) => handleInputChange('decimal_places', parseInt(e.target.value))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
@@ -401,7 +488,7 @@ export default function AccountingSettingsPage() {
                   Formato de Fecha
                 </label>
                 <select
-                  value={settings.date_format}
+                  value={settings.date_format || 'DD/MM/YYYY'}
                   onChange={(e) => handleInputChange('date_format', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
@@ -415,7 +502,7 @@ export default function AccountingSettingsPage() {
                   Formato de Números
                 </label>
                 <select
-                  value={settings.number_format}
+                  value={settings.number_format || '1,234.56'}
                   onChange={(e) => handleInputChange('number_format', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
@@ -435,7 +522,7 @@ export default function AccountingSettingsPage() {
                 <input
                   type="checkbox"
                   id="auto_backup"
-                  checked={settings.auto_backup}
+                  checked={!!settings.auto_backup}
                   onChange={(e) => handleInputChange('auto_backup', e.target.checked)}
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                 />
@@ -451,7 +538,7 @@ export default function AccountingSettingsPage() {
                       Frecuencia de Respaldo
                     </label>
                     <select
-                      value={settings.backup_frequency}
+                      value={settings.backup_frequency || 'daily'}
                       onChange={(e) => handleInputChange('backup_frequency', e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
@@ -468,7 +555,7 @@ export default function AccountingSettingsPage() {
                       type="number"
                       min="1"
                       max="365"
-                      value={settings.retention_period}
+                      value={settings.retention_period ?? 30}
                       onChange={(e) => handleInputChange('retention_period', parseInt(e.target.value))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />

@@ -351,6 +351,726 @@ export const apInvoiceNotesService = {
   },
 };
 
+export const auxiliariesReconciliationService = {
+  async reconcileCxCAuxiliaries(userId: string) {
+    const tenantId = await resolveTenantId(userId);
+    if (!tenantId) throw new Error('userId required');
+
+    const result = {
+      createdInvoiceEntries: 0,
+      createdPaymentEntries: 0,
+      skipped: 0,
+    };
+
+    const nowStr = new Date().toISOString();
+
+    const [settings, chartAccounts, bankAccounts, customers, journalEntries] = await Promise.all([
+      accountingSettingsService.get(tenantId),
+      chartAccountsService.getAll(tenantId),
+      supabase.from('bank_accounts').select('id, chart_account_id').eq('user_id', tenantId),
+      supabase.from('customers').select('id, ar_account_id').eq('user_id', tenantId),
+      supabase.from('journal_entries').select('id, entry_number, reference').eq('user_id', tenantId),
+    ]);
+
+    const bankAccountsMap = new Map<string, string>();
+    ((bankAccounts as any)?.data || []).forEach((b: any) => {
+      if (!b?.id) return;
+      if (b.chart_account_id) bankAccountsMap.set(String(b.id), String(b.chart_account_id));
+    });
+
+    const customerArMap = new Map<string, string>();
+    ((customers as any)?.data || []).forEach((c: any) => {
+      if (!c?.id) return;
+      if (c.ar_account_id) customerArMap.set(String(c.id), String(c.ar_account_id));
+    });
+
+    const normalizeCode = (code: string | null | undefined) => String(code || '').replace(/\./g, '');
+    const cash100101 = (chartAccounts || []).find((a: any) => normalizeCode(a.code) === '100101');
+    const cashAccountId = (settings as any)?.cash_account_id
+      ? String((settings as any).cash_account_id)
+      : cash100101?.id
+        ? String(cash100101.id)
+        : '';
+
+    const arDefaultAccountId = (settings as any)?.ar_account_id ? String((settings as any).ar_account_id) : '';
+    const salesAccountId = (settings as any)?.sales_account_id ? String((settings as any).sales_account_id) : '';
+    const taxAccountId = (settings as any)?.sales_tax_account_id ? String((settings as any).sales_tax_account_id) : '';
+
+    const jeKeySet = new Set<string>();
+    const jeEntryNumberSet = new Set<string>();
+
+    ((journalEntries as any)?.data || []).forEach((je: any) => {
+      const ref = je?.reference != null ? String(je.reference) : '';
+      const num = je?.entry_number != null ? String(je.entry_number) : '';
+      if (ref && num) jeKeySet.add(`${ref}|${num}`);
+      if (num) jeEntryNumberSet.add(num);
+    });
+
+    const { data: invoices, error: invErr } = await supabase
+      .from('invoices')
+      .select('id, invoice_number, invoice_date, subtotal, tax_amount, status, customer_id')
+      .eq('user_id', tenantId);
+    if (invErr) throw invErr;
+
+    const invoicesMap = new Map<string, any>();
+    (invoices || []).forEach((inv: any) => {
+      if (inv?.id) invoicesMap.set(String(inv.id), inv);
+    });
+
+    for (const inv of invoices || []) {
+      const invoiceId = inv?.id ? String(inv.id) : '';
+      const invoiceNumber = inv?.invoice_number ? String(inv.invoice_number) : '';
+      if (!invoiceId || !invoiceNumber) continue;
+
+      const status = String(inv.status || '');
+      if (status === 'draft') continue;
+
+      const key = `${invoiceId}|${invoiceNumber}`;
+      if (jeKeySet.has(key)) continue;
+
+      const customerId = inv?.customer_id ? String(inv.customer_id) : '';
+      const arAccountId = (customerId && customerArMap.get(customerId)) || arDefaultAccountId;
+
+      const rawSubtotal = Number(inv.subtotal) || 0;
+      const rawTax = Number(inv.tax_amount) || 0;
+      const subtotal = Number(rawSubtotal.toFixed(2));
+      const tax = Number(rawTax.toFixed(2));
+      const total = Number((subtotal + tax).toFixed(2));
+
+      if (!arAccountId || (tax > 0 && !taxAccountId) || total <= 0) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const lines: any[] = [
+        {
+          account_id: arAccountId,
+          description: 'Cuentas por Cobrar Clientes',
+          debit_amount: total,
+          credit_amount: 0,
+          line_number: 1,
+        },
+      ];
+
+      let assigned = 0;
+      try {
+        const { data: salesLines, error: salesLinesError } = await supabase
+          .from('invoice_lines')
+          .select(`
+            quantity,
+            unit_price,
+            line_total,
+            inventory_items (income_account_id)
+          `)
+          .eq('invoice_id', invoiceId);
+
+        if (!salesLinesError && salesLines && salesLines.length > 0 && subtotal > 0) {
+          const accountBaseTotals: Record<string, number> = {};
+          let totalLinesBase = 0;
+          let totalProductBase = 0;
+
+          salesLines.forEach((line: any) => {
+            const qty = Number(line.quantity) || 0;
+            const unitPrice = Number(line.unit_price) || 0;
+            const lineBase = Number(line.line_total) || qty * unitPrice;
+            if (lineBase <= 0) return;
+            totalLinesBase += lineBase;
+
+            const invItem = line.inventory_items as any | null;
+            const incomeAccountId = invItem?.income_account_id as string | null;
+            if (incomeAccountId) {
+              totalProductBase += lineBase;
+              accountBaseTotals[incomeAccountId] = (accountBaseTotals[incomeAccountId] || 0) + lineBase;
+            }
+          });
+
+          if (totalLinesBase > 0 && totalProductBase > 0) {
+            const productPortion = (subtotal * totalProductBase) / totalLinesBase;
+
+            for (const [accountId, baseAmount] of Object.entries(accountBaseTotals)) {
+              if (baseAmount <= 0) continue;
+              const allocated = (productPortion * (baseAmount as number)) / totalProductBase;
+              const roundedAllocated = Number(allocated.toFixed(2));
+              if (roundedAllocated <= 0) continue;
+
+              lines.push({
+                account_id: accountId,
+                description: 'Ventas',
+                debit_amount: 0,
+                credit_amount: roundedAllocated,
+              });
+              assigned += roundedAllocated;
+            }
+          }
+        }
+      } catch (salesAllocError) {
+        console.error('Error determining income accounts for invoice lines (reconcileCxC):', salesAllocError);
+      }
+
+      const remainingSales = Number((subtotal - assigned).toFixed(2));
+      if (remainingSales > 0) {
+        if (salesAccountId) {
+          lines.push({
+            account_id: salesAccountId,
+            description: 'Ventas',
+            debit_amount: 0,
+            credit_amount: remainingSales,
+          });
+        } else {
+          result.skipped += 1;
+          continue;
+        }
+      }
+
+      if (tax > 0) {
+        lines.push({
+          account_id: taxAccountId,
+          description: 'ITBIS por pagar',
+          debit_amount: 0,
+          credit_amount: tax,
+        });
+      }
+
+      lines.forEach((l, idx) => {
+        l.line_number = idx + 1;
+      });
+
+      try {
+        if (jeEntryNumberSet.has(invoiceNumber)) {
+          result.skipped += 1;
+          continue;
+        }
+
+        await journalEntriesService.createWithLines(tenantId, {
+          entry_number: invoiceNumber,
+          entry_date: String(inv.invoice_date || nowStr.slice(0, 10)),
+          description: `Factura ${invoiceNumber}`.trim(),
+          reference: invoiceId,
+          status: 'posted',
+        }, lines);
+
+        jeEntryNumberSet.add(invoiceNumber);
+      } catch (error) {
+        result.skipped += 1;
+        continue;
+      }
+
+      result.createdInvoiceEntries += 1;
+      jeKeySet.add(key);
+    }
+
+    const { data: payments, error: payErr } = await supabase
+      .from('customer_payments')
+      .select('id, payment_date, amount, payment_method, bank_account_id, invoice_id, customer_id')
+      .eq('user_id', tenantId);
+    if (payErr) throw payErr;
+
+    for (const p of payments || []) {
+      const paymentId = p?.id ? String(p.id) : '';
+      if (!paymentId) continue;
+      if (jeEntryNumberSet.has(paymentId)) continue;
+
+      const amount = Number(p.amount) || 0;
+      if (amount <= 0) continue;
+
+      const invoiceId = p?.invoice_id ? String(p.invoice_id) : '';
+      const invoice = invoiceId ? invoicesMap.get(invoiceId) : null;
+
+      const customerId = p?.customer_id ? String(p.customer_id) : (invoice?.customer_id ? String(invoice.customer_id) : '');
+      const arAccountId = (customerId && customerArMap.get(customerId)) || arDefaultAccountId;
+
+      let debitAccountId: string = '';
+      if (p?.bank_account_id) {
+        const bankAcc = bankAccountsMap.get(String(p.bank_account_id));
+        if (bankAcc) debitAccountId = bankAcc;
+      }
+      if (!debitAccountId) debitAccountId = cashAccountId;
+
+      if (!debitAccountId || !arAccountId) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const entryDate = String(p.payment_date || nowStr.slice(0, 10));
+      const invoiceNumber = invoice?.invoice_number ? String(invoice.invoice_number) : '';
+
+      const lines: any[] = [
+        {
+          account_id: debitAccountId,
+          description: 'Cobro de cliente',
+          debit_amount: Number(amount.toFixed(2)),
+          credit_amount: 0,
+          line_number: 1,
+        },
+        {
+          account_id: arAccountId,
+          description: 'Cuentas por Cobrar Clientes',
+          debit_amount: 0,
+          credit_amount: Number(amount.toFixed(2)),
+          line_number: 2,
+        },
+      ];
+
+      await journalEntriesService.createWithLines(tenantId, {
+        entry_number: paymentId,
+        entry_date: entryDate,
+        description: invoiceNumber ? `Pago factura ${invoiceNumber}` : 'Pago de cliente',
+        reference: paymentId,
+        status: 'posted',
+      }, lines);
+
+      result.createdPaymentEntries += 1;
+      jeEntryNumberSet.add(paymentId);
+    }
+
+    return result;
+  },
+
+  async reconcileCxPAuxiliaries(userId: string) {
+    const tenantId = await resolveTenantId(userId);
+    if (!tenantId) throw new Error('userId required');
+
+    const result = {
+      createdInvoiceEntries: 0,
+      createdPaymentEntries: 0,
+      skipped: 0,
+    };
+
+    const nowStr = new Date().toISOString();
+
+    const [settings, chartAccounts, bankAccounts, journalEntries] = await Promise.all([
+      accountingSettingsService.get(tenantId),
+      chartAccountsService.getAll(tenantId),
+      supabase.from('bank_accounts').select('id, chart_account_id').eq('user_id', tenantId),
+      supabase.from('journal_entries').select('id, entry_number, reference').eq('user_id', tenantId),
+    ]);
+
+    const normalizeCode = (code: string | null | undefined) => String(code || '').replace(/\./g, '');
+
+    const apDefaultAccountId = (settings as any)?.ap_account_id ? String((settings as any).ap_account_id) : '';
+    const itbisReceivableAccountIdFromSettings = (settings as any)?.itbis_receivable_account_id
+      ? String((settings as any).itbis_receivable_account_id)
+      : '';
+
+    const apFallback = (chartAccounts || []).find((a: any) => normalizeCode(a.code).startsWith('2001'));
+    const apAccountId = apDefaultAccountId || (apFallback?.id ? String(apFallback.id) : '');
+
+    const itbis110201 = (chartAccounts || []).find((a: any) => normalizeCode(a.code) === '110201');
+    const itbisReceivableAccountId = itbisReceivableAccountIdFromSettings || (itbis110201?.id ? String(itbis110201.id) : '');
+
+    const bankAccountsMap = new Map<string, string>();
+    ((bankAccounts as any)?.data || []).forEach((b: any) => {
+      if (!b?.id) return;
+      if (b.chart_account_id) bankAccountsMap.set(String(b.id), String(b.chart_account_id));
+    });
+
+    const jeKeySet = new Set<string>();
+    const jeRefSet = new Set<string>();
+    const jeEntryNumberSet = new Set<string>();
+    ((journalEntries as any)?.data || []).forEach((je: any) => {
+      const ref = je?.reference != null ? String(je.reference) : '';
+      const num = je?.entry_number != null ? String(je.entry_number) : '';
+      if (ref && num) jeKeySet.add(`${ref}|${num}`);
+      if (ref) jeRefSet.add(ref);
+      if (num) jeEntryNumberSet.add(num);
+    });
+
+    const { data: apInvoices, error: apInvErr } = await supabase
+      .from('ap_invoices')
+      .select('id, invoice_number, invoice_date, itbis_to_cost, status')
+      .eq('user_id', tenantId);
+    if (apInvErr) throw apInvErr;
+
+    const missingApInvoiceIds: string[] = [];
+    const apInvoicesMap = new Map<string, any>();
+    (apInvoices || []).forEach((inv: any) => {
+      const id = inv?.id ? String(inv.id) : '';
+      const num = inv?.invoice_number ? String(inv.invoice_number) : '';
+      if (!id) return;
+      apInvoicesMap.set(id, inv);
+      if (id && num && !jeKeySet.has(`${id}|${num}`) && String(inv.status || '') !== 'draft') {
+        missingApInvoiceIds.push(id);
+      }
+    });
+
+    let apLines: any[] = [];
+    if (missingApInvoiceIds.length > 0) {
+      const { data: linesData, error: linesErr } = await supabase
+        .from('ap_invoice_lines')
+        .select('ap_invoice_id, expense_account_id, inventory_item_id, line_total, itbis_amount')
+        .in('ap_invoice_id', missingApInvoiceIds);
+      if (linesErr) throw linesErr;
+      apLines = linesData || [];
+    }
+
+    const inventoryItemIds = Array.from(
+      new Set(
+        (apLines || [])
+          .map((l: any) => (l?.inventory_item_id ? String(l.inventory_item_id) : ''))
+          .filter((x: string) => !!x)
+      )
+    );
+
+    const inventoryAccountByItemId: Record<string, string> = {};
+    if (inventoryItemIds.length > 0) {
+      const { data: invRows, error: invErr } = await supabase
+        .from('inventory_items')
+        .select('id, inventory_account_id')
+        .eq('user_id', tenantId)
+        .in('id', inventoryItemIds);
+      if (!invErr && invRows) {
+        (invRows as any[]).forEach((row: any) => {
+          if (!row?.id) return;
+          inventoryAccountByItemId[String(row.id)] = row.inventory_account_id ? String(row.inventory_account_id) : '';
+        });
+      }
+    }
+
+    const linesByInvoiceId: Record<string, any[]> = {};
+    (apLines || []).forEach((l: any) => {
+      const id = l?.ap_invoice_id ? String(l.ap_invoice_id) : '';
+      if (!id) return;
+      if (!linesByInvoiceId[id]) linesByInvoiceId[id] = [];
+      linesByInvoiceId[id].push(l);
+    });
+
+    for (const apInvoiceId of missingApInvoiceIds) {
+      const inv = apInvoicesMap.get(apInvoiceId);
+      const invoiceNumber = inv?.invoice_number ? String(inv.invoice_number) : '';
+      if (!invoiceNumber) continue;
+      if (!apAccountId) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const invLines = linesByInvoiceId[apInvoiceId] || [];
+      if (invLines.length === 0) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const itbisToCost = inv?.itbis_to_cost === true;
+      const accountTotals: Record<string, number> = {};
+      let totalItbis = 0;
+
+      invLines.forEach((l: any) => {
+        const invItemId = l?.inventory_item_id ? String(l.inventory_item_id) : '';
+        const inventoryAccountId = invItemId ? (inventoryAccountByItemId[invItemId] || '') : '';
+        const expenseAccountId = l?.expense_account_id ? String(l.expense_account_id) : '';
+        const accountId = inventoryAccountId || expenseAccountId;
+        if (!accountId) return;
+
+        const base = Number(l.line_total) || 0;
+        const itbis = Number(l.itbis_amount) || 0;
+        const amount = itbisToCost ? base + itbis : base;
+        if (amount <= 0) return;
+        accountTotals[accountId] = (accountTotals[accountId] || 0) + amount;
+        if (!itbisToCost) totalItbis += itbis;
+      });
+
+      const debitLines = Object.entries(accountTotals)
+        .filter(([_, amount]) => Number(amount) > 0)
+        .map(([accountId, amount]) => ({
+          account_id: accountId,
+          description: 'Gastos por compras a suplidor',
+          debit_amount: Number(Number(amount).toFixed(2)),
+          credit_amount: 0,
+        }));
+
+      if (debitLines.length === 0) {
+        result.skipped += 1;
+        continue;
+      }
+
+      const linesForEntry: any[] = [...debitLines];
+
+      if (!itbisToCost && totalItbis > 0) {
+        if (!itbisReceivableAccountId) {
+          result.skipped += 1;
+          continue;
+        }
+        linesForEntry.push({
+          account_id: itbisReceivableAccountId,
+          description: 'ITBIS Crédito Fiscal',
+          debit_amount: Number(totalItbis.toFixed(2)),
+          credit_amount: 0,
+        });
+      }
+
+      const totalDebit = linesForEntry.reduce((sum, l) => sum + (Number(l.debit_amount) || 0), 0);
+      if (totalDebit <= 0) {
+        result.skipped += 1;
+        continue;
+      }
+
+      linesForEntry.push({
+        account_id: apAccountId,
+        description: 'Cuentas por Pagar a Proveedores',
+        debit_amount: 0,
+        credit_amount: Number(totalDebit.toFixed(2)),
+      });
+
+      linesForEntry.forEach((l, idx) => {
+        l.line_number = idx + 1;
+      });
+
+      try {
+        if (jeEntryNumberSet.has(invoiceNumber)) {
+          result.skipped += 1;
+          continue;
+        }
+
+        await journalEntriesService.createWithLines(tenantId, {
+          entry_number: invoiceNumber,
+          entry_date: String(inv.invoice_date || nowStr.slice(0, 10)),
+          description: `Factura suplidor ${invoiceNumber}${itbisToCost ? ' (ITBIS al costo)' : ''}`.trim(),
+          reference: apInvoiceId,
+          status: 'posted',
+        }, linesForEntry);
+
+        jeEntryNumberSet.add(invoiceNumber);
+      } catch (error) {
+        result.skipped += 1;
+        continue;
+      }
+
+      result.createdInvoiceEntries += 1;
+      jeKeySet.add(`${apInvoiceId}|${invoiceNumber}`);
+    }
+
+    const { data: supplierPayments, error: spErr } = await supabase
+      .from('supplier_payments')
+      .select('id, payment_date, amount, method, bank_account_id, invoice_number, status')
+      .eq('user_id', tenantId);
+    if (spErr) throw spErr;
+
+    const defaultApBankAccountId = (settings as any)?.ap_bank_account_id ? String((settings as any).ap_bank_account_id) : '';
+
+    for (const p of supplierPayments || []) {
+      const status = String(p.status || '');
+      if (status !== 'Completado' && status !== 'completed') continue;
+
+      const paymentId = p?.id ? String(p.id) : '';
+      if (!paymentId) continue;
+      if (jeRefSet.has(paymentId)) continue;
+
+      const method = String(p.method || '').toLowerCase();
+      const isCheckPayment = method.includes('cheque') || method.includes('check');
+      if (isCheckPayment) continue;
+
+      const amount = Number(p.amount) || 0;
+      if (amount <= 0) continue;
+
+      let bankChartAccountId: string = '';
+      if (p?.bank_account_id) {
+        const bankAcc = bankAccountsMap.get(String(p.bank_account_id));
+        if (bankAcc) bankChartAccountId = bankAcc;
+      }
+      if (!bankChartAccountId) bankChartAccountId = defaultApBankAccountId;
+
+      if (!apAccountId || !bankChartAccountId) {
+        result.skipped += 1;
+        continue;
+      }
+
+      let entryNumber = `SP-${paymentId}`;
+      while (jeEntryNumberSet.has(entryNumber)) {
+        entryNumber = `SP-${paymentId}-${Math.floor(Math.random() * 1000)}`;
+      }
+
+      const lines: any[] = [
+        {
+          account_id: apAccountId,
+          description: 'Pago a proveedor - Cuentas por Pagar',
+          debit_amount: Number(amount.toFixed(2)),
+          credit_amount: 0,
+          line_number: 1,
+        },
+        {
+          account_id: bankChartAccountId,
+          description: 'Pago a proveedor - Banco',
+          debit_amount: 0,
+          credit_amount: Number(amount.toFixed(2)),
+          line_number: 2,
+        },
+      ];
+
+      try {
+        const invoiceNumber = p?.invoice_number ? String(p.invoice_number) : '';
+        await journalEntriesService.createWithLines(tenantId, {
+          entry_number: entryNumber,
+          entry_date: String(p.payment_date || nowStr.slice(0, 10)),
+          description: invoiceNumber ? `Pago a proveedor ${invoiceNumber}`.trim() : 'Pago a proveedor',
+          reference: paymentId,
+          status: 'posted',
+        }, lines);
+
+        jeEntryNumberSet.add(entryNumber);
+      } catch (error) {
+        result.skipped += 1;
+        continue;
+      }
+
+      result.createdPaymentEntries += 1;
+      jeRefSet.add(paymentId);
+    }
+
+    return result;
+  },
+
+  async reconcileAll(userId: string) {
+    const [ar, ap] = await Promise.all([
+      this.reconcileCxCAuxiliaries(userId),
+      this.reconcileCxPAuxiliaries(userId),
+    ]);
+    return { ar, ap };
+  },
+
+  async recalculateAllBalances(userId: string) {
+    const tenantId = await resolveTenantId(userId);
+    if (!tenantId) throw new Error('userId required');
+
+    const now = new Date().toISOString();
+
+    const [
+      { data: customers, error: customersError },
+      { data: suppliers, error: suppliersError },
+      { data: invoices, error: invoicesError },
+      { data: notes, error: notesError },
+      { data: advances, error: advancesError },
+      { data: apInvoices, error: apInvoicesError },
+    ] = await Promise.all([
+      supabase.from('customers').select('id').eq('user_id', tenantId),
+      supabase.from('suppliers').select('id').eq('user_id', tenantId),
+      supabase
+        .from('invoices')
+        .select('id, customer_id, total_amount, paid_amount, status')
+        .eq('user_id', tenantId),
+      supabase
+        .from('credit_debit_notes')
+        .select('id, customer_id, note_type, status, total_amount, applied_amount, balance_amount')
+        .eq('user_id', tenantId),
+      supabase
+        .from('customer_advances')
+        .select('id, customer_id, status, amount, applied_amount, balance_amount')
+        .eq('user_id', tenantId),
+      supabase
+        .from('ap_invoices')
+        .select('id, supplier_id, status, total_to_pay, total_gross, paid_amount, balance_amount')
+        .eq('user_id', tenantId),
+    ]);
+
+    if (customersError) throw customersError;
+    if (suppliersError) throw suppliersError;
+    if (invoicesError) throw invoicesError;
+    if (notesError) throw notesError;
+    if (advancesError) throw advancesError;
+    if (apInvoicesError) throw apInvoicesError;
+
+    const customerBalanceById = new Map<string, number>();
+    (customers || []).forEach((c: any) => {
+      const id = c?.id ? String(c.id) : '';
+      if (id) customerBalanceById.set(id, 0);
+    });
+
+    (invoices || []).forEach((inv: any) => {
+      const customerId = inv?.customer_id ? String(inv.customer_id) : '';
+      if (!customerId) return;
+      const st = String(inv.status || '').toLowerCase();
+      if (st === 'cancelled' || st === 'cancelada' || st === 'draft') return;
+      const total = Number(inv.total_amount) || 0;
+      const paid = Number(inv.paid_amount) || 0;
+      const balance = Math.max(total - paid, 0);
+      if (!customerBalanceById.has(customerId)) customerBalanceById.set(customerId, 0);
+      customerBalanceById.set(customerId, (customerBalanceById.get(customerId) || 0) + balance);
+    });
+
+    (notes || []).forEach((n: any) => {
+      const customerId = n?.customer_id ? String(n.customer_id) : '';
+      if (!customerId) return;
+      const st = String(n.status || '').toLowerCase();
+      if (st === 'cancelled' || st === 'cancelada') return;
+      const amount = Number(n.total_amount) || 0;
+      const applied = Number(n.applied_amount) || 0;
+      const balRaw = n.balance_amount;
+      const balance = Number.isFinite(Number(balRaw)) ? Number(balRaw) : Math.max(amount - applied, 0);
+      if (balance <= 0) return;
+      if (!customerBalanceById.has(customerId)) customerBalanceById.set(customerId, 0);
+      const noteType = String(n.note_type || '').toLowerCase();
+      const sign = noteType === 'credit' ? -1 : 1;
+      customerBalanceById.set(customerId, (customerBalanceById.get(customerId) || 0) + sign * balance);
+    });
+
+    (advances || []).forEach((a: any) => {
+      const customerId = a?.customer_id ? String(a.customer_id) : '';
+      if (!customerId) return;
+      const st = String(a.status || '').toLowerCase();
+      if (st === 'cancelled' || st === 'cancelada') return;
+      const amount = Number(a.amount) || 0;
+      const applied = Number(a.applied_amount) || 0;
+      const balRaw = a.balance_amount;
+      const balance = Number.isFinite(Number(balRaw)) ? Number(balRaw) : Math.max(amount - applied, 0);
+      if (balance <= 0) return;
+      if (!customerBalanceById.has(customerId)) customerBalanceById.set(customerId, 0);
+      customerBalanceById.set(customerId, (customerBalanceById.get(customerId) || 0) - balance);
+    });
+
+    const customerUpdates = Array.from(customerBalanceById.entries()).map(([id, balance]) => ({
+      id,
+      user_id: tenantId,
+      current_balance: Number(Number(balance || 0).toFixed(2)),
+      updated_at: now,
+    }));
+
+    if (customerUpdates.length > 0) {
+      const { error: upsertCustomersError } = await supabase
+        .from('customers')
+        .upsert(customerUpdates, { onConflict: 'id' });
+      if (upsertCustomersError) throw upsertCustomersError;
+    }
+
+    const supplierBalanceById = new Map<string, number>();
+    (suppliers || []).forEach((s: any) => {
+      const id = s?.id ? String(s.id) : '';
+      if (id) supplierBalanceById.set(id, 0);
+    });
+
+    (apInvoices || []).forEach((inv: any) => {
+      const supplierId = inv?.supplier_id ? String(inv.supplier_id) : '';
+      if (!supplierId) return;
+      const st = String(inv.status || '').toLowerCase();
+      if (st === 'cancelled' || st === 'cancelada' || st === 'draft') return;
+
+      const explicitBalance = Number(inv.balance_amount);
+      const total = Number(inv.total_to_pay ?? inv.total_gross ?? 0) || 0;
+      const paid = Number(inv.paid_amount) || 0;
+      const balance = Number.isFinite(explicitBalance) && explicitBalance !== 0 ? explicitBalance : Math.max(total - paid, 0);
+      if (balance <= 0) return;
+      if (!supplierBalanceById.has(supplierId)) supplierBalanceById.set(supplierId, 0);
+      supplierBalanceById.set(supplierId, (supplierBalanceById.get(supplierId) || 0) + balance);
+    });
+
+    const supplierUpdates = Array.from(supplierBalanceById.entries()).map(([id, balance]) => ({
+      id,
+      user_id: tenantId,
+      current_balance: Number(Number(balance || 0).toFixed(2)),
+      updated_at: now,
+    }));
+
+    if (supplierUpdates.length > 0) {
+      const { error: upsertSuppliersError } = await supabase
+        .from('suppliers')
+        .upsert(supplierUpdates, { onConflict: 'id' });
+      if (upsertSuppliersError) throw upsertSuppliersError;
+    }
+
+    return {
+      customersUpdated: customerUpdates.length,
+      suppliersUpdated: supplierUpdates.length,
+    };
+  },
+};
+
 /* ==========================================================
    Bank Charges Service
    Tabla: bank_charges
@@ -2323,7 +3043,7 @@ export const chartAccountsService = {
       const { data, error } = await supabase
         .from('chart_accounts')
         .select('*')
-        .in('type', ['income', 'cost', 'expense'])
+        .in('type', ['income', 'ingreso', 'ingresos', 'cost', 'costo', 'costos', 'expense', 'gasto', 'gastos'])
         .eq('user_id', tenantId)
         .eq('is_active', true)
         .order('code');
@@ -2343,25 +3063,110 @@ export const chartAccountsService = {
         };
       }
 
-      const income = data?.filter(account => account.type === 'income') || [];
-      const costs = data?.filter(account => account.type === 'cost') || [];
-      const expenses = data?.filter(account => account.type === 'expense') || [];
+      const normalizeStatementType = (t: any) => {
+        const v = String(t || '').toLowerCase().trim();
+        if (v === 'income' || v === 'ingreso' || v === 'ingresos') return 'income';
+        if (v === 'cost' || v === 'costo' || v === 'costos') return 'cost';
+        if (v === 'expense' || v === 'gasto' || v === 'gastos') return 'expense';
+        return v;
+      };
+
+      const accounts = (data || []) as any[];
+      const incomeAccounts = accounts.filter((account) => normalizeStatementType(account.type) === 'income');
+      const costAccounts = accounts.filter((account) => normalizeStatementType(account.type) === 'cost');
+      const expenseAccounts = accounts.filter((account) => normalizeStatementType(account.type) === 'expense');
+
+      const accountIds = accounts.map((acc) => String(acc.id || '')).filter(Boolean);
+      const sums: Record<string, { debit: number; credit: number }> = {};
+
+      if (accountIds.length > 0) {
+        const { data: lines, error: linesError } = await supabase
+          .from('journal_entry_lines')
+          .select('account_id, debit_amount, credit_amount, journal_entries!inner(entry_date, status, user_id)')
+          .in('account_id', accountIds)
+          .eq('journal_entries.user_id', tenantId)
+          .eq('journal_entries.status', 'posted')
+          .gte('journal_entries.entry_date', fromDate)
+          .lte('journal_entries.entry_date', toDate);
+
+        if (linesError) {
+          console.error('Error in generateIncomeStatement lines:', linesError);
+        } else {
+          (lines || []).forEach((line: any) => {
+            const accountId = String(line.account_id || '');
+            if (!accountId) return;
+            const debit = Number(line.debit_amount) || 0;
+            const credit = Number(line.credit_amount) || 0;
+            if (!sums[accountId]) {
+              sums[accountId] = { debit: 0, credit: 0 };
+            }
+            sums[accountId].debit += debit;
+            sums[accountId].credit += credit;
+          });
+        }
+      }
+
+      const signedBalances: Record<string, number> = {};
+      accounts.forEach((acc) => {
+        const accountId = String(acc.id || '');
+        if (!accountId) return;
+        const sum = sums[accountId] || { debit: 0, credit: 0 };
+        const t = normalizeStatementType(acc.type);
+        let balance = 0;
+        if (t === 'income') {
+          balance = sum.credit - sum.debit;
+        } else if (t === 'cost' || t === 'expense') {
+          balance = sum.debit - sum.credit;
+        } else if (String(acc.normal_balance || '').toLowerCase() === 'credit') {
+          balance = sum.credit - sum.debit;
+        } else {
+          balance = sum.debit - sum.credit;
+        }
+        signedBalances[accountId] = Number(balance.toFixed(2));
+      });
+
+      const income = incomeAccounts.map((acc) => ({
+        ...acc,
+        balance: Math.abs(signedBalances[String(acc.id || '')] || 0),
+      }));
+
+      const costs = costAccounts.map((acc) => ({
+        ...acc,
+        balance: Math.abs(signedBalances[String(acc.id || '')] || 0),
+      }));
+
+      const expenses = expenseAccounts.map((acc) => ({
+        ...acc,
+        balance: Math.abs(signedBalances[String(acc.id || '')] || 0),
+      }));
 
       // Para ingresos usamos el signo del saldo; esto permite que cuentas como
       // devoluciones o descuentos sobre ventas (registradas con movimientos en
       // sentido contrario) disminuyan el ingreso total.
-      const totalIncome = income.reduce((sum, account) => sum + (account.balance || 0), 0);
+      const totalIncome = Number(
+        incomeAccounts
+          .reduce((sum: number, account: any) => sum + (signedBalances[String(account.id || '')] || 0), 0)
+          .toFixed(2)
+      );
 
       // Para costos y gastos seguimos utilizando el valor absoluto como magnitud
       // de consumo, y los restamos del ingreso total para obtener la utilidad.
-      const totalCosts = costs.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
-      const totalExpenses = expenses.reduce((sum, account) => sum + Math.abs(account.balance || 0), 0);
-      const netIncome = totalIncome - totalCosts - totalExpenses;
+      const totalCosts = Number(
+        costAccounts
+          .reduce((sum: number, account: any) => sum + Math.abs(signedBalances[String(account.id || '')] || 0), 0)
+          .toFixed(2)
+      );
+      const totalExpenses = Number(
+        expenseAccounts
+          .reduce((sum: number, account: any) => sum + Math.abs(signedBalances[String(account.id || '')] || 0), 0)
+          .toFixed(2)
+      );
+      const netIncome = Number((totalIncome - totalCosts - totalExpenses).toFixed(2));
 
       return {
-        income: income.map(acc => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
-        costs: costs.map(acc => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
-        expenses: expenses.map(acc => ({ ...acc, balance: Math.abs(acc.balance || 0) })),
+        income,
+        costs,
+        expenses,
         totalIncome,
         totalCosts,
         totalExpenses,
@@ -2466,7 +3271,7 @@ export const chartAccountsService = {
       let investingCashFlow = 0;
       let financingCashFlow = 0;
 
-      journalEntries?.forEach(entry => {
+      journalEntries?.forEach((entry: any) => {
         entry.journal_entry_lines?.forEach((line: any) => {
           const account = line.chart_accounts;
           const amount = (line.debit_amount || 0) - (line.credit_amount || 0);
@@ -3116,10 +3921,11 @@ export const financialReportsService = {
           account_id,
           debit_amount,
           credit_amount,
-          journal_entries (entry_date, user_id),
-          chart_accounts (id, user_id, code, name, type, normal_balance, level, allow_posting, parent_id)
+          journal_entries!inner(entry_date, status, user_id),
+          chart_accounts!inner(id, user_id, code, name, type, normal_balance, level, allow_posting, parent_id)
         `)
         .eq('journal_entries.user_id', tenantId)
+        .eq('journal_entries.status', 'posted')
         .gte('journal_entries.entry_date', fromDate)
         .lte('journal_entries.entry_date', toDate);
 
@@ -5603,13 +6409,15 @@ export const deliveryNotesService = {
   async getAll(userId: string) {
     try {
       if (!userId) return [];
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
       const { data, error } = await supabase
         .from('delivery_notes')
         .select(`
           *,
           customers (id, name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .order('delivery_date', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -5623,6 +6431,8 @@ export const deliveryNotesService = {
   async getById(userId: string, id: string) {
     try {
       if (!userId || !id) return null;
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return null;
       const { data, error } = await supabase
         .from('delivery_notes')
         .select(`
@@ -5633,7 +6443,7 @@ export const deliveryNotesService = {
           ),
           customers (id, name)
         `)
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('id', id)
         .maybeSingle();
 
@@ -5683,10 +6493,13 @@ export const deliveryNotesService = {
       if (!userId) throw new Error('userId required');
       if (!id) throw new Error('delivery note id required');
 
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
       const { data: note, error: noteError } = await supabase
         .from('delivery_notes')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('id', id)
         .maybeSingle();
 
@@ -5701,6 +6514,8 @@ export const deliveryNotesService = {
       const deliveryDate = note.delivery_date
         ? String(note.delivery_date)
         : new Date().toISOString().split('T')[0];
+
+      const shouldPostToLedger = false;
 
       const { data: lines, error: linesError } = await supabase
         .from('delivery_note_lines')
@@ -5742,8 +6557,6 @@ export const deliveryNotesService = {
             : Number(invItem.cost_price) || 0;
         const lineCost = qty * unitCost;
 
-        if (lineCost <= 0) continue;
-
         const inventoryAccountId = invItem.inventory_account_id as string | null;
         const cogsAccountId = invItem.cogs_account_id as string | null;
 
@@ -5763,7 +6576,7 @@ export const deliveryNotesService = {
 
         // Registrar movimiento de salida de inventario
         try {
-          await inventoryService.createMovement(userId, {
+          await inventoryService.createMovement(tenantId, {
             item_id: invItem.id ? String(invItem.id) : null,
             movement_type: 'exit',
             quantity: qty,
@@ -5782,7 +6595,7 @@ export const deliveryNotesService = {
           console.error('deliveryNotesService.post createMovement error', movError);
         }
 
-        if (cogsAccountId && inventoryAccountId) {
+        if (cogsAccountId && inventoryAccountId && lineCost > 0) {
           totalCost += lineCost;
           cogsTotals[cogsAccountId] = (cogsTotals[cogsAccountId] || 0) + lineCost;
           inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
@@ -5791,7 +6604,8 @@ export const deliveryNotesService = {
 
       // 2) Asiento contable principal: CxC vs Ventas/ITBIS
       try {
-        const settings = await accountingSettingsService.get(userId);
+        if (shouldPostToLedger) {
+        const settings = await accountingSettingsService.get(tenantId);
         const arAccountId = settings?.ar_account_id;
         const salesAccountId = settings?.sales_account_id;
         const taxAccountId = settings?.sales_tax_account_id;
@@ -5836,7 +6650,8 @@ export const deliveryNotesService = {
             status: 'posted' as const,
           };
 
-          await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
+          await journalEntriesService.createWithLines(tenantId, entryPayload, entryLines);
+        }
         }
       } catch (ledgerError) {
         console.error('deliveryNotesService.post AR/Sales ledger error', ledgerError);
@@ -5844,6 +6659,7 @@ export const deliveryNotesService = {
 
       // 3) Asiento de Costo de Ventas vs Inventario
       try {
+        if (shouldPostToLedger) {
         if (totalCost > 0) {
           const cogsLines: any[] = [];
           let lineNumber = 1;
@@ -5881,8 +6697,9 @@ export const deliveryNotesService = {
               status: 'posted' as const,
             };
 
-            await journalEntriesService.createWithLines(userId, cogsEntryPayload, cogsLines);
+            await journalEntriesService.createWithLines(tenantId, cogsEntryPayload, cogsLines);
           }
+        }
         }
       } catch (cogsError) {
         console.error('deliveryNotesService.post COGS ledger error', cogsError);
@@ -5895,6 +6712,7 @@ export const deliveryNotesService = {
           status: 'posted',
           updated_at: new Date().toISOString(),
         })
+        .eq('user_id', tenantId)
         .eq('id', note.id)
         .select('*')
         .maybeSingle();
@@ -5917,13 +6735,16 @@ export const deliveryNotesService = {
       if (!userId) throw new Error('userId required');
       if (!id) throw new Error('delivery note id required');
 
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
       const { data, error } = await supabase
         .from('delivery_notes')
         .update({
           status,
           updated_at: new Date().toISOString(),
         })
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .eq('id', id)
         .select('*')
         .maybeSingle();
@@ -5943,11 +6764,14 @@ export const deliveryNotesService = {
         throw new Error('At least one delivery note id is required');
       }
 
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
       // 1) Cargar conduces a facturar
       const { data: notes, error: notesError } = await supabase
         .from('delivery_notes')
         .select('*')
-        .eq('user_id', userId)
+        .eq('user_id', tenantId)
         .in('id', deliveryNoteIds);
 
       if (notesError) throw notesError;
@@ -6023,7 +6847,7 @@ export const deliveryNotesService = {
       // 4) Crear factura e insertar líneas, sin duplicar asientos contables
       const { data: invoiceData, error: invoiceError } = await supabase
         .from('invoices')
-        .insert({ ...invoicePayload, user_id: userId })
+        .insert({ ...invoicePayload, user_id: tenantId })
         .select('*')
         .single();
 
@@ -6036,6 +6860,7 @@ export const deliveryNotesService = {
         unit_price: ln.unit_price,
         line_total: ln.line_total,
         line_number: index + 1,
+        item_id: (ln as any).inventory_item_id || null,
         delivery_note_id: ln.delivery_note_id,
         delivery_note_line_id: ln.id,
       }));
@@ -6047,12 +6872,242 @@ export const deliveryNotesService = {
 
       if (invoiceLinesError) throw invoiceLinesError;
 
+      try {
+        const shouldPostToLedger = String((invoiceData as any).status || '') !== 'draft';
+
+        if (shouldPostToLedger) {
+          const settings = await accountingSettingsService.get(tenantId);
+          const arAccountId = settings?.ar_account_id;
+          const salesAccountId = settings?.sales_account_id;
+          const taxAccountId = settings?.sales_tax_account_id;
+
+          if (!arAccountId) {
+            throw new Error(
+              'No se pudo registrar la factura porque falta la cuenta de Cuentas por Cobrar (CxC) en Ajustes Contables.'
+            );
+          }
+
+          const rawSubtotal = Number((invoiceData as any).subtotal) || 0;
+          const rawTax = Number((invoiceData as any).tax_amount) || 0;
+          const subtotalNormalized = Number(rawSubtotal.toFixed(2));
+          const taxAmount = Number(rawTax.toFixed(2));
+          const totalAmountNormalized = Number((subtotalNormalized + taxAmount).toFixed(2));
+
+          const entryLines: any[] = [
+            {
+              account_id: arAccountId,
+              description: 'Cuentas por Cobrar Clientes',
+              debit_amount: totalAmountNormalized,
+              credit_amount: 0,
+              line_number: 1,
+            },
+          ];
+
+          let nextLineNumber = 2;
+          let salesTotalAssigned = 0;
+          try {
+            const { data: salesLines, error: salesLinesError } = await supabase
+              .from('invoice_lines')
+              .select(`
+                id,
+                quantity,
+                unit_price,
+                line_total,
+                item_id,
+                inventory_items (income_account_id)
+              `)
+              .eq('invoice_id', invoiceData.id);
+
+            if (!salesLinesError && salesLines && salesLines.length > 0 && subtotalNormalized > 0) {
+              const accountBaseTotals: Record<string, number> = {};
+              let totalLinesBase = 0;
+              let totalProductBase = 0;
+
+              salesLines.forEach((line: any) => {
+                const qty = Number(line.quantity) || 0;
+                const unitPrice = Number(line.unit_price) || 0;
+                const lineBase = Number(line.line_total) || qty * unitPrice;
+                if (lineBase <= 0) return;
+
+                totalLinesBase += lineBase;
+
+                const invItem = line.inventory_items as any | null;
+                const incomeAccountId = invItem?.income_account_id as string | null;
+
+                if (incomeAccountId) {
+                  totalProductBase += lineBase;
+                  accountBaseTotals[incomeAccountId] = (accountBaseTotals[incomeAccountId] || 0) + lineBase;
+                }
+              });
+
+              if (totalLinesBase > 0 && totalProductBase > 0) {
+                const productPortion = (subtotalNormalized * totalProductBase) / totalLinesBase;
+
+                let assignedToProductAccounts = 0;
+                for (const [accountId, baseAmount] of Object.entries(accountBaseTotals)) {
+                  if (baseAmount <= 0) continue;
+                  const allocated = (productPortion * (baseAmount as number)) / totalProductBase;
+                  const roundedAllocated = Number(allocated.toFixed(2));
+                  if (roundedAllocated <= 0) continue;
+
+                  entryLines.push({
+                    account_id: accountId,
+                    description: 'Ventas',
+                    debit_amount: 0,
+                    credit_amount: roundedAllocated,
+                    line_number: nextLineNumber++,
+                  });
+                  assignedToProductAccounts += roundedAllocated;
+                }
+
+                salesTotalAssigned = assignedToProductAccounts;
+              }
+            }
+          } catch (salesAllocError) {
+            console.error('Error determining income accounts for invoice lines:', salesAllocError);
+          }
+
+          const remainingSales = Number((subtotalNormalized - salesTotalAssigned).toFixed(2));
+          if (remainingSales > 0) {
+            if (salesAccountId) {
+              entryLines.push({
+                account_id: salesAccountId,
+                description: 'Ventas',
+                debit_amount: 0,
+                credit_amount: remainingSales,
+                line_number: nextLineNumber++,
+              });
+            } else {
+              throw new Error(
+                'No se pudo registrar la factura porque falta la cuenta de ventas global y no todas las líneas tienen cuenta de ingreso configurada.'
+              );
+            }
+          }
+
+          if (taxAmount > 0) {
+            if (taxAccountId) {
+              entryLines.push({
+                account_id: taxAccountId,
+                description: 'ITBIS por pagar',
+                debit_amount: 0,
+                credit_amount: taxAmount,
+                line_number: nextLineNumber++,
+              });
+            } else {
+              throw new Error(
+                'No se pudo registrar la factura porque falta la cuenta de ITBIS por pagar en Ajustes Contables.'
+              );
+            }
+          }
+
+          const entryPayload = {
+            entry_number: String((invoiceData as any).invoice_number || ''),
+            entry_date: String((invoiceData as any).invoice_date),
+            description: `Factura ${(invoiceData as any).invoice_number || ''}`.trim(),
+            reference: invoiceData.id ? String(invoiceData.id) : null,
+            status: 'posted' as const,
+          };
+
+          await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
+          try {
+            const { data: costLines, error: costLinesError } = await supabase
+              .from('invoice_lines')
+              .select(`
+                *,
+                inventory_items (cost_price, inventory_account_id, cogs_account_id)
+              `)
+              .eq('invoice_id', invoiceData.id);
+
+            if (!costLinesError && costLines && costLines.length > 0) {
+              const cogsTotals: Record<string, number> = {};
+              const inventoryTotals: Record<string, number> = {};
+              let totalCost = 0;
+
+              costLines.forEach((line: any) => {
+                const invItem = line.inventory_items as any | null;
+                const qty = Number(line.quantity) || 0;
+                const unitCost = invItem ? Number(invItem.cost_price) || 0 : 0;
+                const lineCost = qty * unitCost;
+
+                if (!invItem || lineCost <= 0) return;
+
+                const cogsAccountId = invItem.cogs_account_id as string | null;
+                const inventoryAccountId = invItem.inventory_account_id as string | null;
+
+                if (cogsAccountId && inventoryAccountId) {
+                  totalCost += lineCost;
+                  cogsTotals[cogsAccountId] = (cogsTotals[cogsAccountId] || 0) + lineCost;
+                  inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
+                }
+              });
+
+              if (totalCost > 0) {
+                const cogsLines: any[] = [];
+                let lineNumber = 1;
+
+                for (const [accountId, amount] of Object.entries(cogsTotals)) {
+                  if (amount > 0) {
+                    cogsLines.push({
+                      account_id: accountId,
+                      description: 'Costo de Ventas',
+                      debit_amount: amount,
+                      credit_amount: 0,
+                      line_number: lineNumber++,
+                    });
+                  }
+                }
+
+                for (const [accountId, amount] of Object.entries(inventoryTotals)) {
+                  if (amount > 0) {
+                    cogsLines.push({
+                      account_id: accountId,
+                      description: 'Inventario',
+                      debit_amount: 0,
+                      credit_amount: amount,
+                      line_number: lineNumber++,
+                    });
+                  }
+                }
+
+                if (cogsLines.length > 0) {
+                  const cogsEntryPayload = {
+                    entry_number: `${String((invoiceData as any).invoice_number || '')}-COGS`,
+                    entry_date: String((invoiceData as any).invoice_date),
+                    description: `Costo de ventas factura ${(invoiceData as any).invoice_number || ''}`.trim(),
+                    reference: invoiceData.id,
+                    status: 'posted' as const,
+                  };
+
+                  await journalEntriesService.createWithLines(userId, cogsEntryPayload, cogsLines);
+                }
+              }
+            }
+          } catch (cogsError) {
+            console.error('Error posting invoice COGS to ledger:', cogsError);
+          }
+        }
+      } catch (postError) {
+        console.error('deliveryNotesService.createInvoiceFromNotes invoice posting error', postError);
+        try {
+          await supabase.from('invoice_lines').delete().eq('invoice_id', invoiceData.id);
+        } catch (cleanupError) {
+          console.error('deliveryNotesService.createInvoiceFromNotes cleanup lines error', cleanupError);
+        }
+        try {
+          await supabase.from('invoices').delete().eq('id', invoiceData.id).eq('user_id', tenantId);
+        } catch (cleanupError) {
+          console.error('deliveryNotesService.createInvoiceFromNotes cleanup invoice error', cleanupError);
+        }
+        throw postError;
+      }
+
       // 5) Marcar conduces como facturados y actualizar cantidad facturada en líneas
       const now = new Date().toISOString();
 
       const { error: updateNotesError } = await supabase
         .from('delivery_notes')
         .update({ status: 'invoiced', updated_at: now })
+        .eq('user_id', tenantId)
         .in('id', noteIdsToInvoice);
 
       if (updateNotesError) {
@@ -6177,15 +7232,23 @@ export const invoicesService = {
 
       // Intentar registrar asiento contable para la factura (best-effort)
       try {
-        const settings = await accountingSettingsService.get(tenantId);
-        const arAccountId = settings?.ar_account_id;
-        const salesAccountId = settings?.sales_account_id;
-        const taxAccountId = settings?.sales_tax_account_id;
+        const shouldPostToLedger = String((invoiceData as any).status || '') !== 'draft';
 
-        // Solo exigimos la cuenta de CxC para poder registrar el asiento.
-        // Las cuentas de ingreso pueden venir de los productos y usar la
-        // cuenta de ventas global solo como respaldo.
-        if (arAccountId) {
+        if (shouldPostToLedger) {
+          const settings = await accountingSettingsService.get(tenantId);
+          const arAccountId = settings?.ar_account_id;
+          const salesAccountId = settings?.sales_account_id;
+          const taxAccountId = settings?.sales_tax_account_id;
+
+          if (!arAccountId) {
+            throw new Error(
+              'No se pudo registrar la factura porque falta la cuenta de Cuentas por Cobrar (CxC) en Ajustes Contables.'
+            );
+          }
+
+          // Solo exigimos la cuenta de CxC para poder registrar el asiento.
+          // Las cuentas de ingreso pueden venir de los productos y usar la
+          // cuenta de ventas global solo como respaldo.
           // Normalizar importes a 2 decimales y calcular el total a partir de
           // subtotal + impuestos, para evitar pequeñas diferencias de
           // redondeo con invoice.total_amount que desbalanceen el asiento.
@@ -6296,17 +7359,26 @@ export const invoicesService = {
                 'No se pudo asignar todo el subtotal de ventas porque falta la cuenta de ventas global y no todas las líneas tienen cuenta de ingreso configurada.',
                 { invoiceId: invoiceData.id, subtotal, salesTotalAssigned, remainingSales }
               );
+              throw new Error(
+                'No se pudo registrar la factura porque falta la cuenta de ventas global y no todas las líneas tienen cuenta de ingreso configurada.'
+              );
             }
           }
 
-          if (taxAmount > 0 && taxAccountId) {
-            entryLines.push({
-              account_id: taxAccountId,
-              description: 'ITBIS por pagar',
-              debit_amount: 0,
-              credit_amount: taxAmount,
-              line_number: nextLineNumber++,
-            });
+          if (taxAmount > 0) {
+            if (taxAccountId) {
+              entryLines.push({
+                account_id: taxAccountId,
+                description: 'ITBIS por pagar',
+                debit_amount: 0,
+                credit_amount: taxAmount,
+                line_number: nextLineNumber++,
+              });
+            } else {
+              throw new Error(
+                'No se pudo registrar la factura porque falta la cuenta de ITBIS por pagar en Ajustes Contables.'
+              );
+            }
           }
 
           const entryPayload = {
@@ -6318,88 +7390,107 @@ export const invoicesService = {
           };
 
           await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
-        }
+          // Segundo asiento: Costo de Ventas vs Inventario (best-effort, por producto)
+          try {
+            const { data: costLines, error: costLinesError } = await supabase
+              .from('invoice_lines')
+              .select(`
+                *,
+                inventory_items (cost_price, inventory_account_id, cogs_account_id)
+              `)
+              .eq('invoice_id', invoiceData.id);
 
-        // Segundo asiento: Costo de Ventas vs Inventario (best-effort, por producto)
-        try {
-          const { data: costLines, error: costLinesError } = await supabase
-            .from('invoice_lines')
-            .select(`
-              *,
-              inventory_items (cost_price, inventory_account_id, cogs_account_id)
-            `)
-            .eq('invoice_id', invoiceData.id);
+            if (!costLinesError && costLines && costLines.length > 0) {
+              const cogsTotals: Record<string, number> = {};
+              const inventoryTotals: Record<string, number> = {};
 
-          if (!costLinesError && costLines && costLines.length > 0) {
-            const cogsTotals: Record<string, number> = {};
-            const inventoryTotals: Record<string, number> = {};
+              let totalCost = 0;
 
-            let totalCost = 0;
+              costLines.forEach((line: any) => {
+                const invItem = line.inventory_items as any | null;
+                const qty = Number(line.quantity) || 0;
+                const unitCost = invItem ? Number(invItem.cost_price) || 0 : 0;
+                const lineCost = qty * unitCost;
 
-            costLines.forEach((line: any) => {
-              const invItem = line.inventory_items as any | null;
-              const qty = Number(line.quantity) || 0;
-              const unitCost = invItem ? Number(invItem.cost_price) || 0 : 0;
-              const lineCost = qty * unitCost;
+                if (!invItem || lineCost <= 0) return;
 
-              if (!invItem || lineCost <= 0) return;
+                const cogsAccountId = invItem.cogs_account_id as string | null;
+                const inventoryAccountId = invItem.inventory_account_id as string | null;
 
-              const cogsAccountId = invItem.cogs_account_id as string | null;
-              const inventoryAccountId = invItem.inventory_account_id as string | null;
-
-              if (cogsAccountId && inventoryAccountId) {
-                totalCost += lineCost;
-                cogsTotals[cogsAccountId] = (cogsTotals[cogsAccountId] || 0) + lineCost;
-                inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
-              }
-            });
-
-            if (totalCost > 0) {
-              const cogsLines: any[] = [];
-              let lineNumber = 1;
-
-              for (const [accountId, amount] of Object.entries(cogsTotals)) {
-                if (amount > 0) {
-                  cogsLines.push({
-                    account_id: accountId,
-                    description: 'Costo de Ventas',
-                    debit_amount: amount,
-                    credit_amount: 0,
-                    line_number: lineNumber++,
-                  });
+                if (cogsAccountId && inventoryAccountId) {
+                  totalCost += lineCost;
+                  cogsTotals[cogsAccountId] = (cogsTotals[cogsAccountId] || 0) + lineCost;
+                  inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
                 }
-              }
+              });
 
-              for (const [accountId, amount] of Object.entries(inventoryTotals)) {
-                if (amount > 0) {
-                  cogsLines.push({
-                    account_id: accountId,
-                    description: 'Inventario',
-                    debit_amount: 0,
-                    credit_amount: amount,
-                    line_number: lineNumber++,
-                  });
+              if (totalCost > 0) {
+                const cogsLines: any[] = [];
+                let lineNumber = 1;
+
+                for (const [accountId, amount] of Object.entries(cogsTotals)) {
+                  if (amount > 0) {
+                    cogsLines.push({
+                      account_id: accountId,
+                      description: 'Costo de Ventas',
+                      debit_amount: amount,
+                      credit_amount: 0,
+                      line_number: lineNumber++,
+                    });
+                  }
                 }
-              }
 
-              if (cogsLines.length > 0) {
-                const cogsEntryPayload = {
-                  entry_number: `${String(invoiceData.invoice_number || '')}-COGS`,
-                  entry_date: String(invoiceData.invoice_date),
-                  description: `Costo de ventas factura ${invoiceData.invoice_number || ''}`.trim(),
-                  reference: invoiceData.id,
-                  status: 'posted' as const,
-                };
+                for (const [accountId, amount] of Object.entries(inventoryTotals)) {
+                  if (amount > 0) {
+                    cogsLines.push({
+                      account_id: accountId,
+                      description: 'Inventario',
+                      debit_amount: 0,
+                      credit_amount: amount,
+                      line_number: lineNumber++,
+                    });
+                  }
+                }
 
-                await journalEntriesService.createWithLines(tenantId, cogsEntryPayload, cogsLines);
+                if (cogsLines.length > 0) {
+                  const cogsEntryPayload = {
+                    entry_number: `${String(invoiceData.invoice_number || '')}-COGS`,
+                    entry_date: String(invoiceData.invoice_date),
+                    description: `Costo de ventas factura ${invoiceData.invoice_number || ''}`.trim(),
+                    reference: invoiceData.id,
+                    status: 'posted' as const,
+                  };
+
+                  await journalEntriesService.createWithLines(tenantId, cogsEntryPayload, cogsLines);
+                }
               }
             }
+          } catch (cogsError) {
+            console.error('Error posting invoice COGS to ledger:', cogsError);
           }
-        } catch (cogsError) {
-          console.error('Error posting invoice COGS to ledger:', cogsError);
         }
       } catch (error) {
         console.error('Error posting invoice to ledger:', error);
+        try {
+          await supabase
+            .from('approval_requests')
+            .delete()
+            .eq('entity_type', 'invoice_discount')
+            .eq('entity_id', invoiceData.id);
+        } catch (cleanupError) {
+          console.error('Error cleaning up approval requests after invoice posting failure:', cleanupError);
+        }
+        try {
+          await supabase.from('invoice_lines').delete().eq('invoice_id', invoiceData.id);
+        } catch (cleanupError) {
+          console.error('Error cleaning up invoice lines after invoice posting failure:', cleanupError);
+        }
+        try {
+          await supabase.from('invoices').delete().eq('id', invoiceData.id);
+        } catch (cleanupError) {
+          console.error('Error cleaning up invoice after invoice posting failure:', cleanupError);
+        }
+        throw error;
       }
 
       return { invoice: invoiceData, lines: linesData };
@@ -6767,8 +7858,10 @@ export const customerAdvancesService = {
     balance_amount?: number;
   }) {
     try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
       const body = {
-        user_id: await resolveTenantId(userId),
+        user_id: tenantId,
         customer_id: payload.customer_id,
         advance_number: payload.advance_number,
         advance_date: payload.advance_date,
@@ -7770,6 +8863,11 @@ export const apInvoiceLinesService = {
       if (error) throw error;
       const insertedLines = data ?? [];
 
+      const shouldDebugApInvoicePosting =
+        typeof window !== 'undefined' && window.localStorage.getItem('debug_ap_invoice_posting') === '1';
+
+      let invoiceUserId: string | null = null;
+
       // Best-effort: registrar asiento contable para la factura de suplidor usando las cuentas de gasto
       try {
         // Obtener factura para conocer usuario, fechas y totales
@@ -7781,6 +8879,7 @@ export const apInvoiceLinesService = {
 
         if (!invError && invoice && invoice.user_id) {
           const userId = invoice.user_id as string;
+          invoiceUserId = userId;
 
           // Configuración contable: cuenta de CxP y cuenta de ITBIS
           const settings = await accountingSettingsService.get(userId);
@@ -7807,29 +8906,174 @@ export const apInvoiceLinesService = {
             // Cargar líneas desde BD (asegurando tener expense_account_id y montos finales)
             const { data: dbLines, error: dbLinesError } = await supabase
               .from('ap_invoice_lines')
-              .select('expense_account_id,line_total,itbis_amount')
+              .select(`
+                expense_account_id,
+                inventory_item_id,
+                line_total,
+                itbis_amount
+              `)
               .eq('ap_invoice_id', apInvoiceId);
+
+            const inventoryAccountByItemId: Record<string, string> = {};
+            try {
+              const invItemIds = Array.from(
+                new Set(
+                  (dbLines || [])
+                    .map((l: any) => (l?.inventory_item_id ? String(l.inventory_item_id) : ''))
+                    .filter((id: string) => !!id)
+                )
+              );
+
+              if (invItemIds.length > 0) {
+                const { data: invAccRows, error: invAccError } = await supabase
+                  .from('inventory_items')
+                  .select('id, inventory_account_id')
+                  .eq('user_id', userId)
+                  .in('id', invItemIds);
+
+                if (!invAccError && invAccRows) {
+                  (invAccRows as any[]).forEach((row: any) => {
+                    if (!row?.id) return;
+                    const key = String(row.id);
+                    inventoryAccountByItemId[key] = row.inventory_account_id ? String(row.inventory_account_id) : '';
+                  });
+                }
+              }
+            } catch (invAccLookupError) {
+              // eslint-disable-next-line no-console
+              console.error('[AP Invoice Debug] Error resolving inventory item accounts:', invAccLookupError);
+            }
+
+            if (shouldDebugApInvoicePosting) {
+              const safeLines = (dbLines || []).map((l: any) => {
+                const invItemId = l.inventory_item_id ? String(l.inventory_item_id) : '';
+                return {
+                  inventory_item_id: invItemId,
+                  expense_account_id: l.expense_account_id ? String(l.expense_account_id) : '',
+                  inventory_account_id: invItemId ? (inventoryAccountByItemId[invItemId] || '') : '',
+                  line_total: Number(l.line_total) || 0,
+                  itbis_amount: Number(l.itbis_amount) || 0,
+                };
+              });
+
+              const accountIds = Array.from(
+                new Set(
+                  safeLines
+                    .flatMap((l: any) => [l.inventory_account_id, l.expense_account_id])
+                    .filter((id: any) => !!id)
+                )
+              );
+
+              let accountsById: Record<string, any> = {};
+              try {
+                if (accountIds.length > 0) {
+                  const { data: accs, error: accsError } = await supabase
+                    .from('chart_accounts')
+                    .select('id, code, name, type')
+                    .eq('user_id', userId)
+                    .in('id', accountIds);
+                  if (!accsError && accs) {
+                    (accs as any[]).forEach((a: any) => {
+                      if (a?.id) accountsById[String(a.id)] = a;
+                    });
+                  }
+                }
+              } catch (accLookupError) {
+                // eslint-disable-next-line no-console
+                console.error('[AP Invoice Debug] Error resolving chart accounts:', accLookupError);
+              }
+
+              const safeLinesWithAccounts = safeLines.map((l: any) => {
+                const invAcc = l.inventory_account_id ? accountsById[String(l.inventory_account_id)] : null;
+                const expAcc = l.expense_account_id ? accountsById[String(l.expense_account_id)] : null;
+                return {
+                  ...l,
+                  inventory_account_code: invAcc?.code || '',
+                  inventory_account_name: invAcc?.name || '',
+                  expense_account_code: expAcc?.code || '',
+                  expense_account_name: expAcc?.name || '',
+                };
+              });
+              // eslint-disable-next-line no-console
+              console.group('[AP Invoice Debug] Posting');
+              // eslint-disable-next-line no-console
+              console.log('apInvoiceId:', apInvoiceId);
+              // eslint-disable-next-line no-console
+              console.log('invoice_number:', String(invoice.invoice_number || ''));
+              // eslint-disable-next-line no-console
+              console.log('itbis_to_cost:', itbisToCost);
+              // eslint-disable-next-line no-console
+              console.log('dbLinesError:', dbLinesError);
+              // eslint-disable-next-line no-console
+              console.table(safeLinesWithAccounts);
+              // eslint-disable-next-line no-console
+              console.groupEnd();
+            }
 
             if (!dbLinesError && dbLines && dbLines.length > 0) {
               const accountTotals: Record<string, number> = {};
               let totalItbis = 0;
 
               dbLines.forEach((l: any) => {
-                const accountId = l.expense_account_id ? String(l.expense_account_id) : '';
+                const invItemId = l.inventory_item_id ? String(l.inventory_item_id) : '';
+                const inventoryAccountId = invItemId ? (inventoryAccountByItemId[invItemId] || '') : '';
+                const expenseAccountId = l.expense_account_id ? String(l.expense_account_id) : '';
+                const accountId = inventoryAccountId || expenseAccountId;
                 if (!accountId) return;
                 const lineBase = Number(l.line_total) || 0;
                 const lineItbis = Number(l.itbis_amount) || 0;
-                
+
                 // Si ITBIS va al costo, sumarlo al gasto
                 const amount = itbisToCost ? lineBase + lineItbis : lineBase;
                 if (amount <= 0) return;
                 accountTotals[accountId] = (accountTotals[accountId] || 0) + amount;
-                
+
                 // Acumular ITBIS para crédito fiscal si no va al costo
                 if (!itbisToCost) {
                   totalItbis += lineItbis;
                 }
               });
+
+              if (shouldDebugApInvoicePosting) {
+                const totalsAccountIds = Object.keys(accountTotals || {}).filter((id) => !!id);
+                let totalsAccountsById: Record<string, any> = {};
+                try {
+                  if (totalsAccountIds.length > 0) {
+                    const { data: totAccs, error: totAccsError } = await supabase
+                      .from('chart_accounts')
+                      .select('id, code, name, type')
+                      .eq('user_id', userId)
+                      .in('id', totalsAccountIds);
+                    if (!totAccsError && totAccs) {
+                      (totAccs as any[]).forEach((a: any) => {
+                        if (a?.id) totalsAccountsById[String(a.id)] = a;
+                      });
+                    }
+                  }
+                } catch (totAccLookupError) {
+                  // eslint-disable-next-line no-console
+                  console.error('[AP Invoice Debug] Error resolving totals chart accounts:', totAccLookupError);
+                }
+
+                const totalsTable = Object.entries(accountTotals || {}).map(([accountId, amount]) => {
+                  const acc = totalsAccountsById[String(accountId)] || null;
+                  return {
+                    account_id: String(accountId),
+                    code: acc?.code || '',
+                    name: acc?.name || '',
+                    type: acc?.type || '',
+                    amount: Number(amount) || 0,
+                  };
+                });
+                // eslint-disable-next-line no-console
+                console.group('[AP Invoice Debug] Account totals');
+                // eslint-disable-next-line no-console
+                console.table(totalsTable);
+                // eslint-disable-next-line no-console
+                console.log('totalItbis (if not to cost):', totalItbis);
+                // eslint-disable-next-line no-console
+                console.groupEnd();
+              }
 
               const expenseLines = Object.entries(accountTotals)
                 .filter(([_, amount]) => amount > 0)
@@ -7870,6 +9114,32 @@ export const apInvoiceLinesService = {
                     status: 'posted' as const,
                   };
 
+                  try {
+                    const entryNumber = String(invoice.invoice_number || '');
+                    const reference = invoice.id ? String(invoice.id) : null;
+                    if (entryNumber && reference) {
+                      const { data: existingEntries, error: existingError } = await supabase
+                        .from('journal_entries')
+                        .select('id')
+                        .eq('user_id', userId)
+                        .eq('reference', reference)
+                        .eq('entry_number', entryNumber);
+
+                      if (!existingError && existingEntries && existingEntries.length > 0) {
+                        const existingIds = (existingEntries as any[])
+                          .map((e: any) => e.id)
+                          .filter((id: any) => !!id);
+                        if (existingIds.length > 0) {
+                          await supabase.from('journal_entry_lines').delete().in('journal_entry_id', existingIds);
+                          await supabase.from('journal_entries').delete().in('id', existingIds);
+                        }
+                      }
+                    }
+                  } catch (cleanupError) {
+                    // eslint-disable-next-line no-console
+                    console.error('Error cleaning existing AP invoice journal entry before re-posting:', cleanupError);
+                  }
+
                   await journalEntriesService.createWithLines(userId, entryPayload, linesForEntry);
                 }
               }
@@ -7883,6 +9153,22 @@ export const apInvoiceLinesService = {
 
       // Best-effort: registrar entradas de inventario para líneas con productos
       try {
+        if (!invoiceUserId) {
+          return insertedLines;
+        }
+
+        const { data: existingMovements, error: existingMovError } = await supabase
+          .from('inventory_movements')
+          .select('id')
+          .eq('user_id', invoiceUserId)
+          .eq('source_type', 'ap_invoice')
+          .eq('source_id', apInvoiceId)
+          .limit(1);
+
+        if (!existingMovError && existingMovements && existingMovements.length > 0) {
+          return insertedLines;
+        }
+
         // Cargar líneas con detalle de ítems de inventario
         const { data: invLines, error: invLinesError } = await supabase
           .from('ap_invoice_lines')
@@ -8117,7 +9403,7 @@ export const purchaseOrderItemsService = {
 
       const ids = rows
         .map((it: any) => it.id)
-        .filter((id) => id);
+        .filter((id: any) => id);
 
       if (ids.length === 0) {
         return rows.map((it: any) => ({
@@ -8203,7 +9489,7 @@ export const purchaseOrderItemsService = {
 
       const ids = rows
         .map((it: any) => it.id)
-        .filter((id) => id);
+        .filter((id: any) => id);
 
       if (ids.length === 0) {
         return rows.map((it: any) => ({
@@ -8269,7 +9555,7 @@ export const purchaseOrderItemsService = {
     try {
       if (!userId || !orderId || !items || items.length === 0) return [];
 
-      const rows = items.map((it, index) => {
+      const rows = items.map((it) => {
         const quantity = Number(it.quantity) || 0;
         const unitCost = Number(it.price) || 0;
         return {
@@ -8482,8 +9768,30 @@ export const supplierPaymentsService = {
               },
             ];
 
+            let entryNumber = data?.id ? `SP-${String(data.id)}` : `SP-${Date.now()}`;
+            try {
+              while (entryNumber) {
+                const { data: exists, error: existsErr } = await supabase
+                  .from('journal_entries')
+                  .select('id')
+                  .eq('user_id', data.user_id)
+                  .eq('entry_number', entryNumber)
+                  .limit(1);
+
+                if (!existsErr && exists && (exists as any[]).length > 0) {
+                  entryNumber = data?.id
+                    ? `SP-${String(data.id)}-${Math.floor(Math.random() * 1000)}`
+                    : `SP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+                  continue;
+                }
+                break;
+              }
+            } catch {
+              // ignore
+            }
+
             const entryPayload = {
-              entry_number: String(data.invoice_number || ''),
+              entry_number: entryNumber,
               entry_date: String(data.payment_date),
               description: `Pago a proveedor ${data.invoice_number || ''}`.trim(),
               reference: data.id ? String(data.id) : null,
@@ -9007,6 +10315,37 @@ export const bankAccountsService = {
         .order('bank_name', { ascending: true });
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getBalancesAsOf(userId: string, asOfDate?: string) {
+    try {
+      if (!userId) return [];
+      const endDate = asOfDate || new Date().toISOString().slice(0, 10);
+
+      const [banks, trial] = await Promise.all([
+        bankAccountsService.getAll(userId),
+        financialReportsService.getTrialBalance(userId, '1900-01-01', endDate),
+      ]);
+
+      const byAccountId = new Map<string, number>();
+      (trial || []).forEach((r: any) => {
+        const accountId = r?.account_id as string;
+        if (!accountId) return;
+        byAccountId.set(accountId, Number(r?.balance) || 0);
+      });
+
+      return (banks || []).map((b: any) => {
+        const chartAccountId = (b.chart_account_id ?? null) as string | null;
+        const accountingBalance = chartAccountId ? (byAccountId.get(chartAccountId) ?? 0) : null;
+        return {
+          ...b,
+          accounting_balance: accountingBalance,
+          balance_as_of: endDate,
+        };
+      });
     } catch (error) {
       return handleDatabaseError(error, []);
     }

@@ -8,11 +8,14 @@ import {
   bankTransfersService,
   bankCreditsService,
   bankChargesService,
+  supplierPaymentsService,
   bankReconciliationService,
   bankAccountsService,
 } from '../../services/database';
+import { formatDateEsDO } from '../../utils/date';
+import { formatAmount } from '../../utils/numberFormat';
 
-type MovementType = 'deposit' | 'check' | 'transfer' | 'credit' | 'charge';
+type MovementType = 'deposit' | 'check' | 'transfer' | 'credit' | 'charge' | 'supplier_payment';
 
 type BankMovement = {
   id: string;
@@ -144,12 +147,13 @@ export default function BankReconciliationPage() {
       setLoading(true);
       setError(null);
       try {
-        const [deposits, checks, transfers, credits, charges] = await Promise.all([
+        const [deposits, checks, transfers, credits, charges, supplierPayments] = await Promise.all([
           bankDepositsService.getAll(user.id),
           bankChecksService.getAll(user.id),
           bankTransfersService.getAll(user.id),
           bankCreditsService.getAll(user.id),
           bankChargesService.getAll(user.id),
+          supplierPaymentsService.getAll(user.id),
         ]);
 
         const normalized: BankMovement[] = [];
@@ -228,6 +232,36 @@ export default function BankReconciliationPage() {
             description: ch.description ?? null,
           });
         });
+
+        // Pagos a suplidores (salidas bancarias) - solo completados y no-cheque
+        (supplierPayments as any[])
+          .filter((p) => {
+            const status = String(p?.status || '');
+            if (status !== 'Completado' && status !== 'completed') return false;
+            const method = String(p?.method || '').toLowerCase();
+            const isCheck = method.includes('cheque') || method.includes('check');
+            if (isCheck) return false;
+            return Boolean(p?.bank_account_id);
+          })
+          .forEach((p) => {
+            const supplierName = (p.suppliers as any)?.name || '';
+            const invoiceNo = p.invoice_number ? String(p.invoice_number) : '';
+            const labelParts = [invoiceNo ? `Pago a proveedor ${invoiceNo}` : 'Pago a proveedor', supplierName]
+              .filter(Boolean)
+              .join(' - ');
+
+            normalized.push({
+              id: p.id,
+              date: p.payment_date,
+              type: 'supplier_payment',
+              bank_id: p.bank_account_id ?? null,
+              bank_account_code: p.bank_account ?? null,
+              currency: p.currency ?? 'DOP',
+              amount: Number(p.amount) || 0,
+              reference: p.reference ?? null,
+              description: p.description || labelParts,
+            });
+          });
 
         // Orden por fecha ascendente (útil para conciliación)
         normalized.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
@@ -369,8 +403,8 @@ export default function BankReconciliationPage() {
       }
     });
 
-    const opening = Number(statement.opening.replace(',', '.')) || 0;
-    const closing = Number(statement.closing.replace(',', '.')) || 0;
+    const opening = parseAmountValue(statement.opening);
+    const closing = parseAmountValue(statement.closing);
 
     const calculatedClosing = opening + totalReconciled;
     const difference = closing ? closing - calculatedClosing : 0;
@@ -432,11 +466,35 @@ export default function BankReconciliationPage() {
     [historicalItems],
   );
 
-  const formatCurrency = (value: number) =>
-    value.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+  const formatCurrency = (value: number) => formatAmount(value);
+
+  const parseAmountValue = (raw: string): number => {
+    const input = String(raw || '').trim().replace(/\s+/g, '');
+    if (!input) return 0;
+
+    const hasComma = input.includes(',');
+    const hasDot = input.includes('.');
+
+    let normalized = input;
+    if (hasComma && hasDot) {
+      const lastComma = input.lastIndexOf(',');
+      const lastDot = input.lastIndexOf('.');
+      const decimalSep = lastComma > lastDot ? ',' : '.';
+      const thousandSep = decimalSep === ',' ? '.' : ',';
+
+      normalized = normalized.split(thousandSep).join('');
+      if (decimalSep === ',') {
+        normalized = normalized.replace(',', '.');
+      }
+    } else if (hasComma && !hasDot) {
+      normalized = normalized.replace(',', '.');
+    } else {
+      normalized = normalized;
+    }
+
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : 0;
+  };
 
   const formatTypeLabel = (type: MovementType) => {
     switch (type) {
@@ -450,6 +508,8 @@ export default function BankReconciliationPage() {
         return 'Crédito bancario';
       case 'charge':
         return 'Cargo bancario';
+      case 'supplier_payment':
+        return 'Pago a proveedor';
       default:
         return type;
     }
@@ -478,7 +538,7 @@ export default function BankReconciliationPage() {
     }
 
     try {
-      const closing = Number(closingStr.replace(',', '.')) || 0;
+      const closing = parseAmountValue(closingStr);
       const bookBalanceValue =
         bookBalance !== null && !Number.isNaN(bookBalance) ? bookBalance : totals.calculatedClosing;
 
@@ -744,7 +804,7 @@ export default function BankReconciliationPage() {
                           />
                         </td>
                         <td className="px-3 py-2 text-xs text-gray-600">
-                          {m.date ? new Date(m.date).toLocaleDateString() : ''}
+                          {m.date ? formatDateEsDO(m.date) : ''}
                         </td>
                         <td className="px-3 py-2 text-xs">
                           <span className="inline-flex items-center rounded-full bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-700">
@@ -803,7 +863,7 @@ export default function BankReconciliationPage() {
                     return (
                       <tr key={`${m.type}-${m.id}`}>
                         <td className="px-3 py-2 text-xs text-gray-600">
-                          {m.date ? new Date(m.date).toLocaleDateString() : ''}
+                          {m.date ? formatDateEsDO(m.date) : ''}
                         </td>
                         <td className="px-3 py-2 text-xs">
                           <span className="inline-flex items-center rounded-full bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-700">
@@ -859,7 +919,7 @@ export default function BankReconciliationPage() {
                           <tr key={item.id}>
                             <td className="px-3 py-2 text-gray-600">
                               {item.transaction_date
-                                ? new Date(item.transaction_date).toLocaleDateString()
+                                ? formatDateEsDO(item.transaction_date)
                                 : ''}
                             </td>
                             <td className="px-3 py-2 text-gray-700 max-w-xs truncate">{item.description}</td>
@@ -893,7 +953,7 @@ export default function BankReconciliationPage() {
                           <tr key={item.id}>
                             <td className="px-3 py-2 text-gray-600">
                               {item.transaction_date
-                                ? new Date(item.transaction_date).toLocaleDateString()
+                                ? formatDateEsDO(item.transaction_date)
                                 : ''}
                             </td>
                             <td className="px-3 py-2 text-gray-700 max-w-xs truncate">{item.description}</td>

@@ -1,22 +1,31 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import * as ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { formatAmount, formatMoney } from '../../../utils/numberFormat';
+
 import { useAuth } from '../../../hooks/useAuth';
 import {
-  invoicesService,
-  paymentTermsService,
-  salesRepsService,
+  accountingSettingsService,
+  bankAccountsService,
   bankCurrenciesService,
   bankExchangeRatesService,
-  customersService,
+  chartAccountsService,
+  customerPaymentsService,
   customerTypesService,
-  taxService,
+  customersService,
   inventoryService,
-  storesService,
+  invoicesService,
+  journalEntriesService,
+  paymentTermsService,
+  receiptApplicationsService,
+  receiptsService,
+  salesRepsService,
   settingsService,
+  storesService,
+  taxService,
 } from '../../../services/database';
 
 interface UiInvoiceItem {
@@ -49,12 +58,19 @@ interface UiInvoice {
 
 export default function InvoicingPage() {
   const { user } = useAuth();
+  const [showDocumentPreviewModal, setShowDocumentPreviewModal] = useState(false);
+  const [documentPreviewTitle, setDocumentPreviewTitle] = useState('');
+  const [documentPreviewFilename, setDocumentPreviewFilename] = useState('');
+  const [documentPreviewUrl, setDocumentPreviewUrl] = useState('');
+  const [documentPreviewBlob, setDocumentPreviewBlob] = useState<Blob | null>(null);
+  const documentPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
+
   const [showNewInvoiceModal, setShowNewInvoiceModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [invoices, setInvoices] = useState<UiInvoice[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
 
   const [showInvoiceDetailModal, setShowInvoiceDetailModal] = useState(false);
   const [isEditingInvoice, setIsEditingInvoice] = useState(false);
@@ -77,6 +93,7 @@ export default function InvoicingPage() {
       paymentTermId?: string | null;
       ncfType?: string | null;
       documentType?: string | null;
+      arAccountId?: string | null;
     }>
   >([]);
   const [customerTypes, setCustomerTypes] = useState<any[]>([]);
@@ -97,6 +114,11 @@ export default function InvoicingPage() {
   const [newInvoiceNoTax, setNewInvoiceNoTax] = useState(false);
   const [newInvoiceNotes, setNewInvoiceNotes] = useState('');
   const [newInvoiceStoreName, setNewInvoiceStoreName] = useState('Tienda principal');
+  const [newInvoiceSaleType, setNewInvoiceSaleType] = useState<'credit' | 'cash'>('credit');
+  const [newInvoicePaymentMethod, setNewInvoicePaymentMethod] = useState<string>('');
+  const [newInvoiceBankAccountId, setNewInvoiceBankAccountId] = useState<string>('');
+  const [newInvoicePaymentReference, setNewInvoicePaymentReference] = useState<string>('');
+  const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; name: string; chartAccountId: string | null }>>([]);
 
   type NewItem = { itemId?: string; description: string; quantity: number; price: number; total: number };
   const [newInvoiceItems, setNewInvoiceItems] = useState<NewItem[]>([
@@ -105,14 +127,6 @@ export default function InvoicingPage() {
   const [newInvoiceSubtotal, setNewInvoiceSubtotal] = useState(0);
   const [newInvoiceTax, setNewInvoiceTax] = useState(0);
   const [newInvoiceTotal, setNewInvoiceTotal] = useState(0);
-
-  const products = [
-    { id: '1', name: 'Laptop Dell Inspiron 15', price: 35000, stock: 25 },
-    { id: '2', name: 'Monitor Samsung 24"', price: 12500, stock: 45 },
-    { id: '3', name: 'Impresora HP LaserJet', price: 18000, stock: 18 },
-    { id: '4', name: 'Teclado Mecánico RGB', price: 7500, stock: 67 },
-    { id: '5', name: 'Mouse Inalámbrico', price: 5000, stock: 120 }
-  ];
 
   const currentItbisRate = taxConfig?.itbis_rate ?? 18;
 
@@ -149,7 +163,6 @@ export default function InvoicingPage() {
         setTaxConfig({ itbis_rate: 18 });
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Error cargando configuración de impuestos para facturación:', error);
       setTaxConfig({ itbis_rate: 18 });
     }
@@ -229,7 +242,6 @@ export default function InvoicingPage() {
               baseTotal = null;
             }
           } catch (fxError) {
-            // eslint-disable-next-line no-console
             console.error('Error calculando equivalente en moneda base para factura', fxError);
             baseTotal = null;
           }
@@ -258,7 +270,6 @@ export default function InvoicingPage() {
 
       setInvoices(mapped);
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Error cargando facturas para Facturación:', error);
     } finally {
       setLoading(false);
@@ -291,11 +302,29 @@ export default function InvoicingPage() {
         setSalesReps((reps || []).filter((r: any) => r.is_active));
         setStores((storesData || []).filter((s: any) => s.is_active !== false));
       } catch (error) {
-        // eslint-disable-next-line no-console
         console.error('Error cargando términos de pago para facturación:', error);
       }
     };
     loadPaymentTerms();
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadBankAccounts = async () => {
+      if (!user?.id) return;
+      try {
+        const data = await bankAccountsService.getAll(user.id);
+        const mapped = (data || []).map((b: any) => ({
+          id: String(b.id),
+          name: String(b.name || ''),
+          chartAccountId: b.chart_account_id ? String(b.chart_account_id) : null,
+        }));
+        setBankAccounts(mapped);
+      } catch (error) {
+        console.error('Error cargando cuentas bancarias para facturación:', error);
+        setBankAccounts([]);
+      }
+    };
+    loadBankAccounts();
   }, [user?.id]);
 
   useEffect(() => {
@@ -323,12 +352,12 @@ export default function InvoicingPage() {
           paymentTermId: c.paymentTermId ?? c.payment_term_id ?? null,
           ncfType: c.ncfType ?? c.ncf_type ?? null,
           documentType: c.documentType ?? c.document_type ?? null,
+          arAccountId: c.arAccountId ?? c.ar_account_id ?? null,
         }));
         setCustomers(mappedCustomers);
         setCustomerTypes(types || []);
         setInventoryItems(items || []);
       } catch (error) {
-        // eslint-disable-next-line no-console
         console.error('Error cargando clientes para facturación:', error);
       }
     };
@@ -381,6 +410,7 @@ export default function InvoicingPage() {
     setNewInvoicePaymentTermId(null);
     setNewInvoiceSalesRepId(null);
     setNewInvoiceDueDate(today);
+
     const defaultCurrency = currencies.find((c) => c.is_base) || currencies[0];
     setNewInvoiceCurrency(defaultCurrency?.code || 'DOP');
     setNewInvoiceItems([{ itemId: undefined, description: '', quantity: 1, price: 0, total: 0 }]);
@@ -392,6 +422,10 @@ export default function InvoicingPage() {
     setNewInvoiceNoTax(false);
     setNewInvoiceNotes('');
     setNewInvoiceCustomerSearch('');
+    setNewInvoiceSaleType('credit');
+    setNewInvoicePaymentMethod('');
+    setNewInvoiceBankAccountId('');
+    setNewInvoicePaymentReference('');
 
     const defaultStore = stores.find((s) => s.is_active !== false) || stores[0];
     setNewInvoiceStoreName(defaultStore?.name || 'Tienda principal');
@@ -399,7 +433,7 @@ export default function InvoicingPage() {
     setShowNewInvoiceModal(true);
   };
 
-  const handleNewInvoiceCustomerChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleNewInvoiceCustomerChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const customerId = e.target.value;
     setNewInvoiceCustomerId(customerId);
     const customer = customers.find((c) => c.id === customerId);
@@ -474,7 +508,6 @@ export default function InvoicingPage() {
       }
       alert(`Factura ${invoiceId} eliminada correctamente`);
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Error eliminando factura:', error);
       alert('Error al eliminar la factura');
     }
@@ -498,15 +531,11 @@ export default function InvoicingPage() {
 
     const itbisLabel = (taxConfig?.itbis_rate ?? 18).toFixed(2);
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert('No se pudo abrir la ventana de impresión.');
-      return;
-    }
-
-    printWindow.document.write(`
+    const html = `
       <html>
         <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
           <title>Factura ${invoice.id}</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 20px; }
@@ -515,6 +544,7 @@ export default function InvoicingPage() {
             table { width: 100%; border-collapse: collapse; }
             th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
             .total { font-weight: bold; text-align: right; }
+            @media print { .no-print { display: none !important; } }
           </style>
         </head>
         <body>
@@ -550,8 +580,8 @@ export default function InvoicingPage() {
                   <tr>
                     <td>${item.description}</td>
                     <td>${item.quantity}</td>
-                    <td>RD$ ${item.price.toLocaleString()}</td>
-                    <td>RD$ ${item.total.toLocaleString()}</td>
+                    <td>RD$ ${formatAmount(item.price)}</td>
+                    <td>RD$ ${formatAmount(item.total)}</td>
                   </tr>`
                 )
                 .join('')}
@@ -559,28 +589,23 @@ export default function InvoicingPage() {
             <tfoot>
               <tr>
                 <td colspan="3" class="total">Subtotal:</td>
-                <td>RD$ ${invoice.amount.toLocaleString()}</td>
+                <td>RD$ ${formatAmount(invoice.amount)}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">ITBIS (${itbisLabel}%):</td>
-                <td>RD$ ${invoice.tax.toLocaleString()}</td>
+                <td>RD$ ${formatAmount(invoice.tax)}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">Total:</td>
-                <td>RD$ ${invoice.total.toLocaleString()}</td>
+                <td>RD$ ${formatAmount(invoice.total)}</td>
               </tr>
             </tfoot>
           </table>
-          <script>
-            window.onload = function() {
-              window.print();
-              setTimeout(() => window.close(), 1000);
-            };
-          </script>
         </body>
       </html>
-    `);
-    printWindow.document.close();
+    `;
+
+    openHtmlPreview(html, `Factura #${invoice.id}`, `factura-${invoice.id}.html`);
   };
 
   const handleExportInvoiceExcel = async (invoiceId: string) => {
@@ -595,9 +620,12 @@ export default function InvoicingPage() {
       (companyInfo as any)?.name ||
       (companyInfo as any)?.company_name ||
       'ContaBi';
+
     const companyRnc =
       (companyInfo as any)?.rnc ||
-      (companyInfo as any)?.tax_id || '';
+      (companyInfo as any)?.tax_id ||
+      (companyInfo as any)?.ruc ||
+      '';
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Factura');
@@ -742,7 +770,6 @@ export default function InvoicingPage() {
       setIsEditingInvoice(false);
       alert('Factura actualizada correctamente');
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Error actualizando factura:', error);
       alert('Error al actualizar la factura');
     }
@@ -770,14 +797,12 @@ export default function InvoicingPage() {
       (companyInfo as any)?.company_name ||
       'ContaBi';
 
-    // Encabezados
     worksheet.addRow([headerCompanyName]);
     worksheet.addRow(['REPORTE DE FACTURAS']);
     worksheet.addRow([`Generado el: ${new Date().toLocaleDateString('es-DO')}`]);
     worksheet.addRow([]);
 
-    // Encabezados de la tabla
-    const headerRow = worksheet.addRow([
+    worksheet.addRow([
       'N° Factura',
       'Cliente',
       'Fecha',
@@ -788,29 +813,19 @@ export default function InvoicingPage() {
       'Estado'
     ]);
 
-    // Estilo para los encabezados
-    headerRow.font = { bold: true };
-    headerRow.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFD9EAD3' }
-    };
+    const data = filteredInvoices.map(invoice => [
+      invoice.id,
+      invoice.customer,
+      new Date(invoice.date).toLocaleDateString('es-DO'),
+      new Date(invoice.dueDate).toLocaleDateString('es-DO'),
+      invoice.amount,
+      invoice.tax,
+      invoice.total,
+      getStatusText(invoice.status)
+    ]);
 
-    // Datos
-    filteredInvoices.forEach(invoice => {
-      worksheet.addRow([
-        invoice.id,
-        invoice.customer,
-        new Date(invoice.date).toLocaleDateString(),
-        new Date(invoice.dueDate).toLocaleDateString(),
-        invoice.amount,
-        invoice.tax,
-        invoice.total,
-        getStatusText(invoice.status)
-      ]);
-    });
+    worksheet.addRows(data);
 
-    // Ajustar anchos de columna
     worksheet.columns = [
       { key: 'id', width: 15 },
       { key: 'customer', width: 30 },
@@ -822,7 +837,6 @@ export default function InvoicingPage() {
       { key: 'status', width: 15 }
     ];
 
-    // Formato de moneda
     const currencyColumns = ['E', 'F', 'G'];
     currencyColumns.forEach(col => {
       for (let i = 6; i <= filteredInvoices.length + 5; i++) {
@@ -831,7 +845,6 @@ export default function InvoicingPage() {
       }
     });
 
-    // Generar archivo
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { 
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
@@ -849,7 +862,6 @@ export default function InvoicingPage() {
     const title = 'REPORTE DE FACTURAS';
     const date = `Generado el: ${new Date().toLocaleDateString('es-DO')}`;
 
-    // Encabezado: nombre de la empresa y título del reporte
     doc.setFontSize(18);
     doc.setTextColor(40, 40, 40);
     doc.text(companyName, pageWidth / 2, 18, { align: 'center' } as any);
@@ -857,12 +869,10 @@ export default function InvoicingPage() {
     doc.setFontSize(12);
     doc.text(title, pageWidth / 2, 26, { align: 'center' } as any);
 
-    // Fecha
     doc.setFontSize(10);
     doc.setTextColor(100);
     doc.text(date, 14, 34);
 
-    // Datos de la tabla
     const headers = [
       'N° Factura',
       'Cliente',
@@ -877,15 +887,14 @@ export default function InvoicingPage() {
     const data = filteredInvoices.map(invoice => [
       invoice.id,
       invoice.customer,
-      new Date(invoice.date).toLocaleDateString(),
-      new Date(invoice.dueDate).toLocaleDateString(),
-      invoice.amount.toLocaleString('es-DO', { minimumFractionDigits: 2 }),
-      invoice.tax.toLocaleString('es-DO', { minimumFractionDigits: 2 }),
-      invoice.total.toLocaleString('es-DO', { minimumFractionDigits: 2 }),
+      new Date(invoice.date).toLocaleDateString('es-DO'),
+      new Date(invoice.dueDate).toLocaleDateString('es-DO'),
+      formatAmount(invoice.amount),
+      formatAmount(invoice.tax),
+      formatAmount(invoice.total),
       getStatusText(invoice.status)
     ]);
     
-    // Añadir tabla
     (doc as any).autoTable({
       head: [headers],
       body: data,
@@ -911,7 +920,6 @@ export default function InvoicingPage() {
       }
     });
     
-    // Guardar el PDF
     doc.save(`facturas_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
@@ -925,6 +933,12 @@ export default function InvoicingPage() {
       return;
     }
 
+    const isCashSale = mode === 'final' && newInvoiceSaleType === 'cash';
+    if (isCashSale && !newInvoicePaymentMethod) {
+      alert('Debes seleccionar la forma de pago para ventas de contado');
+      return;
+    }
+
     const validItems = newInvoiceItems.filter(i => i.description && i.quantity > 0 && i.price > 0);
     if (validItems.length === 0) {
       alert('Agrega al menos una línea con cantidad y precio mayor que 0');
@@ -935,38 +949,9 @@ export default function InvoicingPage() {
     const tax = newInvoiceTax;
     const total = newInvoiceTotal;
 
-    // Calcular descuento global aplicado (para guardar en BD)
-    const rawSubtotal = validItems.reduce((sum, item) => sum + (item.total || 0), 0);
-    let totalDiscount = 0;
-    if (newInvoiceDiscountType === 'percentage') {
-      totalDiscount = rawSubtotal * (newInvoiceDiscountPercent / 100);
-    } else if (newInvoiceDiscountType === 'fixed') {
-      totalDiscount = newInvoiceDiscountPercent;
-    }
-    if (totalDiscount > rawSubtotal) {
-      totalDiscount = rawSubtotal;
-    }
-
-    // Determinar tipo de comprobante según configuración del cliente (por ahora, predeterminar B02 si no hay nada)
-    const customer = customers.find((c) => c.id === newInvoiceCustomerId);
-    const documentType = customer?.documentType || customer?.ncfType || 'B02';
-
-    // Obtener NCF desde la serie configurada
-    let invoiceNumber = `FAC-${Date.now()}`;
-    try {
-      const nextNcf = await taxService.getNextNcf(user.id as string, documentType);
-      if (nextNcf?.ncf) {
-        invoiceNumber = nextNcf.ncf;
-      }
-    } catch (ncfError) {
-      // eslint-disable-next-line no-console
-      console.error('No se pudo obtener NCF, usando número interno:', ncfError);
-    }
-    const status = 'pending';
-
     const invoicePayload = {
       customer_id: newInvoiceCustomerId,
-      invoice_number: invoiceNumber,
+      invoice_number: `FAC-${Date.now()}`,
       invoice_date: newInvoiceDate,
       due_date: newInvoiceDueDate,
       currency: newInvoiceCurrency || baseCurrencyCode,
@@ -974,14 +959,14 @@ export default function InvoicingPage() {
       tax_amount: tax,
       total_amount: total,
       paid_amount: 0,
-      status,
+      status: mode === 'draft' ? 'draft' : 'pending',
       payment_term_id: newInvoicePaymentTermId || null,
       sales_rep_id: newInvoiceSalesRepId || null,
       notes: newInvoiceNotes || null,
       store_name: newInvoiceStoreName || null,
       discount_type: newInvoiceDiscountType,
       discount_value: newInvoiceDiscountPercent,
-      total_discount: totalDiscount,
+      total_discount: subtotal - (subtotal - newInvoiceDiscountPercent),
     };
 
     const linesPayload = validItems.map((item, index) => ({
@@ -994,15 +979,219 @@ export default function InvoicingPage() {
     }));
 
     try {
-      await invoicesService.create(user.id, invoicePayload, linesPayload);
+      const created = await invoicesService.create(user.id, invoicePayload, linesPayload);
+
+      if (isCashSale && created?.invoice?.id) {
+        const createdInvoice = created.invoice as any;
+        const invoiceId = String(createdInvoice.id);
+        const invoiceNumber = String(createdInvoice.invoice_number || `FAC-${Date.now()}`);
+        const paymentDate = String(createdInvoice.invoice_date || newInvoiceDate);
+        const amountToPay = Number(createdInvoice.total_amount) || total;
+
+        const customer = customers.find((c) => c.id === newInvoiceCustomerId);
+
+        const resolvePostingAccounts = async (): Promise<{
+          debitAccountId: string;
+          arAccountId: string;
+        } | null> => {
+          try {
+            const settings = await accountingSettingsService.get(user.id);
+            const normalizeCode = (code: string | null | undefined) => String(code || '').replace(/\./g, '');
+
+            const arAccountId =
+              (customer?.arAccountId ? String(customer.arAccountId) : '') ||
+              ((settings as any)?.ar_account_id ? String((settings as any).ar_account_id) : '');
+
+            let cashAccountId: string | null = (settings as any)?.cash_account_id
+              ? String((settings as any).cash_account_id)
+              : null;
+
+            if (!cashAccountId) {
+              try {
+                const all = await chartAccountsService.getAll(user.id);
+                const cash100101 = (all || []).find((a: any) => normalizeCode(a.code) === '100101');
+                if (cash100101?.id) cashAccountId = String(cash100101.id);
+              } catch {
+                cashAccountId = null;
+              }
+            }
+
+            let debitAccountId: string | null = null;
+            if (newInvoicePaymentMethod && newInvoicePaymentMethod !== 'cash' && newInvoiceBankAccountId) {
+              const bank = bankAccounts.find((b) => String(b.id) === String(newInvoiceBankAccountId));
+              if (bank?.chartAccountId) {
+                debitAccountId = String(bank.chartAccountId);
+              }
+            }
+
+            if (!debitAccountId) {
+              debitAccountId = cashAccountId;
+            }
+
+            if (!debitAccountId) {
+              alert('No se pudo registrar el cobro automático: configure la cuenta de Caja/Banco para el asiento.');
+              return null;
+            }
+
+            if (!arAccountId) {
+              alert('No se pudo registrar el cobro automático: configure la cuenta de Cuentas por Cobrar (cliente o ajustes).');
+              return null;
+            }
+
+            return { debitAccountId, arAccountId };
+          } catch (err) {
+            console.error('Error resolviendo cuentas para venta de contado:', err);
+            alert('No se pudo registrar el cobro automático: error resolviendo cuentas contables.');
+            return null;
+          }
+        };
+
+        try {
+          const paymentPayload: any = {
+            customer_id: newInvoiceCustomerId,
+            invoice_id: invoiceId,
+            bank_account_id: newInvoiceBankAccountId ? newInvoiceBankAccountId : null,
+            amount: amountToPay,
+            payment_method: newInvoicePaymentMethod,
+            payment_date: paymentDate,
+            reference: newInvoicePaymentReference ? newInvoicePaymentReference.trim() : null,
+          };
+
+          const createdPayment = await customerPaymentsService.create(user.id, paymentPayload);
+
+          await invoicesService.updatePayment(invoiceId, amountToPay, 'paid');
+
+          try {
+            const postingAccounts = await resolvePostingAccounts();
+            if (!postingAccounts) {
+              throw new Error('No se pudieron resolver cuentas contables para el cobro automático');
+            }
+
+            const lines: any[] = [
+              {
+                account_id: postingAccounts.debitAccountId,
+                description: 'Cobro de cliente - Caja/Banco',
+                debit_amount: amountToPay,
+                credit_amount: 0,
+                line_number: 1,
+              },
+              {
+                account_id: postingAccounts.arAccountId,
+                description: 'Cobro de cliente - Cuentas por Cobrar',
+                debit_amount: 0,
+                credit_amount: amountToPay,
+                line_number: 2,
+              },
+            ];
+
+            const description = customer?.name
+              ? `Pago factura ${invoiceNumber} - ${customer.name}`
+              : `Pago factura ${invoiceNumber}`;
+
+            const refText = newInvoicePaymentReference ? newInvoicePaymentReference.trim() : '';
+            const entryReference = createdPayment?.id
+              ? refText
+                ? `Pago:${createdPayment.id} Ref:${refText}`
+                : `Pago:${createdPayment.id}`
+              : refText || undefined;
+
+            const entryPayload = {
+              entry_number: createdPayment?.id || `CP-${Date.now()}`,
+              entry_date: paymentDate,
+              description,
+              reference: entryReference ?? null,
+              status: 'posted' as const,
+            };
+
+            await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+          } catch (jeError) {
+            console.error('Error creando asiento contable para venta de contado:', jeError);
+          }
+
+          try {
+            const receiptNumber = `RC-${Date.now()}`;
+            const receiptPayload = {
+              customer_id: newInvoiceCustomerId,
+              receipt_number: receiptNumber,
+              receipt_date: paymentDate,
+              amount: amountToPay,
+              payment_method: newInvoicePaymentMethod,
+              reference: newInvoicePaymentReference ? newInvoicePaymentReference.trim() : null,
+              concept: `Pago factura ${invoiceNumber}`,
+              status: 'active' as const,
+            };
+
+            const createdReceipt = await receiptsService.create(user.id, receiptPayload);
+
+            await receiptApplicationsService.create(user.id, {
+              receipt_id: createdReceipt.id,
+              invoice_id: invoiceId,
+              amount_applied: amountToPay,
+              application_date: paymentDate,
+              notes: null,
+            });
+          } catch (receiptError) {
+            console.error('Error creando recibo automático para venta de contado:', receiptError);
+          }
+        } catch (cashSaleError) {
+          console.error('Error aplicando cobro automático a venta de contado:', cashSaleError);
+          alert('Factura creada, pero ocurrió un error registrando el cobro/recibo.');
+        }
+      }
+
       await loadInvoices();
       setShowNewInvoiceModal(false);
       alert(mode === 'draft' ? 'Factura guardada como borrador' : 'Factura creada correctamente');
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Error creando factura:', error);
       alert('Error al crear la factura');
     }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (documentPreviewUrl) {
+        URL.revokeObjectURL(documentPreviewUrl);
+      }
+    };
+  }, [documentPreviewUrl]);
+
+  const handleCloseDocumentPreview = () => {
+    setShowDocumentPreviewModal(false);
+    setDocumentPreviewTitle('');
+    setDocumentPreviewFilename('');
+    setDocumentPreviewBlob(null);
+    setDocumentPreviewUrl('');
+  };
+
+  const handlePrintDocumentPreview = () => {
+    const iframe = documentPreviewIframeRef.current;
+    const win = iframe?.contentWindow;
+    if (!win) return;
+    win.focus();
+    win.print();
+  };
+
+  const handleDownloadDocumentPreview = () => {
+    if (!documentPreviewBlob || !documentPreviewFilename) return;
+    const url = URL.createObjectURL(documentPreviewBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = documentPreviewFilename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const openHtmlPreview = (html: string, title: string, filename: string) => {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    setDocumentPreviewTitle(title);
+    setDocumentPreviewFilename(filename);
+    setDocumentPreviewBlob(blob);
+    setDocumentPreviewUrl(url);
+    setShowDocumentPreviewModal(true);
   };
 
   return (
@@ -1186,12 +1375,12 @@ export default function InvoicingPage() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         <div className="text-sm font-medium text-gray-900">
                           {invoice.currency || baseCurrencyCode}{' '}
-                          {invoice.total.toLocaleString('es-DO')}
+                          {formatAmount(invoice.total)}
                         </div>
                         {invoice.baseTotal != null && invoice.currency !== baseCurrencyCode && (
                           <div className="text-xs text-gray-500">
                             ≈ {baseCurrencyCode}{' '}
-                            {invoice.baseTotal.toLocaleString('es-DO')}
+                            {formatAmount(invoice.baseTotal)}
                           </div>
                         )}
                       </td>
@@ -1475,11 +1664,11 @@ export default function InvoicingPage() {
                                       className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
                                     />
                                   ) : (
-                                    <>RD$ {item.price.toLocaleString()}</>
+                                    <>{formatMoney(item.price)}</>
                                   )}
                                 </td>
                                 <td className="px-4 py-2 text-sm text-gray-900 text-right">
-                                  RD$ {item.total.toLocaleString()}
+                                  {formatMoney(item.total)}
                                 </td>
                               </tr>
                             ))}
@@ -1487,15 +1676,15 @@ export default function InvoicingPage() {
                           <tfoot className="bg-gray-50">
                             <tr>
                               <td colSpan={3} className="px-4 py-2 text-right text-xs text-gray-500">Subtotal</td>
-                              <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900">RD$ {invoice.amount.toLocaleString()}</td>
+                              <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900">{formatMoney(invoice.amount)}</td>
                             </tr>
                             <tr>
                               <td colSpan={3} className="px-4 py-2 text-right text-xs text-gray-500">ITBIS ({(taxConfig?.itbis_rate ?? 18).toFixed(2)}%)</td>
-                              <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900">RD$ {invoice.tax.toLocaleString()}</td>
+                              <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900">{formatMoney(invoice.tax)}</td>
                             </tr>
                             <tr>
                               <td colSpan={3} className="px-4 py-2 text-right text-xs font-semibold text-gray-700">Total</td>
-                              <td className="px-4 py-2 text-right text-base font-bold text-gray-900">RD$ {invoice.total.toLocaleString()}</td>
+                              <td className="px-4 py-2 text-right text-base font-bold text-gray-900">{formatMoney(invoice.total)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -1610,6 +1799,24 @@ export default function InvoicingPage() {
                     </select>
                   </div>
                   <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de venta</label>
+                    <select
+                      value={newInvoiceSaleType}
+                      onChange={(e) => {
+                        const nextType = (e.target.value || 'credit') as 'credit' | 'cash';
+                        setNewInvoiceSaleType(nextType);
+                        if (nextType === 'cash') {
+                          setNewInvoicePaymentTermId(null);
+                          setNewInvoiceDueDate(newInvoiceDate);
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="credit">Crédito</option>
+                      <option value="cash">Contado</option>
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Condición de pago</label>
                     <select
                       value={newInvoicePaymentTermId ?? ''}
@@ -1624,6 +1831,7 @@ export default function InvoicingPage() {
                           setNewInvoiceDueDate(d.toISOString().slice(0, 10));
                         }
                       }}
+                      disabled={newInvoiceSaleType === 'cash'}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                     >
                       <option value="">Sin condición específica</option>
@@ -1633,6 +1841,49 @@ export default function InvoicingPage() {
                         </option>
                       ))}
                     </select>
+                    {newInvoiceSaleType === 'cash' ? (
+                      <p className="mt-1 text-xs text-gray-500">Venta de contado: el sistema registrará el cobro automáticamente.</p>
+                    ) : null}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Forma de pago</label>
+                    <select
+                      value={newInvoicePaymentMethod}
+                      onChange={(e) => setNewInvoicePaymentMethod(e.target.value)}
+                      disabled={newInvoiceSaleType !== 'cash'}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Seleccionar...</option>
+                      <option value="cash">Efectivo</option>
+                      <option value="transfer">Transferencia</option>
+                      <option value="card">Tarjeta</option>
+                      <option value="check">Cheque</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Cuenta de Banco (opcional)</label>
+                    <select
+                      value={newInvoiceBankAccountId}
+                      onChange={(e) => setNewInvoiceBankAccountId(e.target.value)}
+                      disabled={newInvoiceSaleType !== 'cash'}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Seleccionar cuenta</option>
+                      {bankAccounts.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Referencia (opcional)</label>
+                    <input
+                      type="text"
+                      value={newInvoicePaymentReference}
+                      onChange={(e) => setNewInvoicePaymentReference(e.target.value)}
+                      disabled={newInvoiceSaleType !== 'cash'}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Ej: #autorización, #transferencia, etc."
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Fecha de Vencimiento</label>
@@ -1640,6 +1891,7 @@ export default function InvoicingPage() {
                       type="date"
                       value={newInvoiceDueDate}
                       onChange={(e) => setNewInvoiceDueDate(e.target.value)}
+                      disabled={newInvoiceSaleType === 'cash'}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -1694,7 +1946,6 @@ export default function InvoicingPage() {
                                     setNewInvoiceItems((prev) => {
                                       const next = [...prev];
                                       if (invItem) {
-                                        // Priorizar precio de venta; si no existe, usar costo
                                         const rawPrice =
                                           invItem.selling_price ??
                                           invItem.sale_price ??
@@ -1777,7 +2028,7 @@ export default function InvoicingPage() {
                               />
                             </td>
                             <td className="px-4 py-3">
-                              <span className="text-sm font-medium">RD$ {item.total.toLocaleString('es-DO')}</span>
+                              <span className="text-sm font-medium">{formatMoney(item.total)}</span>
                             </td>
                             <td className="px-4 py-3">
                               <button
@@ -1825,7 +2076,7 @@ export default function InvoicingPage() {
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-sm text-gray-600">Subtotal:</span>
-                        <span className="text-sm font-medium">RD$ {newInvoiceSubtotal.toLocaleString('es-DO')}</span>
+                        <span className="text-sm font-medium">{formatMoney(newInvoiceSubtotal)}</span>
                       </div>
                       <div className="flex justify-between items-center space-x-2">
                         <span className="text-sm text-gray-600">Descuento global:</span>
@@ -1835,7 +2086,6 @@ export default function InvoicingPage() {
                             onChange={(e) => {
                               const t = e.target.value === 'fixed' ? 'fixed' : 'percentage';
                               setNewInvoiceDiscountType(t);
-                              // Recalcular usando el mismo valor numérico pero con nuevo tipo
                               recalcNewInvoiceTotals([...newInvoiceItems], t, newInvoiceDiscountPercent, newInvoiceNoTax);
                             }}
                             className="px-2 py-1 border border-gray-300 rounded text-sm"
@@ -1858,12 +2108,12 @@ export default function InvoicingPage() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-sm text-gray-600">ITBIS ({currentItbisRate.toFixed(2)}%):</span>
-                        <span className="text-sm font-medium">RD$ {newInvoiceTax.toLocaleString('es-DO')}</span>
+                        <span className="text-sm font-medium">{formatMoney(newInvoiceTax)}</span>
                       </div>
                       <div className="border-t border-gray-200 pt-2">
                         <div className="flex justify-between">
                           <span className="text-base font-semibold">Total:</span>
-                          <span className="text-base font-semibold">RD$ {newInvoiceTotal.toLocaleString('es-DO')}</span>
+                          <span className="text-base font-semibold">{formatMoney(newInvoiceTotal)}</span>
                         </div>
                       </div>
                     </div>
@@ -1889,6 +2139,56 @@ export default function InvoicingPage() {
                 >
                   Crear Factura
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showDocumentPreviewModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl mx-4 max-h-[92vh] overflow-hidden flex flex-col">
+              <div className="p-4 border-b border-gray-200 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-lg font-semibold text-gray-900 truncate">{documentPreviewTitle}</h3>
+                  {documentPreviewFilename ? (
+                    <p className="text-xs text-gray-500 truncate">{documentPreviewFilename}</p>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  <button
+                    onClick={handleDownloadDocumentPreview}
+                    className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap"
+                    type="button"
+                  >
+                    Descargar
+                  </button>
+                  <button
+                    onClick={handlePrintDocumentPreview}
+                    className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                    type="button"
+                  >
+                    Imprimir
+                  </button>
+                  <button
+                    onClick={handleCloseDocumentPreview}
+                    className="px-3 py-2 bg-gray-900 text-white rounded-lg hover:bg-black transition-colors whitespace-nowrap"
+                    type="button"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 bg-gray-50">
+                {documentPreviewUrl ? (
+                  <iframe
+                    ref={documentPreviewIframeRef}
+                    title={documentPreviewTitle}
+                    src={documentPreviewUrl}
+                    className="w-full h-[80vh] bg-white"
+                  />
+                ) : (
+                  <div className="p-6 text-sm text-gray-600">No hay documento para previsualizar.</div>
+                )}
               </div>
             </div>
           </div>

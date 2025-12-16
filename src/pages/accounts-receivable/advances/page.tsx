@@ -6,6 +6,7 @@ import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
 import { customersService, invoicesService, customerAdvancesService, bankAccountsService, journalEntriesService, settingsService, accountingSettingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface Advance {
   id: string;
@@ -251,9 +252,9 @@ export default function AdvancesPage() {
     
     const summaryData = [
       ['Concepto', 'Valor'],
-      ['Total Anticipos', `RD$ ${totalAmount.toLocaleString()}`],
-      ['Total Aplicado', `RD$ ${totalApplied.toLocaleString()}`],
-      ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
+      ['Total Anticipos', `${formatMoney(totalAmount, 'RD$')}`],
+      ['Total Aplicado', `${formatMoney(totalApplied, 'RD$')}`],
+      ['Saldo Pendiente', `${formatMoney(totalBalance, 'RD$')}`],
       ['Anticipos Pendientes', pendingAdvances.toString()],
       ['Total de Anticipos', activeAdvances.length.toString()]
     ];
@@ -274,9 +275,9 @@ export default function AdvancesPage() {
       advance.advanceNumber,
       advance.customerName,
       advance.date,
-      `RD$ ${advance.amount.toLocaleString()}`,
-      `RD$ ${advance.appliedAmount.toLocaleString()}`,
-      `RD$ ${advance.balance.toLocaleString()}`,
+      `${formatMoney(advance.amount, 'RD$')}`,
+      `${formatMoney(advance.appliedAmount, 'RD$')}`,
+      `${formatMoney(advance.balance, 'RD$')}`,
       getStatusName(advance.status)
     ]);
     
@@ -318,9 +319,9 @@ export default function AdvancesPage() {
       advanceNumber: advance.advanceNumber,
       customerName: advance.customerName,
       date: advance.date,
-      amount: advance.amount,
-      appliedAmount: advance.appliedAmount,
-      balance: advance.balance,
+      amount: formatMoney(advance.amount, 'RD$'),
+      appliedAmount: formatMoney(advance.appliedAmount, 'RD$'),
+      balance: formatMoney(advance.balance, 'RD$'),
       status: getStatusName(advance.status),
     }));
 
@@ -677,7 +678,7 @@ export default function AdvancesPage() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Total Anticipos</p>
                 <p className="text-2xl font-bold text-blue-600">
-                  RD${filteredAdvances.reduce((sum, a) => sum + a.amount, 0).toLocaleString()}
+                  {formatMoney(filteredAdvances.reduce((sum, a) => sum + a.amount, 0), 'RD$')}
                 </p>
               </div>
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -691,7 +692,7 @@ export default function AdvancesPage() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Saldo Disponible</p>
                 <p className="text-2xl font-bold text-green-600">
-                  RD${filteredAdvances.reduce((sum, a) => sum + a.balance, 0).toLocaleString()}
+                  {formatMoney(filteredAdvances.reduce((sum, a) => sum + a.balance, 0), 'RD$')}
                 </p>
               </div>
               <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
@@ -705,7 +706,7 @@ export default function AdvancesPage() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Monto Aplicado</p>
                 <p className="text-2xl font-bold text-purple-600">
-                  RD${filteredAdvances.reduce((sum, a) => sum + a.appliedAmount, 0).toLocaleString()}
+                  {formatMoney(filteredAdvances.reduce((sum, a) => sum + a.appliedAmount, 0), 'RD$')}
                 </p>
               </div>
               <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
@@ -824,13 +825,13 @@ export default function AdvancesPage() {
                       {advance.date}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD${advance.amount.toLocaleString()}
+                      {formatMoney(advance.amount, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD${advance.appliedAmount.toLocaleString()}
+                      {formatMoney(advance.appliedAmount, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600">
-                      RD${advance.balance.toLocaleString()}
+                      {formatMoney(advance.balance, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(advance.status)}`}>
@@ -1071,7 +1072,7 @@ export default function AdvancesPage() {
               <div className="mb-4 p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600">Anticipo: <span className="font-medium">{selectedAdvance.advanceNumber}</span></p>
                 <p className="text-sm text-gray-600">Cliente: <span className="font-medium">{selectedAdvance.customerName}</span></p>
-                <p className="text-lg font-semibold text-green-600">Saldo disponible: RD${selectedAdvance.balance.toLocaleString()}</p>
+                <p className="text-lg font-semibold text-green-600">Saldo disponible: {formatMoney(selectedAdvance.balance, 'RD$')}</p>
               </div>
               
               <form onSubmit={handleSaveApplication} className="space-y-4">
@@ -1093,7 +1094,7 @@ export default function AdvancesPage() {
                       )
                       .map((inv) => (
                         <option key={inv.id} value={inv.id}>
-                          {inv.invoiceNumber} - RD$ {inv.totalAmount.toLocaleString()}
+                          {inv.invoiceNumber} - {formatMoney(inv.totalAmount, 'RD$')}
                         </option>
                       ))}
                   </select>
@@ -1184,7 +1185,7 @@ export default function AdvancesPage() {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Monto Original</label>
-                    <p className="text-2xl font-bold text-blue-600">RD${selectedAdvance.amount.toLocaleString()}</p>
+                    <p className="text-2xl font-bold text-blue-600">{formatMoney(selectedAdvance.amount, 'RD$')}</p>
                   </div>
                 </div>
                 
@@ -1201,12 +1202,12 @@ export default function AdvancesPage() {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Monto Aplicado</label>
-                    <p className="text-lg font-semibold text-purple-600">RD${selectedAdvance.appliedAmount.toLocaleString()}</p>
+                    <p className="text-lg font-semibold text-purple-600">{formatMoney(selectedAdvance.appliedAmount, 'RD$')}</p>
                   </div>
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Saldo Disponible</label>
-                    <p className="text-2xl font-bold text-green-600">RD${selectedAdvance.balance.toLocaleString()}</p>
+                    <p className="text-2xl font-bold text-green-600">{formatMoney(selectedAdvance.balance, 'RD$')}</p>
                   </div>
                 </div>
               </div>

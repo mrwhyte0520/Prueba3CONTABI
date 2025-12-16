@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useRef, useState, useEffect, type FormEvent } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
 import { customerPaymentsService, invoicesService, bankAccountsService, accountingSettingsService, journalEntriesService, customersService, receiptsService, receiptApplicationsService, chartAccountsService, settingsService } from '../../../services/database';
-import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import ExcelJS from 'exceljs';
+import { formatAmount, formatMoney } from '../../../utils/numberFormat';
 
 interface Payment {
   id: string;
@@ -31,6 +32,7 @@ interface InvoiceOption {
 interface BankAccountOption {
   id: string;
   name: string;
+  chartAccountId?: string | null;
 }
 
 export default function PaymentsPage() {
@@ -38,12 +40,26 @@ export default function PaymentsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [methodFilter, setMethodFilter] = useState('all');
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showPaymentDetailModal, setShowPaymentDetailModal] = useState(false);
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+  const [companyName, setCompanyName] = useState('ContaBi');
+  const [companyRnc, setCompanyRnc] = useState('');
   const [payments, setPayments] = useState<Payment[]>([]);
   const [invoices, setInvoices] = useState<InvoiceOption[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccountOption[]>([]);
   const [customerArAccounts, setCustomerArAccounts] = useState<Record<string, string>>({});
+  const [customerDocuments, setCustomerDocuments] = useState<Record<string, string>>({});
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [showDocumentPreviewModal, setShowDocumentPreviewModal] = useState(false);
+  const [documentPreviewType, setDocumentPreviewType] = useState<'pdf' | 'table' | 'html'>('pdf');
+  const [documentPreviewTitle, setDocumentPreviewTitle] = useState('');
+  const [documentPreviewFilename, setDocumentPreviewFilename] = useState('');
+  const [documentPreviewUrl, setDocumentPreviewUrl] = useState('');
+  const [documentPreviewBlob, setDocumentPreviewBlob] = useState<Blob | null>(null);
+  const [documentPreviewHeaders, setDocumentPreviewHeaders] = useState<string[]>([]);
+  const [documentPreviewRows, setDocumentPreviewRows] = useState<Array<Array<string | number>>>([]);
+  const [documentPreviewSummary, setDocumentPreviewSummary] = useState<Array<{ label: string; value: string }>>([]);
+  const documentPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const receivableAccounts = accounts.filter((acc) => {
     if (!acc.allowPosting) return false;
@@ -52,9 +68,35 @@ export default function PaymentsPage() {
     return name.includes('cuentas por cobrar');
   });
 
+  const getPaymentMethodName = (method: string) => {
+    switch (method) {
+      case 'cash': return 'Efectivo';
+      case 'check': return 'Cheque';
+      case 'transfer': return 'Transferencia';
+      case 'card': return 'Tarjeta';
+      default: return method;
+    }
+  };
+
+  const getPaymentMethodColor = (method: string) => {
+    switch (method) {
+      case 'cash': return 'bg-green-100 text-green-800';
+      case 'check': return 'bg-blue-100 text-blue-800';
+      case 'transfer': return 'bg-purple-100 text-purple-800';
+      case 'card': return 'bg-orange-100 text-orange-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const formatLocalDate = (dateStr: string) => {
+    const date = new Date(`${dateStr}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return dateStr;
+    return date.toLocaleDateString('es-DO');
+  };
+
   useEffect(() => {
     const loadData = async () => {
-      if (!user) return;
+      if (!user?.id) return;
       try {
         const [paymentsData, invoicesData, bankAccountsData, customersData, accountsData] = await Promise.all([
           customerPaymentsService.getAll(user.id),
@@ -94,48 +136,150 @@ export default function PaymentsPage() {
           });
         setInvoices(mappedInvoices);
 
-        const mappedBankAccounts: BankAccountOption[] = (bankAccountsData || []).map((ba: any) => ({
-          id: ba.id,
-          name: `${ba.bank_name} - ${ba.account_number}`,
+        const mappedBankAccounts: BankAccountOption[] = (bankAccountsData || []).map((b: any) => ({
+          id: String(b.id),
+          name: String(b.name || ''),
+          chartAccountId: b.chart_account_id ? String(b.chart_account_id) : null,
         }));
         setBankAccounts(mappedBankAccounts);
 
-        setAccounts(accountsData || []);
-
-        // Mapa de cuentas por cobrar por cliente (si tienen ar_account_id asignada)
-        const arMap: Record<string, string> = {};
-        (customersData || []).forEach((c: any) => {
-          if (c.id && c.ar_account_id) {
-            arMap[String(c.id)] = String(c.ar_account_id);
+        const mappedCustomerArAccounts = (customersData || []).reduce((acc: Record<string, string>, c: any) => {
+          const id = String(c.id);
+          const ar = c.ar_account_id || c.arAccountId || c.ar_accountId;
+          if (ar) {
+            acc[id] = String(ar);
           }
-        });
-        setCustomerArAccounts(arMap);
+          return acc;
+        }, {} as Record<string, string>);
+        setCustomerArAccounts(mappedCustomerArAccounts);
+
+        const mappedCustomerDocuments = (customersData || []).reduce((acc: Record<string, string>, c: any) => {
+          const id = String(c.id);
+          const doc = c.document || c.rnc || c.tax_id || c.ruc || '';
+          if (doc) {
+            acc[id] = String(doc);
+          }
+          return acc;
+        }, {} as Record<string, string>);
+        setCustomerDocuments(mappedCustomerDocuments);
+
+        const mappedAccounts = (accountsData || []).map((a: any) => ({
+          ...a,
+          id: String(a.id),
+          allowPosting: !!(a.allowPosting ?? a.allow_posting),
+        }));
+        setAccounts(mappedAccounts);
       } catch (error) {
-        console.error('Error loading customer payments:', error);
+        console.error('Error cargando datos de pagos recibidos:', error);
       }
     };
 
-    loadData();
-  }, [user]);
+    void loadData();
+  }, [user?.id]);
 
-  const getPaymentMethodName = (method: string) => {
-    switch (method) {
-      case 'cash': return 'Efectivo';
-      case 'check': return 'Cheque';
-      case 'transfer': return 'Transferencia';
-      case 'card': return 'Tarjeta';
-      default: return 'Otro';
-    }
+  useEffect(() => {
+    const loadCompany = async () => {
+      try {
+        const info = await settingsService.getCompanyInfo();
+        if (info && (info as any)) {
+          const name = (info as any).name || (info as any).company_name;
+          const rnc = (info as any).rnc || (info as any).tax_id || (info as any).ruc;
+          if (name) setCompanyName(String(name));
+          if (rnc) setCompanyRnc(String(rnc));
+        }
+      } catch (error) {
+        console.error('Error cargando información de la empresa (Pagos Recibidos):', error);
+      }
+    };
+
+    void loadCompany();
+  }, [user?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (documentPreviewUrl) {
+        URL.revokeObjectURL(documentPreviewUrl);
+      }
+    };
+  }, [documentPreviewUrl]);
+
+  const handleCloseDocumentPreview = () => {
+    setShowDocumentPreviewModal(false);
+    setDocumentPreviewType('pdf');
+    setDocumentPreviewTitle('');
+    setDocumentPreviewFilename('');
+    setDocumentPreviewUrl('');
+    setDocumentPreviewBlob(null);
+    setDocumentPreviewHeaders([]);
+    setDocumentPreviewRows([]);
+    setDocumentPreviewSummary([]);
   };
 
-  const getPaymentMethodColor = (method: string) => {
-    switch (method) {
-      case 'cash': return 'bg-green-100 text-green-800';
-      case 'check': return 'bg-blue-100 text-blue-800';
-      case 'transfer': return 'bg-purple-100 text-purple-800';
-      case 'card': return 'bg-orange-100 text-orange-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
+  const handleDownloadDocumentPreview = () => {
+    if (!documentPreviewBlob || !documentPreviewFilename) return;
+    const url = URL.createObjectURL(documentPreviewBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = documentPreviewFilename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const handlePrintDocumentPreview = () => {
+    const iframe = documentPreviewIframeRef.current;
+    const win = iframe?.contentWindow;
+    if (!win) return;
+    win.focus();
+    win.print();
+  };
+
+  const openPdfPreview = (doc: jsPDF, title: string, filename: string) => {
+    const blob = doc.output('blob') as Blob;
+    const url = URL.createObjectURL(blob);
+    setDocumentPreviewType('pdf');
+    setDocumentPreviewTitle(title);
+    setDocumentPreviewFilename(filename);
+    setDocumentPreviewBlob(blob);
+    setDocumentPreviewUrl(url);
+    setDocumentPreviewHeaders([]);
+    setDocumentPreviewRows([]);
+    setDocumentPreviewSummary([]);
+    setShowDocumentPreviewModal(true);
+  };
+
+  const openHtmlPreview = (html: string, title: string, filename: string) => {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    setDocumentPreviewType('html');
+    setDocumentPreviewTitle(title);
+    setDocumentPreviewFilename(filename);
+    setDocumentPreviewBlob(blob);
+    setDocumentPreviewUrl(url);
+    setDocumentPreviewHeaders([]);
+    setDocumentPreviewRows([]);
+    setDocumentPreviewSummary([]);
+    setShowDocumentPreviewModal(true);
+  };
+
+  const openTablePreview = (payload: {
+    title: string;
+    filename: string;
+    blob: Blob;
+    headers: string[];
+    rows: Array<Array<string | number>>;
+    summary?: Array<{ label: string; value: string }>;
+  }) => {
+    setDocumentPreviewType('table');
+    setDocumentPreviewTitle(payload.title);
+    setDocumentPreviewFilename(payload.filename);
+    setDocumentPreviewBlob(payload.blob);
+    setDocumentPreviewUrl('');
+    setDocumentPreviewHeaders(payload.headers);
+    setDocumentPreviewRows(payload.rows);
+    setDocumentPreviewSummary(payload.summary || []);
+    setShowDocumentPreviewModal(true);
   };
 
   const filteredPayments = payments.filter(payment => {
@@ -149,19 +293,6 @@ export default function PaymentsPage() {
   const exportToPDF = async () => {
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
-
-    let companyName = 'ContaBi';
-    try {
-      const info = await settingsService.getCompanyInfo();
-      if (info && (info as any)) {
-        const resolvedName = (info as any).name || (info as any).company_name;
-        if (resolvedName) {
-          companyName = String(resolvedName);
-        }
-      }
-    } catch (error) {
-      console.error('Error obteniendo información de la empresa para PDF de pagos recibidos:', error);
-    }
 
     doc.setFontSize(16);
     doc.text(companyName, pageWidth / 2, 15, { align: 'center' } as any);
@@ -183,12 +314,12 @@ export default function PaymentsPage() {
 
     const summaryData = [
       ['Concepto', 'Monto'],
-      ['Total Recibido', `RD$ ${totalPayments.toLocaleString()}`],
+      ['Total Recibido', formatMoney(totalPayments)],
       ['Número de Pagos', filteredPayments.length.toString()],
-      ['Efectivo', `RD$ ${(paymentsByMethod.cash || 0).toLocaleString()}`],
-      ['Transferencias', `RD$ ${(paymentsByMethod.transfer || 0).toLocaleString()}`],
-      ['Cheques', `RD$ ${(paymentsByMethod.check || 0).toLocaleString()}`],
-      ['Tarjetas', `RD$ ${(paymentsByMethod.card || 0).toLocaleString()}`]
+      ['Efectivo', formatMoney(paymentsByMethod.cash || 0)],
+      ['Transferencias', formatMoney(paymentsByMethod.transfer || 0)],
+      ['Cheques', formatMoney(paymentsByMethod.check || 0)],
+      ['Tarjetas', formatMoney(paymentsByMethod.card || 0)]
     ];
 
     (doc as any).autoTable({
@@ -206,7 +337,7 @@ export default function PaymentsPage() {
       payment.date,
       payment.customerName,
       payment.invoiceNumber,
-      `RD$ ${payment.amount.toLocaleString()}`,
+      formatMoney(payment.amount),
       getPaymentMethodName(payment.paymentMethod),
       payment.reference
     ]);
@@ -220,23 +351,11 @@ export default function PaymentsPage() {
       styles: { fontSize: 9 }
     });
 
-    doc.save(`pagos-recibidos-${new Date().toISOString().split('T')[0]}.pdf`);
+    const filename = `pagos-recibidos-${new Date().toISOString().split('T')[0]}.pdf`;
+    openPdfPreview(doc, 'Reporte de Pagos Recibidos', filename);
   };
 
   const exportToExcel = async () => {
-    let companyName = 'ContaBi';
-    try {
-      const info = await settingsService.getCompanyInfo();
-      if (info && (info as any)) {
-        const resolvedName = (info as any).name || (info as any).company_name;
-        if (resolvedName) {
-          companyName = String(resolvedName);
-        }
-      }
-    } catch (error) {
-      console.error('Error obteniendo información de la empresa para Excel de pagos recibidos:', error);
-    }
-
     const rows = filteredPayments.map((payment) => ({
       date: payment.date,
       customer: payment.customerName,
@@ -263,226 +382,454 @@ export default function PaymentsPage() {
       { key: 'reference', title: 'Referencia' },
     ];
 
-    exportToExcelWithHeaders(
-      rows,
-      headers,
-      `pagos-recibidos-${todayIso}`,
-      'Pagos',
-      [14, 28, 24, 16, 18, 24],
-      {
-        title: `Pagos Recibidos - ${todayLocal}`,
-        companyName,
-      },
-    );
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Pagos', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = [
+      { key: 'date', header: 'Fecha', width: 14 },
+      { key: 'customer', header: 'Cliente', width: 28 },
+      { key: 'invoice', header: 'Factura', width: 24 },
+      { key: 'amount', header: 'Monto', width: 16 },
+      { key: 'method', header: 'Método', width: 18 },
+      { key: 'reference', header: 'Referencia', width: 24 },
+    ];
+
+    const headerRow = ws.getRow(1);
+    headerRow.font = { bold: true };
+
+    rows.forEach((r) => {
+      ws.addRow(r);
+    });
+
+    const amountCol = ws.getColumn('amount');
+    amountCol.numFmt = '#,##0.00';
+
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+
+    const totalPayments = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
+    const paymentsByMethod = filteredPayments.reduce((acc, payment) => {
+      acc[payment.paymentMethod] = (acc[payment.paymentMethod] || 0) + payment.amount;
+      return acc;
+    }, {} as Record<string, number>);
+
+    openTablePreview({
+      title: `Pagos Recibidos - ${todayLocal}`,
+      filename: `pagos-recibidos-${todayIso}.xlsx`,
+      blob,
+      headers: headers.map(h => h.title),
+      rows: rows.map(r => [r.date, r.customer, r.invoice, formatMoney(r.amount), r.method, r.reference]),
+      summary: [
+        { label: 'Empresa', value: companyName },
+        { label: 'Total Recibido', value: formatMoney(totalPayments) },
+        { label: 'Número de Pagos', value: filteredPayments.length.toString() },
+        { label: 'Efectivo', value: formatMoney(paymentsByMethod.cash || 0) },
+        { label: 'Transferencias', value: formatMoney(paymentsByMethod.transfer || 0) },
+        { label: 'Cheques', value: formatMoney(paymentsByMethod.check || 0) },
+        { label: 'Tarjetas', value: formatMoney(paymentsByMethod.card || 0) },
+      ],
+    });
   };
 
   const handleNewPayment = () => {
-    setSelectedPayment(null);
     setShowPaymentModal(true);
   };
 
-  const handleViewPayment = (paymentId: string) => {
-    const payment = payments.find(pay => pay.id === paymentId);
-    if (payment) {
-      alert(`Detalles del pago:\n\nCliente: ${payment.customerName}\nFactura: ${payment.invoiceNumber}\nMonto: RD$ ${payment.amount.toLocaleString()}\nMétodo: ${getPaymentMethodName(payment.paymentMethod)}\nReferencia: ${payment.reference}`);
-    }
-  };
-
-  const handleSavePayment = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSavePayment = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!user) return;
 
-    const form = e.currentTarget;
-    const formData = new FormData(form);
+    if (!user?.id) {
+      alert('Debes iniciar sesión para registrar pagos');
+      return;
+    }
+
+    const formData = new FormData(e.currentTarget);
+
     const invoiceId = String(formData.get('invoiceId') || '');
     const bankAccountId = String(formData.get('bankAccountId') || '');
-    const amount = Number(formData.get('amount') || 0) || 0;
-    const paymentMethod = String(formData.get('paymentMethod') || 'cash') as Payment['paymentMethod'];
+    const arAccountIdOverride = String(formData.get('arAccountId') || '');
+    const amountToPay = Number(formData.get('amount') || 0);
+    const paymentMethod = String(formData.get('paymentMethod') || 'cash');
     const reference = String(formData.get('reference') || '').trim();
-    const paymentDate = String(formData.get('paymentDate') || '') || new Date().toISOString().split('T')[0];
-    const generateReceipt = formData.get('generateReceipt') !== null;
-    const arAccountIdFromForm = String(formData.get('arAccountId') || '');
+
+    if (!invoiceId) {
+      alert('Debes seleccionar una factura');
+      return;
+    }
+
+    if (!amountToPay || amountToPay <= 0) {
+      alert('El monto a pagar debe ser mayor que 0');
+      return;
+    }
 
     const invoice = invoices.find((inv) => inv.id === invoiceId);
     if (!invoice) {
-      alert('Debe seleccionar una factura válida');
+      alert('La factura seleccionada no es válida');
       return;
     }
 
-    const balance = invoice.balance;
-    if (amount <= 0) {
-      alert('El monto del pago debe ser mayor que cero');
-      return;
-    }
-    if (amount > balance) {
-      const confirmOver = confirm(
-        `El monto del pago (${amount.toLocaleString('es-DO')}) es mayor que el saldo de la factura (${balance.toLocaleString('es-DO')}). ¿Desea continuar de todos modos?`,
-      );
-      if (!confirmOver) return;
-    }
+    const effectivePayment = Math.min(amountToPay, invoice.balance);
+    const change = amountToPay - effectivePayment;
 
-    const bankAccount = bankAccounts.find((b) => b.id === bankAccountId);
-    if (paymentMethod !== 'cash' && !bankAccount) {
-      alert('Debe seleccionar una cuenta de banco para este método de pago');
-      return;
-    }
-
-    const payload: any = {
-      customer_id: invoice.customerId,
-      invoice_id: invoiceId,
-      bank_account_id: bankAccountId || null,
-      amount,
-      payment_method: paymentMethod,
-      payment_date: paymentDate,
-      reference,
-    };
+    const paymentDate = new Date().toISOString().slice(0, 10);
+    const newPaidAmount = (Number(invoice.paidAmount) || 0) + effectivePayment;
+    const newBalance = (Number(invoice.totalAmount) || 0) - newPaidAmount;
+    const newStatus = newBalance > 0 ? 'partial' : 'paid';
 
     try {
-      const created = await customerPaymentsService.create(user.id, payload);
-      const newPaid = (invoice.paidAmount || 0) + amount;
-      const newStatus = newPaid >= invoice.totalAmount ? 'paid' : 'partial';
-      await invoicesService.updatePayment(invoiceId, newPaid, newStatus);
+      // Resolver cuentas contables antes de registrar el pago para garantizar asiento automático
+      const settings = await accountingSettingsService.get(user.id);
+      const normalizeCode = (code: string | null | undefined) => String(code || '').replace(/\./g, '');
+      const customerArId = customerArAccounts[String(invoice.customerId)];
+      const resolvedArAccountId =
+        (arAccountIdOverride ? arAccountIdOverride : '') ||
+        (customerArId ? String(customerArId) : '') ||
+        (settings?.ar_account_id ? String(settings.ar_account_id) : '');
 
-      const mapped: Payment = {
-        id: created.id,
-        customerId: created.customer_id,
-        customerName: created.customers?.name || invoice.customerName,
-        invoiceId: created.invoice_id,
-        invoiceNumber: created.invoices?.invoice_number || invoice.invoiceNumber,
-        amount: Number(created.amount) || amount,
-        paymentMethod: created.payment_method,
-        date: created.payment_date,
-        reference: created.reference || reference,
+      // Caja General (Débito): settings.cash_account_id o fallback a cuenta 100101 si existe
+      let cashGeneralAccountId: string | null = (settings as any)?.cash_account_id
+        ? String((settings as any).cash_account_id)
+        : null;
+
+      if (!cashGeneralAccountId) {
+        const fromState = accounts.find((a: any) => normalizeCode(a.code) === '100101');
+        if (fromState?.id) cashGeneralAccountId = String(fromState.id);
+      }
+
+      if (!cashGeneralAccountId) {
+        try {
+          const allAccounts = await chartAccountsService.getAll(user.id);
+          const cash100101 = (allAccounts || []).find((a: any) => normalizeCode(a.code) === '100101');
+          if (cash100101?.id) cashGeneralAccountId = String(cash100101.id);
+        } catch {
+          cashGeneralAccountId = null;
+        }
+      }
+
+      if (!cashGeneralAccountId) {
+        alert(
+          'No se pudo registrar el pago: configure la cuenta de Caja General (código 100101 o cash_account_id) para poder generar el asiento automáticamente.',
+        );
+        return;
+      }
+
+      if (!resolvedArAccountId) {
+        alert(
+          'No se pudo registrar el pago: configure la cuenta de Cuentas por Cobrar (Clientes) en Ajustes Contables o en el cliente.',
+        );
+        return;
+      }
+
+      const paymentPayload: any = {
+        customer_id: invoice.customerId,
+        invoice_id: invoiceId,
+        bank_account_id: bankAccountId ? bankAccountId : null,
+        amount: effectivePayment,
+        payment_method: paymentMethod,
+        payment_date: paymentDate,
+        reference: reference || null,
       };
-      setPayments((prev) => [mapped, ...prev]);
+
+      const createdPayment = await customerPaymentsService.create(user.id, paymentPayload);
+
+      await invoicesService.updatePayment(invoiceId, newPaidAmount, newStatus);
+
+      try {
+        const [paymentsData, invoicesData] = await Promise.all([
+          customerPaymentsService.getAll(user.id),
+          invoicesService.getAll(user.id),
+        ]);
+
+        const mappedPayments: Payment[] = (paymentsData || []).map((p: any) => ({
+          id: p.id,
+          customerId: p.customer_id,
+          customerName: p.customers?.name || '',
+          invoiceId: p.invoice_id,
+          invoiceNumber: p.invoices?.invoice_number || '',
+          amount: Number(p.amount) || 0,
+          paymentMethod: p.payment_method,
+          date: p.payment_date,
+          reference: p.reference || '',
+        }));
+        setPayments(mappedPayments);
+
+        const mappedInvoices: InvoiceOption[] = (invoicesData || [])
+          .filter((inv: any) => inv.status !== 'Cancelada')
+          .map((inv: any) => {
+            const total = Number(inv.total_amount) || 0;
+            const paid = Number(inv.paid_amount) || 0;
+            return {
+              id: inv.id,
+              invoiceNumber: inv.invoice_number,
+              customerName: inv.customers?.name || '',
+              customerId: inv.customer_id,
+              balance: Math.max(total - paid, 0),
+              totalAmount: total,
+              paidAmount: paid,
+            };
+          });
+        setInvoices(mappedInvoices);
+      } catch (refreshError) {
+        console.error('Error recargando pagos/facturas luego del registro:', refreshError);
+      }
+
+      try {
+        const lines: any[] = [
+          {
+            account_id: cashGeneralAccountId,
+            description: 'Cobro de cliente - Caja General',
+            debit_amount: effectivePayment,
+            credit_amount: 0,
+            line_number: 1,
+          },
+          {
+            account_id: resolvedArAccountId,
+            description: 'Cobro de cliente - Cuentas por Cobrar',
+            debit_amount: 0,
+            credit_amount: effectivePayment,
+            line_number: 2,
+          },
+        ];
+
+        const description = invoice.customerName
+          ? `Pago factura ${invoice.invoiceNumber} - ${invoice.customerName}`
+          : `Pago factura ${invoice.invoiceNumber}`;
+
+        const refText = reference || '';
+        const entryReference = createdPayment?.id
+          ? refText
+            ? `Pago:${createdPayment.id} Ref:${refText}`
+            : `Pago:${createdPayment.id}`
+          : refText || undefined;
+
+        const entryPayload = {
+          entry_number: createdPayment?.id || `CP-${Date.now()}`,
+          entry_date: paymentDate,
+          description,
+          reference: entryReference ?? null,
+          status: 'posted' as const,
+        };
+
+        await journalEntriesService.createWithLines(user.id, entryPayload, lines);
+      } catch (jeError) {
+        console.error('Error creando asiento contable para pago de factura:', jeError);
+        alert('Pago registrado, pero ocurrió un error al crear el asiento contable.');
+      }
+
+      try {
+        const receiptNumber = `RC-${Date.now()}`;
+        const receiptPayload = {
+          customer_id: invoice.customerId,
+          receipt_number: receiptNumber,
+          receipt_date: paymentDate,
+          amount: effectivePayment,
+          payment_method: paymentMethod,
+          reference: reference || null,
+          concept: `Pago factura ${invoice.invoiceNumber}`,
+          status: 'active' as const,
+        };
+
+        const createdReceipt = await receiptsService.create(user.id, receiptPayload);
+
+        await receiptApplicationsService.create(user.id, {
+          receipt_id: createdReceipt.id,
+          invoice_id: invoiceId,
+          amount_applied: effectivePayment,
+          application_date: paymentDate,
+          notes: null,
+        });
+
+        const receiptNo = (createdReceipt as any)?.receipt_number || receiptNumber;
+        const receiptDate = (createdReceipt as any)?.receipt_date || paymentDate;
+
+        let companyName = 'ContaBi';
+        let companyRnc = '';
+        try {
+          const info = await settingsService.getCompanyInfo();
+          if (info && (info as any)) {
+            const name = (info as any).name || (info as any).company_name;
+            const rnc = (info as any).rnc || (info as any).tax_id || (info as any).ruc;
+            if (name) {
+              companyName = String(name);
+            }
+            if (rnc) {
+              companyRnc = String(rnc);
+            }
+          }
+        } catch (err) {
+          console.error('Error obteniendo información de la empresa para impresión de recibo:', err);
+        }
+
+        const amountText = formatAmount(effectivePayment);
+
+        const customerRnc = customerDocuments[String(invoice.customerId)] || '';
+
+        const receiptHtml = `
+          <html>
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>Recibo ${receiptNo}</title>
+              <style>
+                :root {
+                  --bg: #f3f4f6;
+                  --card: #ffffff;
+                  --text: #111827;
+                  --muted: #6b7280;
+                  --border: #e5e7eb;
+                  --primary: #2563eb;
+                  --primary-dark: #1d4ed8;
+                  --success: #16a34a;
+                }
+                * { box-sizing: border-box; }
+                body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; background: var(--bg); color: var(--text); }
+                .page { padding: 24px; }
+                .card { max-width: 860px; margin: 0 auto; background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 10px 22px rgba(0,0,0,.08); }
+                .header { padding: 20px 22px; border-bottom: 1px solid var(--border); display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; }
+                .brand h1 { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: .2px; }
+                .brand p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+                .title { text-align: right; }
+                .title h2 { margin: 0; font-size: 16px; font-weight: 800; color: var(--primary); }
+                .title p { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+                .content { padding: 18px 22px 22px; }
+                .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+                @media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
+                .field { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: #fafafa; }
+                .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+                .value { margin-top: 6px; font-size: 14px; font-weight: 700; color: var(--text); word-break: break-word; }
+                .amount { margin-top: 14px; padding: 14px; border-radius: 12px; border: 1px solid rgba(22,163,74,.25); background: rgba(22,163,74,.08); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+                .amount .label { color: rgba(22,163,74,.9); }
+                .amount .value { font-size: 18px; }
+                .actions { margin-top: 16px; display: flex; justify-content: flex-end; gap: 10px; }
+                .btn { appearance: none; border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 700; font-size: 13px; cursor: pointer; }
+                .btn-primary { background: var(--primary); color: #fff; }
+                .btn-primary:hover { background: var(--primary-dark); }
+                .btn-outline { background: #fff; color: var(--text); border: 1px solid var(--border); }
+                .btn-outline:hover { background: #f9fafb; }
+                .footer { padding: 14px 22px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+                @media print {
+                  body { background: #fff; }
+                  .page { padding: 0; }
+                  .card { box-shadow: none; border: 0; border-radius: 0; }
+                  .actions { display: none !important; }
+                }
+              </style>
+            </head>
+            <body>
+              <div class="page">
+                <div class="card">
+                  <div class="header">
+                    <div class="brand">
+                      <h1>${companyName}</h1>
+                      ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : `<p>&nbsp;</p>`}
+                    </div>
+                    <div class="title">
+                      <h2>Recibo de Cobro #${receiptNo}</h2>
+                      <p>Fecha: ${new Date(receiptDate).toLocaleDateString('es-DO')}</p>
+                    </div>
+                  </div>
+
+                  <div class="content">
+                    <div class="grid">
+                      <div class="field">
+                        <div class="label">Cliente</div>
+                        <div class="value">${invoice.customerName}</div>
+                      </div>
+                      ${customerRnc ? `
+                        <div class="field">
+                          <div class="label">RNC del cliente</div>
+                          <div class="value">${customerRnc}</div>
+                        </div>
+                      ` : ''}
+                      <div class="field">
+                        <div class="label">Factura aplicada</div>
+                        <div class="value">${invoice.invoiceNumber}</div>
+                      </div>
+                      ${receiptPayload.concept ? `
+                        <div class="field" style="grid-column: 1 / -1;">
+                          <div class="label">Concepto</div>
+                          <div class="value">${receiptPayload.concept}</div>
+                        </div>
+                      ` : ''}
+                      <div class="field">
+                        <div class="label">Método de pago</div>
+                        <div class="value">${getPaymentMethodName(paymentMethod)}</div>
+                      </div>
+                      ${reference ? `
+                        <div class="field">
+                          <div class="label">Referencia</div>
+                          <div class="value">${reference}</div>
+                        </div>
+                      ` : ''}
+                    </div>
+
+                    <div class="amount">
+                      <div>
+                        <div class="label">Monto recibido</div>
+                        <div class="value">RD$ ${amountText}</div>
+                      </div>
+                      <div style="color: rgba(22,163,74,.9); font-weight: 800;">Cobro</div>
+                    </div>
+
+                    <div class="actions">
+                      <button class="btn btn-outline" onclick="window.close && window.close()" type="button">Cerrar</button>
+                      <button class="btn btn-primary" onclick="window.print()" type="button">Imprimir</button>
+                    </div>
+                  </div>
+
+                  <div class="footer">
+                    Este documento fue generado automáticamente por el sistema.
+                  </div>
+                </div>
+              </div>
+            </body>
+          </html>
+        `;
+
+        openHtmlPreview(receiptHtml, `Recibo de Cobro #${receiptNo}`, `recibo-${receiptNo}.html`);
+      } catch (receiptError) {
+        console.error('Error generando recibo de cobro automático:', receiptError);
+        alert('Pago registrado, pero ocurrió un error al generar el recibo de cobro.');
+      }
+
+      if (change > 0) {
+        alert(
+          `Pago registrado correctamente. Devuelta: ${formatMoney(change)}`,
+        );
+      } else {
+        alert('Pago registrado exitosamente');
+      }
 
       setShowPaymentModal(false);
-      setSelectedPayment(null);
-      form.reset();
-
-      // Best-effort: registrar asiento contable del pago (Banco vs CxC)
-      try {
-        const settings = await accountingSettingsService.get(user.id);
-
-        // Preferir cuenta de CxC específica del cliente, si existe
-        const customerSpecificArId = customerArAccounts[mapped.customerId] || customerArAccounts[created.customer_id];
-        const arAccountId = arAccountIdFromForm || customerSpecificArId || settings?.ar_account_id;
-
-        // Necesitamos la cuenta contable del banco (chart_account_id) o de Caja
-        let bankAccountAccountId = (created.bank_accounts as any)?.chart_account_id as string | undefined;
-
-        // Si es efectivo y no hay banco, intentar usar cuenta de Caja/Efectivo global
-        if (!bankAccountAccountId && paymentMethod === 'cash' && settings && (settings as any).cash_account_id) {
-          bankAccountAccountId = String((settings as any).cash_account_id);
-        }
-
-        if (!arAccountId) {
-          alert(
-            'Pago registrado, pero no se pudo crear el asiento: selecciona una Cuenta de Cuentas por Cobrar o configúrala en Ajustes Contables.',
-          );
-        } else if (!bankAccountAccountId) {
-          if (paymentMethod === 'cash') {
-            alert(
-              'Pago registrado en efectivo, pero no se pudo crear el asiento: configure una cuenta de Caja/Efectivo en Ajustes Contables o use una cuenta bancaria con cuenta contable asociada.',
-            );
-          } else {
-            alert(
-              'Pago registrado, pero no se pudo crear el asiento: la cuenta de banco seleccionada no tiene cuenta contable asociada.',
-            );
-          }
-        } else {
-          const paymentAmount = Number(created.amount) || amount;
-
-          const lines: any[] = [
-            {
-              account_id: bankAccountAccountId,
-              description: 'Cobro de cliente - Banco',
-              debit_amount: paymentAmount,
-              credit_amount: 0,
-              line_number: 1,
-            },
-            {
-              account_id: arAccountId,
-              description: 'Cobro de cliente - Cuentas por Cobrar',
-              debit_amount: 0,
-              credit_amount: paymentAmount,
-              line_number: 2,
-            },
-          ];
-
-          const customerName = mapped.customerName || created.customers?.name || '';
-          const description = customerName
-            ? `Pago factura ${mapped.invoiceNumber} - ${customerName}`
-            : `Pago factura ${mapped.invoiceNumber}`;
-
-          const refText = created.reference || reference || '';
-          const entryReference = refText ? `Pago:${created.id} Ref:${refText}` : `Pago:${created.id}`;
-
-          const paymentDateForEntry = created.payment_date || paymentDate;
-
-          const entryPayload = {
-            entry_number: created.id,
-            entry_date: paymentDateForEntry,
-            description,
-            reference: entryReference,
-            total_debit: paymentAmount,
-            total_credit: paymentAmount,
-            status: 'posted' as const,
-          };
-
-          await journalEntriesService.createWithLines(user.id, entryPayload, lines);
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('Error posting customer payment to ledger:', err);
-        alert(
-          'Pago registrado, pero ocurrió un error al crear el asiento contable. Revise el libro diario y la configuración.',
-        );
-      }
-
-      if (generateReceipt && newStatus === 'paid') {
-        try {
-          const existingApplications = await receiptApplicationsService.getByInvoice(user.id, invoiceId);
-          if ((existingApplications || []).length > 0) {
-            alert('Pago registrado. Ya existe un recibo de cobro asociado a esta factura, no se generó uno nuevo.');
-          } else {
-            const receiptNumber = `RC-${Date.now()}`;
-            const receiptPayload = {
-              customer_id: invoice.customerId,
-              receipt_number: receiptNumber,
-              receipt_date: paymentDate,
-              amount,
-              payment_method: paymentMethod,
-              reference: reference || null,
-              concept: `Pago factura ${invoice.invoiceNumber}`,
-              status: 'active' as const,
-            };
-
-            const createdReceipt = await receiptsService.create(user.id, receiptPayload);
-
-            await receiptApplicationsService.create(user.id, {
-              receipt_id: createdReceipt.id,
-              invoice_id: invoiceId,
-              amount_applied: amount,
-              notes: null,
-            });
-          }
-        } catch (receiptError) {
-          alert('Pago registrado, pero ocurrió un error al generar el recibo de cobro.');
-        }
-      } else if (generateReceipt && newStatus !== 'paid') {
-        alert(
-          'Pago registrado. La factura aún tiene saldo pendiente, por lo que el recibo de cobro solo se generará cuando quede totalmente pagada.',
-        );
-      }
-    } catch (error) {
-      console.error('Error saving customer payment:', error);
-      alert('Error al registrar el pago');
+    } catch (error: any) {
+      console.error('[Payments] Error al registrar pago', error);
+      alert(`Error al registrar el pago: ${error?.message || 'revisa la consola para más detalles'}`);
     }
+  };
+
+  const handleViewPayment = (paymentId: string) => {
+    const payment = payments.find((pay) => pay.id === paymentId);
+    if (!payment) return;
+    setSelectedPayment(payment);
+    setShowPaymentDetailModal(true);
+  };
+
+  const handleClosePaymentDetail = () => {
+    setShowPaymentDetailModal(false);
+    setSelectedPayment(null);
   };
 
   return (
     <DashboardLayout>
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #payment-detail-print, #payment-detail-print * { visibility: visible !important; }
+          #payment-detail-print { position: fixed !important; left: 0 !important; top: 0 !important; width: 100% !important; }
+          .no-print { display: none !important; }
+        }
+      `}</style>
       <div className="p-6">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold text-gray-900">Pagos Recibidos</h1>
@@ -511,11 +858,12 @@ export default function PaymentsPage() {
               />
             </div>
           </div>
+
           <div className="w-full md:w-48">
             <select
               value={methodFilter}
               onChange={(e) => setMethodFilter(e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm pr-8"
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
             >
               <option value="all">Todos los Métodos</option>
               <option value="cash">Efectivo</option>
@@ -582,7 +930,7 @@ export default function PaymentsPage() {
                       {payment.invoiceNumber}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD${payment.amount.toLocaleString()}
+                      {formatMoney(payment.amount)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPaymentMethodColor(payment.paymentMethod)}`}>
@@ -610,6 +958,206 @@ export default function PaymentsPage() {
           </div>
         </div>
 
+        {showPaymentDetailModal && selectedPayment && (
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={handleClosePaymentDetail}
+          >
+            <div
+              id="payment-detail-print"
+              className="bg-white rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-gray-200 flex items-start justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Detalle de Pago</h3>
+                  <p className="text-sm text-gray-500">
+                    {companyName}{companyRnc ? ` • RNC: ${companyRnc}` : ''}
+                  </p>
+                </div>
+                <button
+                  onClick={handleClosePaymentDetail}
+                  className="no-print text-gray-400 hover:text-gray-600"
+                  aria-label="Cerrar"
+                >
+                  <i className="ri-close-line text-xl"></i>
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6">
+                <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Monto recibido</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {formatMoney(selectedPayment.amount)}
+                      </p>
+                    </div>
+                    <span
+                      className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getPaymentMethodColor(
+                        selectedPayment.paymentMethod,
+                      )}`}
+                    >
+                      {getPaymentMethodName(selectedPayment.paymentMethod)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="rounded-lg border border-gray-200 p-4">
+                    <p className="text-xs text-gray-500">Cliente</p>
+                    <p className="text-sm font-semibold text-gray-900">{selectedPayment.customerName}</p>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 p-4">
+                    <p className="text-xs text-gray-500">Factura</p>
+                    <p className="text-sm font-semibold text-gray-900">{selectedPayment.invoiceNumber}</p>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 p-4">
+                    <p className="text-xs text-gray-500">Fecha</p>
+                    <p className="text-sm font-semibold text-gray-900">{formatLocalDate(selectedPayment.date)}</p>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 p-4">
+                    <p className="text-xs text-gray-500">Referencia</p>
+                    <p className="text-sm font-semibold text-gray-900 break-words">
+                      {selectedPayment.reference || '—'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="no-print flex justify-end space-x-3 pt-4 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={handleClosePaymentDetail}
+                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
+                  >
+                    Cerrar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
+                  >
+                    Imprimir
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showDocumentPreviewModal && (
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={handleCloseDocumentPreview}
+          >
+            <div
+              className="bg-white rounded-lg p-6 w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-4">
+                <div className="min-w-0">
+                  <h3 className="text-xl font-semibold text-gray-900 truncate">{documentPreviewTitle}</h3>
+                  {documentPreviewFilename ? (
+                    <p className="text-sm text-gray-500 truncate">{documentPreviewFilename}</p>
+                  ) : null}
+                </div>
+                <button
+                  onClick={handleCloseDocumentPreview}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <i className="ri-close-line text-2xl"></i>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-auto border border-gray-200 rounded-lg bg-white">
+                {documentPreviewType === 'table' ? (
+                  <div className="p-4 space-y-4">
+                    {documentPreviewSummary.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {documentPreviewSummary.map((item, idx) => (
+                          <div key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                            <div className="text-xs text-gray-500">{item.label}</div>
+                            <div className="text-sm font-semibold text-gray-900">{item.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr>
+                              {documentPreviewHeaders.map((header, idx) => (
+                                <th
+                                  key={idx}
+                                  className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap"
+                                >
+                                  {header}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {documentPreviewRows.map((row, rowIdx) => (
+                              <tr key={rowIdx} className="hover:bg-gray-50">
+                                {row.map((cell, cellIdx) => (
+                                  <td
+                                    key={cellIdx}
+                                    className="px-4 py-2 text-sm text-gray-900 whitespace-nowrap"
+                                  >
+                                    {cell !== null && cell !== undefined ? String(cell) : ''}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                ) : documentPreviewUrl ? (
+                  <iframe
+                    ref={documentPreviewIframeRef}
+                    src={documentPreviewUrl}
+                    title={documentPreviewTitle}
+                    className="w-full h-[70vh]"
+                  />
+                ) : (
+                  <div className="p-6 text-gray-600">No hay vista previa disponible.</div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 mt-4">
+                {(documentPreviewType === 'pdf' || documentPreviewType === 'html') && documentPreviewUrl ? (
+                  <button
+                    onClick={handlePrintDocumentPreview}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    Imprimir
+                  </button>
+                ) : null}
+                <button
+                  onClick={handleCloseDocumentPreview}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+                >
+                  Cerrar
+                </button>
+                <button
+                  onClick={handleDownloadDocumentPreview}
+                  disabled={!documentPreviewBlob || !documentPreviewFilename}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  Descargar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Payment Modal */}
         {showPaymentModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -619,7 +1167,6 @@ export default function PaymentsPage() {
                 <button
                   onClick={() => {
                     setShowPaymentModal(false);
-                    setSelectedPayment(null);
                   }}
                   className="text-gray-400 hover:text-gray-600"
                 >
@@ -640,7 +1187,7 @@ export default function PaymentsPage() {
                     <option value="">Seleccionar factura</option>
                     {invoices.filter(inv => inv.balance > 0).map((invoice) => (
                       <option key={invoice.id} value={invoice.id}>
-                        {invoice.invoiceNumber} - {invoice.customerName} (RD${invoice.balance.toLocaleString()})
+                        {invoice.invoiceNumber} - {invoice.customerName} ({formatMoney(invoice.balance)})
                       </option>
                     ))}
                   </select>
@@ -648,10 +1195,9 @@ export default function PaymentsPage() {
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Cuenta de Banco
+                    Cuenta de Banco (opcional)
                   </label>
                   <select 
-                    required
                     name="bankAccountId"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
@@ -718,31 +1264,17 @@ export default function PaymentsPage() {
                   </label>
                   <input
                     type="text"
-                    required
                     name="reference"
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Número de referencia"
                   />
                 </div>
 
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    name="generateReceipt"
-                    defaultChecked
-                    className="h-4 w-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                  />
-                  <label className="ml-2 block text-sm font-medium text-gray-700">
-                    Generar recibo de cobro
-                  </label>
-                </div>
-                
                 <div className="flex space-x-3 mt-6">
                   <button
                     type="button"
                     onClick={() => {
                       setShowPaymentModal(false);
-                      setSelectedPayment(null);
                     }}
                     className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors whitespace-nowrap"
                   >

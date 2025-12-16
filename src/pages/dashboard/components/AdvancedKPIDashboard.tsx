@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { chartAccountsService, bankAccountsService, invoicesService, apInvoicesService } from '../../../services/database';
+import { formatAmount, formatMoney } from '../../../utils/numberFormat';
 
 type PeriodType = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'semiannual' | 'annual';
 
@@ -172,12 +173,11 @@ export default function AdvancedKPIDashboard() {
 
       // Cargar saldos bancarios reales desde la tabla bank_accounts
       try {
-        const bankAccountsData = await bankAccountsService.getAll(uid);
+        const bankAccountsData = await bankAccountsService.getBalancesAsOf(uid, toDate);
         
         if (bankAccountsData && bankAccountsData.length > 0) {
           bankAccountsData.forEach((account: any) => {
-            // Usar current_balance que es el campo correcto en bank_accounts
-            const bal = Number(account.current_balance || 0);
+            const bal = Number(account.accounting_balance ?? 0);
             bankTotal += bal;
             bankList.push({
               id: account.id,
@@ -304,8 +304,7 @@ export default function AdvancedKPIDashboard() {
     fetchData();
   }, [user, selectedPeriod]);
 
-  const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(amount || 0);
+  const formatCurrency = (amount: number) => formatMoney(amount || 0);
 
   const formatPercentage = (value: number, total: number) => {
     const base = Math.abs(total);
@@ -493,7 +492,7 @@ export default function AdvancedKPIDashboard() {
                         <div className="text-right">
                           <p className="text-lg font-bold text-blue-600">
                             {b.currency === 'DOP' ? 'RD$' : b.currency === 'USD' ? '$' : b.currency || 'RD$'}{' '}
-                            {b.balance.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            {formatAmount(b.balance || 0)}
                           </p>
                           {b.currency && b.currency !== 'DOP' && (
                             <p className="text-xs text-gray-500">{b.currency}</p>

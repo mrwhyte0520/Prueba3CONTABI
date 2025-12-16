@@ -4,6 +4,8 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { exportToPdf } from '../../../utils/exportImportUtils';
+import { formatDateEsDO } from '../../../utils/date';
+import { formatMoney } from '../../../utils/numberFormat';
 
 export default function ReportIR17Page() {
   const navigate = useNavigate();
@@ -221,10 +223,10 @@ export default function ReportIR17Page() {
         item.supplier_rnc,
         `"${item.supplier_name}"`,
         item.payment_date,
-        item.gross_amount,
+        formatMoney(item.gross_amount, 'RD$'),
         item.withholding_rate,
-        item.withheld_amount,
-        item.net_amount,
+        formatMoney(item.withheld_amount, 'RD$'),
+        formatMoney(item.net_amount, 'RD$'),
         `"${item.service_type}"`,
         item.invoice_number
       ].join(separator))
@@ -249,13 +251,13 @@ export default function ReportIR17Page() {
 
     let txtContent = `REPORTE IR-17 - RETENCIONES ISR\n`;
     txtContent += `Período: ${reportPeriod || selectedPeriod}\n`;
-    txtContent += `Fecha de generación: ${new Date().toLocaleDateString()}\n\n`;
+    txtContent += `Fecha de generación: ${formatDateEsDO(new Date())}\n\n`;
 
     txtContent += `RESUMEN:\n`;
     txtContent += `Cantidad de retenciones: ${totals.count}\n`;
-    txtContent += `Monto bruto total: RD$ ${totals.total_gross.toLocaleString('es-DO')}\n`;
-    txtContent += `Monto retenido total: RD$ ${totals.total_withheld.toLocaleString('es-DO')}\n`;
-    txtContent += `Monto neto total: RD$ ${totals.total_net.toLocaleString('es-DO')}\n\n`;
+    txtContent += `Monto bruto total: ${formatMoney(totals.total_gross, 'RD$')}\n`;
+    txtContent += `Monto retenido total: ${formatMoney(totals.total_withheld, 'RD$')}\n`;
+    txtContent += `Monto neto total: ${formatMoney(totals.total_net, 'RD$')}\n\n`;
 
     txtContent += `DETALLE:\n`;
     txtContent += `${'='.repeat(120)}\n`;
@@ -266,10 +268,10 @@ export default function ReportIR17Page() {
       txtContent += `   Fecha Pago: ${new Date(item.payment_date).toLocaleDateString('es-DO')}\n`;
       txtContent += `   Tipo Servicio: ${item.service_type || ''}\n`;
       txtContent += `   Número Factura: ${item.invoice_number || ''}\n`;
-      txtContent += `   Monto Bruto: RD$ ${item.gross_amount.toLocaleString('es-DO')}\n`;
+      txtContent += `   Monto Bruto: ${formatMoney(item.gross_amount, 'RD$')}\n`;
       txtContent += `   Tasa Retención: ${item.withholding_rate}%\n`;
-      txtContent += `   Monto Retenido: RD$ ${item.withheld_amount.toLocaleString('es-DO')}\n`;
-      txtContent += `   Monto Neto: RD$ ${item.net_amount.toLocaleString('es-DO')}\n`;
+      txtContent += `   Monto Retenido: ${formatMoney(item.withheld_amount, 'RD$')}\n`;
+      txtContent += `   Monto Neto: ${formatMoney(item.net_amount, 'RD$')}\n`;
       txtContent += `${'-'.repeat(80)}\n`;
     });
 
@@ -447,7 +449,7 @@ export default function ReportIR17Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Monto Bruto</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.total_gross.toLocaleString('es-DO')}
+                    {formatMoney(totals.total_gross, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -460,7 +462,7 @@ export default function ReportIR17Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total Retenido</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.total_withheld.toLocaleString('es-DO')}
+                    {formatMoney(totals.total_withheld, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -473,7 +475,7 @@ export default function ReportIR17Page() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Monto Neto</p>
                   <p className="text-2xl font-bold text-gray-900">
-                    RD$ {totals.total_net.toLocaleString('es-DO')}
+                    {formatMoney(totals.total_net, 'RD$')}
                   </p>
                 </div>
               </div>
@@ -540,16 +542,16 @@ export default function ReportIR17Page() {
                       {item.invoice_number || ''}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {item.gross_amount.toLocaleString('es-DO')}
+                      {formatMoney(item.gross_amount, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {item.withholding_rate}%
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {item.withheld_amount.toLocaleString('es-DO')}
+                      {formatMoney(item.withheld_amount, 'RD$')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {item.net_amount.toLocaleString('es-DO')}
+                      {formatMoney(item.net_amount, 'RD$')}
                     </td>
                   </tr>
                 ))}

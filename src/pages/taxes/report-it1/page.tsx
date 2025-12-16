@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
@@ -6,6 +5,7 @@ import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface IT1Data {
   id?: string;
@@ -33,7 +33,7 @@ export default function ReportIT1Page() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [reportData, setReportData] = useState<IT1Data | null>(null);
   const [historicalData, setHistoricalData] = useState<IT1Data[]>([]);
-  const [summary, setSummary] = useState<IT1Summary | null>(null);
+  const [, setSummary] = useState<IT1Summary | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -109,17 +109,17 @@ export default function ReportIT1Page() {
       { 'Campo': 'Período', 'Valor': new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }) },
       { 'Campo': '', 'Valor': '' },
       { 'Campo': 'I. VENTAS Y SERVICIOS GRAVADOS', 'Valor': '' },
-      { 'Campo': 'Total de Ventas y Servicios Gravados', 'Valor': reportData.total_sales },
-      { 'Campo': 'ITBIS Cobrado en Ventas', 'Valor': reportData.itbis_collected },
+      { 'Campo': 'Total de Ventas y Servicios Gravados', 'Valor': formatMoney(reportData.total_sales) },
+      { 'Campo': 'ITBIS Cobrado en Ventas', 'Valor': formatMoney(reportData.itbis_collected) },
       { 'Campo': '', 'Valor': '' },
       { 'Campo': 'II. COMPRAS Y GASTOS GRAVADOS', 'Valor': '' },
-      { 'Campo': 'Total de Compras y Gastos Gravados', 'Valor': reportData.total_purchases },
-      { 'Campo': 'ITBIS Pagado en Compras', 'Valor': reportData.itbis_paid },
+      { 'Campo': 'Total de Compras y Gastos Gravados', 'Valor': formatMoney(reportData.total_purchases) },
+      { 'Campo': 'ITBIS Pagado en Compras', 'Valor': formatMoney(reportData.itbis_paid) },
       { 'Campo': '', 'Valor': '' },
       { 'Campo': 'III. LIQUIDACIÓN DEL IMPUESTO', 'Valor': '' },
-      { 'Campo': 'ITBIS Cobrado en Ventas', 'Valor': reportData.itbis_collected },
-      { 'Campo': '(-) ITBIS Pagado en Compras', 'Valor': reportData.itbis_paid },
-      { 'Campo': 'ITBIS NETO A PAGAR', 'Valor': reportData.net_itbis_due },
+      { 'Campo': 'ITBIS Cobrado en Ventas', 'Valor': formatMoney(reportData.itbis_collected) },
+      { 'Campo': '(-) ITBIS Pagado en Compras', 'Valor': formatMoney(reportData.itbis_paid) },
+      { 'Campo': 'ITBIS NETO A PAGAR', 'Valor': formatMoney(reportData.net_itbis_due) },
       { 'Campo': '', 'Valor': '' },
       { 'Campo': 'Fecha de Generación', 'Valor': new Date(reportData.generated_date).toLocaleDateString('es-DO') }
     ];
@@ -199,11 +199,11 @@ export default function ReportIT1Page() {
       ...headerLines,
       ['Campo', 'Valor'].join(separator),
       ['Período', new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })].join(separator),
-      ['Total Ventas Gravadas', `RD$ ${reportData.total_sales.toLocaleString('es-DO')}`].join(separator),
-      ['ITBIS Cobrado', `RD$ ${reportData.itbis_collected.toLocaleString('es-DO')}`].join(separator),
-      ['Total Compras Gravadas', `RD$ ${reportData.total_purchases.toLocaleString('es-DO')}`].join(separator),
-      ['ITBIS Pagado', `RD$ ${reportData.itbis_paid.toLocaleString('es-DO')}`].join(separator),
-      ['ITBIS Neto a Pagar', `RD$ ${reportData.net_itbis_due.toLocaleString('es-DO')}`].join(separator),
+      ['Total Ventas Gravadas', formatMoney(reportData.total_sales)].join(separator),
+      ['ITBIS Cobrado', formatMoney(reportData.itbis_collected)].join(separator),
+      ['Total Compras Gravadas', formatMoney(reportData.total_purchases)].join(separator),
+      ['ITBIS Pagado', formatMoney(reportData.itbis_paid)].join(separator),
+      ['ITBIS Neto a Pagar', formatMoney(reportData.net_itbis_due)].join(separator),
       ['Fecha de Generación', new Date(reportData.generated_date).toLocaleDateString('es-DO')].join(separator),
     ].join('\n');
 
@@ -256,8 +256,8 @@ export default function ReportIT1Page() {
       startY: 55,
       head: [['Concepto', 'Valor']],
       body: [
-        ['Total de Ventas y Servicios Gravados', `RD$ ${reportData.total_sales.toLocaleString('es-DO')}`],
-        ['ITBIS Cobrado en Ventas', `RD$ ${reportData.itbis_collected.toLocaleString('es-DO')}`],
+        ['Total de Ventas y Servicios Gravados', formatMoney(reportData.total_sales)],
+        ['ITBIS Cobrado en Ventas', formatMoney(reportData.itbis_collected)],
       ],
       theme: 'grid',
       headStyles: { fillColor: [59, 130, 246] },
@@ -272,8 +272,8 @@ export default function ReportIT1Page() {
       startY: afterSalesY + 5,
       head: [['Concepto', 'Valor']],
       body: [
-        ['Total de Compras y Gastos Gravados', `RD$ ${reportData.total_purchases.toLocaleString('es-DO')}`],
-        ['ITBIS Pagado en Compras', `RD$ ${reportData.itbis_paid.toLocaleString('es-DO')}`],
+        ['Total de Compras y Gastos Gravados', formatMoney(reportData.total_purchases)],
+        ['ITBIS Pagado en Compras', formatMoney(reportData.itbis_paid)],
       ],
       theme: 'grid',
       headStyles: { fillColor: [59, 130, 246] },
@@ -285,14 +285,14 @@ export default function ReportIT1Page() {
     doc.text('III. Liquidación del Impuesto', 14, afterPurchasesY);
 
     const netLabel = reportData.net_itbis_due >= 0 ? 'ITBIS Neto a Pagar' : 'Saldo a Favor';
-    const netValue = `RD$ ${Math.abs(reportData.net_itbis_due).toLocaleString('es-DO')}`;
+    const netValue = formatMoney(Math.abs(reportData.net_itbis_due));
 
     (doc as any).autoTable({
       startY: afterPurchasesY + 5,
       head: [['Concepto', 'Valor']],
       body: [
-        ['ITBIS Cobrado en Ventas', `RD$ ${reportData.itbis_collected.toLocaleString('es-DO')}`],
-        ['(-) ITBIS Pagado en Compras', `RD$ ${reportData.itbis_paid.toLocaleString('es-DO')}`],
+        ['ITBIS Cobrado en Ventas', formatMoney(reportData.itbis_collected)],
+        ['(-) ITBIS Pagado en Compras', formatMoney(reportData.itbis_paid)],
         [netLabel, netValue],
       ],
       theme: 'grid',
@@ -313,19 +313,19 @@ Período: ${new Date(reportData.period + '-01').toLocaleDateString('es-DO', { ye
 
 I. VENTAS Y SERVICIOS GRAVADOS
 ------------------------------
-Total de Ventas y Servicios Gravados: RD$ ${reportData.total_sales.toLocaleString('es-DO')}
-ITBIS Cobrado en Ventas: RD$ ${reportData.itbis_collected.toLocaleString('es-DO')}
+Total de Ventas y Servicios Gravados: ${formatMoney(reportData.total_sales)}
+ITBIS Cobrado en Ventas: ${formatMoney(reportData.itbis_collected)}
 
 II. COMPRAS Y GASTOS GRAVADOS
 -----------------------------
-Total de Compras y Gastos Gravados: RD$ ${reportData.total_purchases.toLocaleString('es-DO')}
-ITBIS Pagado en Compras: RD$ ${reportData.itbis_paid.toLocaleString('es-DO')}
+Total de Compras y Gastos Gravados: ${formatMoney(reportData.total_purchases)}
+ITBIS Pagado en Compras: ${formatMoney(reportData.itbis_paid)}
 
 III. LIQUIDACIÓN DEL IMPUESTO
 -----------------------------
-ITBIS Cobrado en Ventas: RD$ ${reportData.itbis_collected.toLocaleString('es-DO')}
-(-) ITBIS Pagado en Compras: RD$ ${reportData.itbis_paid.toLocaleString('es-DO')}
-ITBIS NETO A PAGAR: RD$ ${reportData.net_itbis_due.toLocaleString('es-DO')}
+ITBIS Cobrado en Ventas: ${formatMoney(reportData.itbis_collected)}
+(-) ITBIS Pagado en Compras: ${formatMoney(reportData.itbis_paid)}
+ITBIS NETO A PAGAR: ${formatMoney(reportData.net_itbis_due)}
 
 Generado el: ${new Date(reportData.generated_date).toLocaleDateString('es-DO')} a las ${new Date(reportData.generated_date).toLocaleTimeString('es-DO')}
 
@@ -377,11 +377,11 @@ Cumple con las normativas de la DGII
       ['Período', 'Total Ventas', 'ITBIS Cobrado', 'Total Compras', 'ITBIS Pagado', 'ITBIS Neto', 'Fecha Generación'].join(separator),
       ...filteredHistoricalData.map(record => [
         new Date(record.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }),
-        record.total_sales.toLocaleString('es-DO'),
-        record.itbis_collected.toLocaleString('es-DO'),
-        record.total_purchases.toLocaleString('es-DO'),
-        record.itbis_paid.toLocaleString('es-DO'),
-        record.net_itbis_due.toLocaleString('es-DO'),
+        formatMoney(record.total_sales),
+        formatMoney(record.itbis_collected),
+        formatMoney(record.total_purchases),
+        formatMoney(record.itbis_paid),
+        formatMoney(record.net_itbis_due),
         new Date(record.generated_date).toLocaleDateString('es-DO')
       ].join(separator)),
     ];
@@ -414,7 +414,7 @@ Cumple con las normativas de la DGII
   };
 
   const formatCurrency = (amount: number) => {
-    return `RD$ ${amount.toLocaleString('es-DO')}`;
+    return formatMoney(amount);
   };
 
   const getStatusColor = (amount: number) => {

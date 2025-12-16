@@ -3,6 +3,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { fixedAssetsService, assetTypesService, settingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface AssetReportRow {
   id: string;
@@ -104,10 +105,7 @@ export default function FixedAssetsReportPage() {
   }, [filteredAssets]);
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('es-DO', {
-      style: 'currency',
-      currency: 'DOP',
-    }).format(amount);
+    return formatMoney(amount, 'RD$');
   };
 
   const handleExportExcel = async () => {

@@ -2,18 +2,17 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
-import { openingBalancesService, chartAccountsService } from '../../../services/database';
+import { openingBalancesService } from '../../../services/database';
+import { formatAmount, formatMoney } from '../../../utils/numberFormat';
 
 export default function OpeningBalancesPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [balances, setBalances] = useState<any[]>([]);
-  const [accounts, setAccounts] = useState<any[]>([]);
   const [fiscalYear, setFiscalYear] = useState(new Date().getFullYear());
   const [openingDate, setOpeningDate] = useState(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(false);
   const [validationSummary, setValidationSummary] = useState<any>(null);
-  const [editingBalance, setEditingBalance] = useState<any | null>(null);
 
   useEffect(() => {
     loadData();
@@ -23,14 +22,12 @@ export default function OpeningBalancesPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [balancesData, accountsData, summary] = await Promise.all([
+      const [balancesData, summary] = await Promise.all([
         openingBalancesService.getAll(user.id, fiscalYear),
-        chartAccountsService.getAll(user.id),
         openingBalancesService.getValidationSummary(user.id, fiscalYear)
       ]);
 
       setBalances(balancesData);
-      setAccounts(accountsData);
       setValidationSummary(summary);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -82,7 +79,7 @@ export default function OpeningBalancesPage() {
     setLoading(true);
     try {
       const result = await openingBalancesService.postToJournal(user!.id, fiscalYear);
-      alert(`Balances contabilizados exitosamente.\n\n${result.linesCount} cuentas registradas\nDébito Total: RD$ ${result.totalDebit.toLocaleString('es-DO')}\nCrédito Total: RD$ ${result.totalCredit.toLocaleString('es-DO')}`);
+      alert(`Balances contabilizados exitosamente.\n\n${result.linesCount} cuentas registradas\nDébito Total: RD$ ${formatAmount(result.totalDebit)}\nCrédito Total: RD$ ${formatAmount(result.totalCredit)}`);
       await loadData();
     } catch (error: any) {
       alert('Error al contabilizar balances: ' + error.message);
@@ -186,7 +183,7 @@ export default function OpeningBalancesPage() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total Débito</p>
                   <p className="text-2xl font-bold text-green-900">
-                    RD$ {validationSummary.totalDebit.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                    {formatMoney(validationSummary.totalDebit)}
                   </p>
                 </div>
               </div>
@@ -200,7 +197,7 @@ export default function OpeningBalancesPage() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total Crédito</p>
                   <p className="text-2xl font-bold text-red-900">
-                    RD$ {validationSummary.totalCredit.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                    {formatMoney(validationSummary.totalCredit)}
                   </p>
                 </div>
               </div>
@@ -218,7 +215,7 @@ export default function OpeningBalancesPage() {
                   </p>
                   {!validationSummary.isBalanced && (
                     <p className="text-xs text-red-600">
-                      Dif: RD$ {Math.abs(validationSummary.difference).toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                      Dif: {formatMoney(Math.abs(validationSummary.difference))}
                     </p>
                   )}
                 </div>
@@ -284,7 +281,7 @@ export default function OpeningBalancesPage() {
                       />
                     </td>
                     <td className="px-6 py-4 text-sm text-right font-medium">
-                      RD$ {(balance.balance || 0).toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                      {formatMoney(balance.balance || 0)}
                       <span className={`ml-2 text-xs ${balance.balance_type === 'debit' ? 'text-green-600' : 'text-red-600'}`}>
                         {balance.balance_type === 'debit' ? 'DB' : 'CR'}
                       </span>

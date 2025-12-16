@@ -4,6 +4,7 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
 import { suppliersService, apQuotesService, settingsService } from '../../../services/database';
+import { formatMoney } from '../../../utils/numberFormat';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -225,12 +226,7 @@ export default function QuotesPage() {
 
   const formatCurrency = (amount: number | null | undefined) => {
     const safe = Number(amount || 0);
-    return new Intl.NumberFormat('es-DO', {
-      style: 'currency',
-      currency: 'DOP',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(safe);
+    return formatMoney(safe, 'RD$');
   };
 
   const exportToPDF = async () => {

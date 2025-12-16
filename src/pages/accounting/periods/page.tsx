@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, type FC } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -19,7 +19,7 @@ interface AccountingPeriod {
   total_credits?: number;
 }
 
-const AccountingPeriodsPage: React.FC = () => {
+const AccountingPeriodsPage: FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [periods, setPeriods] = useState<AccountingPeriod[]>([]);
@@ -80,20 +80,20 @@ const AccountingPeriodsPage: React.FC = () => {
     try {
       // Crear contenido CSV
       let csvContent = 'Períodos Contables\n';
-      csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
+      csvContent += `Generado: ${new Date().toLocaleDateString('es-DO')}\n\n`;
       csvContent += 'Período,Fecha Inicio,Fecha Fin,Año Fiscal,Estado,Asientos,Total Débitos,Total Créditos,Fecha Cierre,Cerrado Por\n';
       
       filteredPeriods.forEach(period => {
         const row = [
           `"${period.name}"`,
-          new Date(period.start_date).toLocaleDateString(),
-          new Date(period.end_date).toLocaleDateString(),
+          new Date(period.start_date).toLocaleDateString('es-DO'),
+          new Date(period.end_date).toLocaleDateString('es-DO'),
           period.fiscal_year,
           period.status === 'open' ? 'Abierto' : period.status === 'closed' ? 'Cerrado' : 'Bloqueado',
           period.entries_count || 0,
           `RD$${(period.total_debits || 0).toLocaleString()}`,
           `RD$${(period.total_credits || 0).toLocaleString()}`,
-          period.closed_at ? new Date(period.closed_at).toLocaleDateString() : '',
+          period.closed_at ? new Date(period.closed_at).toLocaleDateString('es-DO') : '',
           period.closed_by || ''
         ].join(',');
         csvContent += row + '\n';
@@ -548,10 +548,10 @@ const AccountingPeriodsPage: React.FC = () => {
                     {period.name}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(period.start_date).toLocaleDateString()}
+                    {new Date(period.start_date).toLocaleDateString('es-DO')}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(period.end_date).toLocaleDateString()}
+                    {new Date(period.end_date).toLocaleDateString('es-DO')}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {period.fiscal_year}
@@ -734,13 +734,13 @@ const AccountingPeriodsPage: React.FC = () => {
                     <div>
                       <span className="text-sm font-medium text-gray-500">Fecha Inicio:</span>
                       <span className="ml-2 text-sm text-gray-900">
-                        {new Date(selectedPeriod.start_date).toLocaleDateString()}
+                        {new Date(selectedPeriod.start_date).toLocaleDateString('es-DO')}
                       </span>
                     </div>
                     <div>
                       <span className="text-sm font-medium text-gray-500">Fecha Fin:</span>
                       <span className="ml-2 text-sm text-gray-900">
-                        {new Date(selectedPeriod.end_date).toLocaleDateString()}
+                        {new Date(selectedPeriod.end_date).toLocaleDateString('es-DO')}
                       </span>
                     </div>
                     <div>
@@ -780,7 +780,7 @@ const AccountingPeriodsPage: React.FC = () => {
                     <div>
                       <span className="text-sm font-medium text-gray-500">Creado:</span>
                       <span className="ml-2 text-sm text-gray-900">
-                        {new Date(selectedPeriod.created_at).toLocaleDateString()}
+                        {new Date(selectedPeriod.created_at).toLocaleDateString('es-DO')}
                       </span>
                     </div>
                     {selectedPeriod.closed_at && (
@@ -788,7 +788,7 @@ const AccountingPeriodsPage: React.FC = () => {
                         <div>
                           <span className="text-sm font-medium text-gray-500">Cerrado:</span>
                           <span className="ml-2 text-sm text-gray-900">
-                            {new Date(selectedPeriod.closed_at).toLocaleDateString()}
+                            {new Date(selectedPeriod.closed_at).toLocaleDateString('es-DO')}
                           </span>
                         </div>
                         <div>

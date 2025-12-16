@@ -14,6 +14,7 @@ import {
   bankExchangeRatesService,
   settingsService,
 } from '../../../services/database';
+import { formatMoney } from '../../../utils/numberFormat';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -285,12 +286,12 @@ export default function ReportsPage() {
       // Reporte de Antigüedad de Saldos
       const agingTableData = agingData.map(item => [
         item.supplier,
-        `RD$ ${item.total.toLocaleString()}`,
-        `RD$ ${item.current.toLocaleString()}`,
-        `RD$ ${item.days1_30.toLocaleString()}`,
-        `RD$ ${item.days31_60.toLocaleString()}`,
-        `RD$ ${item.days61_90.toLocaleString()}`,
-        `RD$ ${item.over90.toLocaleString()}`
+        formatMoney(item.total),
+        formatMoney(item.current),
+        formatMoney(item.days1_30),
+        formatMoney(item.days31_60),
+        formatMoney(item.days61_90),
+        formatMoney(item.over90)
       ]);
 
       doc.autoTable({
@@ -316,12 +317,12 @@ export default function ReportsPage() {
         head: [['', 'Total General', 'Corriente', '1-30 días', '31-60 días', '61-90 días', '+90 días']],
         body: [[
           'TOTALES',
-          `RD$ ${totals.total.toLocaleString()}`,
-          `RD$ ${totals.current.toLocaleString()}`,
-          `RD$ ${totals.days1_30.toLocaleString()}`,
-          `RD$ ${totals.days31_60.toLocaleString()}`,
-          `RD$ ${totals.days61_90.toLocaleString()}`,
-          `RD$ ${totals.over90.toLocaleString()}`
+          formatMoney(totals.total),
+          formatMoney(totals.current),
+          formatMoney(totals.days1_30),
+          formatMoney(totals.days31_60),
+          formatMoney(totals.days61_90),
+          formatMoney(totals.over90)
         ]],
         startY: ((((doc as any).lastAutoTable?.finalY) ?? 80) + 10),
         theme: 'plain',
@@ -334,7 +335,7 @@ export default function ReportsPage() {
         item.supplier,
         item.reference,
         item.method,
-        `RD$ ${item.amount.toLocaleString()}`
+        formatMoney(item.amount)
       ]);
 
       doc.autoTable({
@@ -349,7 +350,7 @@ export default function ReportsPage() {
       // Total de pagos
       const totalPayments = paymentsData.reduce((sum, payment) => sum + payment.amount, 0);
       doc.autoTable({
-        body: [['TOTAL DE PAGOS', `RD$ ${totalPayments.toLocaleString()}`]],
+        body: [['TOTAL DE PAGOS', formatMoney(totalPayments)]],
         startY: ((((doc as any).lastAutoTable?.finalY) ?? 80) + 10),
         theme: 'plain',
         styles: { fontStyle: 'bold', fillColor: [240, 240, 240] }
@@ -667,12 +668,12 @@ export default function ReportsPage() {
                       {agingData.map((item, index) => (
                         <tr key={index} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{item.supplier}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-semibold text-gray-900">RD$ {item.total.toLocaleString()}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-green-600">RD$ {item.current.toLocaleString()}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-yellow-600">RD$ {item.days1_30.toLocaleString()}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-orange-600">RD$ {item.days31_60.toLocaleString()}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-red-600">RD$ {item.days61_90.toLocaleString()}</td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-red-800">RD$ {item.over90.toLocaleString()}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-semibold text-gray-900">{formatMoney(item.total)}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-green-600">{formatMoney(item.current)}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-yellow-600">{formatMoney(item.days1_30)}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-orange-600">{formatMoney(item.days31_60)}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-red-600">{formatMoney(item.days61_90)}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-red-800">{formatMoney(item.over90)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -680,22 +681,22 @@ export default function ReportsPage() {
                       <tr>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">TOTALES</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-gray-900">
-                          RD$ {agingData.reduce((sum, item) => sum + item.total, 0).toLocaleString()}
+                          {formatMoney(agingData.reduce((sum, item) => sum + item.total, 0))}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-green-600">
-                          RD$ {agingData.reduce((sum, item) => sum + item.current, 0).toLocaleString()}
+                          {formatMoney(agingData.reduce((sum, item) => sum + item.current, 0))}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-yellow-600">
-                          RD$ {agingData.reduce((sum, item) => sum + item.days1_30, 0).toLocaleString()}
+                          {formatMoney(agingData.reduce((sum, item) => sum + item.days1_30, 0))}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-orange-600">
-                          RD$ {agingData.reduce((sum, item) => sum + item.days31_60, 0).toLocaleString()}
+                          {formatMoney(agingData.reduce((sum, item) => sum + item.days31_60, 0))}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-red-600">
-                          RD$ {agingData.reduce((sum, item) => sum + item.days61_90, 0).toLocaleString()}
+                          {formatMoney(agingData.reduce((sum, item) => sum + item.days61_90, 0))}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-red-800">
-                          RD$ {agingData.reduce((sum, item) => sum + item.over90, 0).toLocaleString()}
+                          {formatMoney(agingData.reduce((sum, item) => sum + item.over90, 0))}
                         </td>
                       </tr>
                     </tfoot>
@@ -736,7 +737,7 @@ export default function ReportsPage() {
                             </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-semibold text-gray-900">
-                            RD$ {payment.amount.toLocaleString()}
+                            {formatMoney(payment.amount)}
                           </td>
                         </tr>
                       ))}
@@ -745,7 +746,7 @@ export default function ReportsPage() {
                       <tr>
                         <td colSpan={4} className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">TOTAL DE PAGOS</td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-gray-900">
-                          RD$ {paymentsData.reduce((sum, payment) => sum + payment.amount, 0).toLocaleString()}
+                          {formatMoney(paymentsData.reduce((sum, payment) => sum + payment.amount, 0))}
                         </td>
                       </tr>
                     </tfoot>

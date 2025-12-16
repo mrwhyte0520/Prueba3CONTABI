@@ -1,9 +1,9 @@
-
 import { useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { taxService } from '../../services/database';
 import { useAuth } from '../../hooks/useAuth';
+import { formatMoney } from '../../utils/numberFormat';
 
 export default function TaxesPage() {
   const navigate = useNavigate();
@@ -131,28 +131,28 @@ export default function TaxesPage() {
   const taxStatsDisplay = [
     {
       title: 'ITBIS Cobrado',
-      value: `RD$ ${taxStats.itbis_cobrado.toLocaleString('es-DO')}`,
+      value: formatMoney(taxStats.itbis_cobrado, 'RD$'),
       change: '+12%',
       icon: 'ri-money-dollar-circle-line',
       color: 'green'
     },
     {
       title: 'ITBIS Pagado',
-      value: `RD$ ${taxStats.itbis_pagado.toLocaleString('es-DO')}`,
+      value: formatMoney(taxStats.itbis_pagado, 'RD$'),
       change: '+8%',
       icon: 'ri-bank-card-line',
       color: 'blue'
     },
     {
       title: 'ITBIS Neto a Pagar',
-      value: `RD$ ${taxStats.itbis_neto.toLocaleString('es-DO')}`,
+      value: formatMoney(taxStats.itbis_neto, 'RD$'),
       change: '+15%',
       icon: 'ri-calculator-line',
       color: 'orange'
     },
     {
       title: 'Retenciones',
-      value: `RD$ ${taxStats.retenciones.toLocaleString('es-DO')}`,
+      value: formatMoney(taxStats.retenciones, 'RD$'),
       change: '+5%',
       icon: 'ri-percent-line',
       color: 'purple'

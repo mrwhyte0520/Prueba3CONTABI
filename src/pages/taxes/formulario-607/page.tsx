@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface Formulario607 {
   id?: number;
@@ -16,7 +17,7 @@ interface Formulario607 {
   fecha_registro?: string;
 }
 
-const Formulario607Page: React.FC = () => {
+const Formulario607Page = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [registros, setRegistros] = useState<Formulario607[]>([]);
   const [filteredRegistros, setFilteredRegistros] = useState<Formulario607[]>([]);
@@ -25,7 +26,6 @@ const Formulario607Page: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterMonth, setFilterMonth] = useState('');
   const [filterYear, setFilterYear] = useState(new Date().getFullYear().toString());
-  const [selectedRecords, setSelectedRecords] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
 
   const [formData, setFormData] = useState<Formulario607>({
@@ -222,8 +222,8 @@ const Formulario607Page: React.FC = () => {
         registro.tipo_ingreso,
         registro.rnc_cedula_cliente,
         `"${registro.nombre_cliente}"`,
-        registro.monto_facturado.toFixed(2),
-        registro.itbis_facturado.toFixed(2),
+        formatMoney(registro.monto_facturado, 'RD$'),
+        formatMoney(registro.itbis_facturado, 'RD$'),
         registro.tipo_pago
       ].join(','))
     ].join('\n');
@@ -242,7 +242,7 @@ const Formulario607Page: React.FC = () => {
 
   const exportToTXT = () => {
     const txtContent = filteredRegistros.map(registro => 
-      `${registro.fecha_factura}|${registro.tipo_comprobante}|${registro.ncf}|${registro.ncf_modificado || ''}|${registro.tipo_ingreso}|${registro.rnc_cedula_cliente}|${registro.nombre_cliente}|${registro.monto_facturado.toFixed(2)}|${registro.itbis_facturado.toFixed(2)}|${registro.tipo_pago}`
+      `${registro.fecha_factura}|${registro.tipo_comprobante}|${registro.ncf}|${registro.ncf_modificado || ''}|${registro.tipo_ingreso}|${registro.rnc_cedula_cliente}|${registro.nombre_cliente}|${formatMoney(registro.monto_facturado, 'RD$')}|${formatMoney(registro.itbis_facturado, 'RD$')}|${registro.tipo_pago}`
     ).join('\n');
 
     const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
@@ -297,7 +297,7 @@ const Formulario607Page: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Monto Total</p>
-              <p className="text-2xl font-bold text-gray-900">RD$ {totalMonto.toLocaleString()}</p>
+              <p className="text-2xl font-bold text-gray-900">{formatMoney(totalMonto, 'RD$')}</p>
             </div>
           </div>
         </div>
@@ -309,7 +309,7 @@ const Formulario607Page: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">ITBIS Total</p>
-              <p className="text-2xl font-bold text-gray-900">RD$ {totalItbis.toLocaleString()}</p>
+              <p className="text-2xl font-bold text-gray-900">{formatMoney(totalItbis, 'RD$')}</p>
             </div>
           </div>
         </div>
@@ -360,7 +360,7 @@ const Formulario607Page: React.FC = () => {
                   <span className="text-sm text-gray-600">{tipo}</span>
                   <div className="text-right">
                     <div className="font-semibold text-gray-900">{count} ventas</div>
-                    <div className="text-sm text-gray-500">RD$ {monto.toLocaleString()}</div>
+                    <div className="text-sm text-gray-500">{formatMoney(monto, 'RD$')}</div>
                   </div>
                 </div>
               );
@@ -495,10 +495,10 @@ const Formulario607Page: React.FC = () => {
                     <div className="text-sm text-gray-500">{registro.rnc_cedula_cliente}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    RD$ {registro.monto_facturado.toLocaleString()}
+                    {formatMoney(registro.monto_facturado, 'RD$')}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    RD$ {registro.itbis_facturado.toLocaleString()}
+                    {formatMoney(registro.itbis_facturado, 'RD$')}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {registro.tipo_pago}

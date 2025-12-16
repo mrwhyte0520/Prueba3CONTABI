@@ -4,6 +4,7 @@ import DashboardLayout from '../../components/layout/DashboardLayout';
 import { chartAccountsService, journalEntriesService } from '../../services/database';
 import { useAuth } from '../../hooks/useAuth';
 import { exportToExcelWithHeaders, exportToExcelStyled } from '../../utils/exportImportUtils';
+import { formatAmount } from '../../utils/numberFormat';
 
 interface JournalEntry {
   id: string;
@@ -386,7 +387,7 @@ export default function AccountingPage() {
             entries.forEach((entry: any) => {
               entry.journal_entry_lines?.forEach((line: any) => {
                 rows.push({
-                  date: new Date(entry.entry_date).toLocaleDateString(),
+                  date: new Date(entry.entry_date).toLocaleDateString('es-DO'),
                   number: entry.entry_number,
                   description: entry.description,
                   account: `${line.chart_accounts?.code || ''} - ${line.chart_accounts?.name || ''}`,
@@ -412,7 +413,7 @@ export default function AccountingPage() {
               { key: 'total_credit', title: 'Crédito Total' },
             ];
             const rows = journalData.map((entry: any) => ({
-              date: new Date(entry.entry_date).toLocaleDateString(),
+              date: new Date(entry.entry_date).toLocaleDateString('es-DO'),
               number: entry.entry_number,
               description: entry.description,
               reference: entry.reference || '',
@@ -450,67 +451,67 @@ export default function AccountingPage() {
 
   const generateBalanceSheetCSV = (data: any) => {
     let csv = 'BALANCE GENERAL\n';
-    csv += `Al ${new Date(data.asOfDate).toLocaleDateString()}\n\n`;
+    csv += `Al ${new Date(data.asOfDate).toLocaleDateString('es-DO')}\n\n`;
     
     csv += 'ACTIVOS\n';
     csv += 'Código,Nombre,Saldo\n';
     data.assets.forEach((account: any) => {
-      csv += `${account.code},${account.name},${account.balance.toLocaleString()}\n`;
+      csv += `${account.code},${account.name},${formatAmount(account.balance)}\n`;
     });
-    csv += `TOTAL ACTIVOS,,${data.totalAssets.toLocaleString()}\n\n`;
+    csv += `TOTAL ACTIVOS,,${formatAmount(data.totalAssets)}\n\n`;
 
     csv += 'PASIVOS\n';
     csv += 'Código,Nombre,Saldo\n';
     data.liabilities.forEach((account: any) => {
-      csv += `${account.code},${account.name},${account.balance.toLocaleString()}\n`;
+      csv += `${account.code},${account.name},${formatAmount(account.balance)}\n`;
     });
-    csv += `TOTAL PASIVOS,,${data.totalLiabilities.toLocaleString()}\n\n`;
+    csv += `TOTAL PASIVOS,,${formatAmount(data.totalLiabilities)}\n\n`;
 
     csv += 'PATRIMONIO\n';
     csv += 'Código,Nombre,Saldo\n';
     data.equity.forEach((account: any) => {
-      csv += `${account.code},${account.name},${account.balance.toLocaleString()}\n`;
+      csv += `${account.code},${account.name},${formatAmount(account.balance)}\n`;
     });
-    csv += `TOTAL PATRIMONIO,,${data.totalEquity.toLocaleString()}\n\n`;
+    csv += `TOTAL PATRIMONIO,,${formatAmount(data.totalEquity)}\n\n`;
 
-    csv += `TOTAL PASIVOS + PATRIMONIO,,${(data.totalLiabilities + data.totalEquity).toLocaleString()}\n`;
+    csv += `TOTAL PASIVOS + PATRIMONIO,,${formatAmount(data.totalLiabilities + data.totalEquity)}\n`;
 
     return csv;
   };
 
   const generateIncomeStatementCSV = (data: any) => {
     let csv = 'ESTADO DE RESULTADOS\n';
-    csv += `Del ${new Date(data.fromDate).toLocaleDateString()} al ${new Date(data.toDate).toLocaleDateString()}\n\n`;
+    csv += `Del ${new Date(data.fromDate).toLocaleDateString('es-DO')} al ${new Date(data.toDate).toLocaleDateString('es-DO')}\n\n`;
     
     csv += 'INGRESOS\n';
     csv += 'Código,Nombre,Saldo\n';
     data.income.forEach((account: any) => {
-      csv += `${account.code},${account.name},${account.balance.toLocaleString()}\n`;
+      csv += `${account.code},${account.name},${formatAmount(account.balance)}\n`;
     });
-    csv += `TOTAL INGRESOS,,${data.totalIncome.toLocaleString()}\n\n`;
+    csv += `TOTAL INGRESOS,,${formatAmount(data.totalIncome)}\n\n`;
 
     csv += 'GASTOS\n';
     csv += 'Código,Nombre,Saldo\n';
     data.expenses.forEach((account: any) => {
-      csv += `${account.code},${account.name},${account.balance.toLocaleString()}\n`;
+      csv += `${account.code},${account.name},${formatAmount(account.balance)}\n`;
     });
-    csv += `TOTAL GASTOS,,${data.totalExpenses.toLocaleString()}\n\n`;
+    csv += `TOTAL GASTOS,,${formatAmount(data.totalExpenses)}\n\n`;
 
-    csv += `UTILIDAD NETA,,${data.netIncome.toLocaleString()}\n`;
+    csv += `UTILIDAD NETA,,${formatAmount(data.netIncome)}\n`;
 
     return csv;
   };
 
   const generateTrialBalanceCSV = (data: any) => {
     let csv = 'BALANZA DE COMPROBACIÓN\n';
-    csv += `Al ${new Date(data.asOfDate).toLocaleDateString()}\n\n`;
+    csv += `Al ${new Date(data.asOfDate).toLocaleDateString('es-DO')}\n\n`;
     csv += 'Código,Nombre,Débito,Crédito\n';
     
     data.accounts.forEach((account: any) => {
-      csv += `${account.code},${account.name},${account.debitBalance.toLocaleString()},${account.creditBalance.toLocaleString()}\n`;
+      csv += `${account.code},${account.name},${formatAmount(account.debitBalance)},${formatAmount(account.creditBalance)}\n`;
     });
     
-    csv += `TOTALES,,${data.totalDebits.toLocaleString()},${data.totalCredits.toLocaleString()}\n`;
+    csv += `TOTALES,,${formatAmount(data.totalDebits)},${formatAmount(data.totalCredits)}\n`;
     csv += `BALANCEADO,,${data.isBalanced ? 'SÍ' : 'NO'}\n`;
 
     return csv;
@@ -518,25 +519,25 @@ export default function AccountingPage() {
 
   const generateCashFlowCSV = (data: any) => {
     let csv = 'ESTADO DE FLUJO DE EFECTIVO\n';
-    csv += `Del ${new Date(data.fromDate).toLocaleDateString()} al ${new Date(data.toDate).toLocaleDateString()}\n\n`;
+    csv += `Del ${new Date(data.fromDate).toLocaleDateString('es-DO')} al ${new Date(data.toDate).toLocaleDateString('es-DO')}\n\n`;
     
     csv += 'Concepto,Monto\n';
-    csv += `Flujo de Efectivo Operativo,${data.operatingCashFlow.toLocaleString()}\n`;
-    csv += `Flujo de Efectivo de Inversión,${data.investingCashFlow.toLocaleString()}\n`;
-    csv += `Flujo de Efectivo de Financiamiento,${data.financingCashFlow.toLocaleString()}\n`;
-    csv += `Flujo Neto de Efectivo,${data.netCashFlow.toLocaleString()}\n`;
+    csv += `Flujo de Efectivo Operativo,${formatAmount(data.operatingCashFlow)}\n`;
+    csv += `Flujo de Efectivo de Inversión,${formatAmount(data.investingCashFlow)}\n`;
+    csv += `Flujo de Efectivo de Financiamiento,${formatAmount(data.financingCashFlow)}\n`;
+    csv += `Flujo Neto de Efectivo,${formatAmount(data.netCashFlow)}\n`;
 
     return csv;
   };
 
   const generateGeneralLedgerCSV = (entries: any[]) => {
     let csv = 'MAYOR GENERAL\n';
-    csv += `Generado el ${new Date().toLocaleDateString()}\n\n`;
+    csv += `Generado el ${new Date().toLocaleDateString('es-DO')}\n\n`;
     csv += 'Fecha,Número,Descripción,Cuenta,Débito,Crédito\n';
     
     entries.forEach(entry => {
       entry.journal_entry_lines?.forEach((line: any) => {
-        csv += `${new Date(entry.entry_date).toLocaleDateString()},${entry.entry_number},${entry.description},${line.chart_accounts?.code} - ${line.chart_accounts?.name},${(line.debit_amount || 0).toLocaleString()},${(line.credit_amount || 0).toLocaleString()}\n`;
+        csv += `${new Date(entry.entry_date).toLocaleDateString('es-DO')},${entry.entry_number},${entry.description},${line.chart_accounts?.code} - ${line.chart_accounts?.name},${formatAmount(line.debit_amount || 0)},${formatAmount(line.credit_amount || 0)}\n`;
       });
     });
 
@@ -545,11 +546,11 @@ export default function AccountingPage() {
 
   const generateJournalReportCSV = (entries: any[]) => {
     let csv = 'LIBRO DIARIO\n';
-    csv += `Generado el ${new Date().toLocaleDateString()}\n\n`;
+    csv += `Generado el ${new Date().toLocaleDateString('es-DO')}\n\n`;
     csv += 'Fecha,Número,Descripción,Referencia,Débito Total,Crédito Total\n';
     
     entries.forEach(entry => {
-      csv += `${new Date(entry.entry_date).toLocaleDateString()},${entry.entry_number},${entry.description},${entry.reference || ''},${entry.total_debit.toLocaleString()},${entry.total_credit.toLocaleString()}\n`;
+      csv += `${new Date(entry.entry_date).toLocaleDateString('es-DO')},${entry.entry_number},${entry.description},${entry.reference || ''},${formatAmount(entry.total_debit)},${formatAmount(entry.total_credit)}\n`;
     });
 
     return csv;
@@ -670,8 +671,8 @@ export default function AccountingPage() {
                     {calculateAccountTypeTotal('asset') === null ? (
                       <p className="text-sm text-gray-500 italic">No hay datos</p>
                     ) : (
-                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('asset')?.toLocaleString()}`}>
-                        RD${calculateAccountTypeTotal('asset')?.toLocaleString()}
+                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${formatAmount(calculateAccountTypeTotal('asset')!)}`}>
+                        RD${formatAmount(calculateAccountTypeTotal('asset')!)}
                       </p>
                     )}
                   </div>
@@ -688,8 +689,8 @@ export default function AccountingPage() {
                     {calculateAccountTypeTotal('liability') === null ? (
                       <p className="text-sm text-gray-500 italic">No hay datos</p>
                     ) : (
-                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('liability')?.toLocaleString()}`}>
-                        RD${calculateAccountTypeTotal('liability')?.toLocaleString()}
+                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${formatAmount(calculateAccountTypeTotal('liability')!)}`}>
+                        RD${formatAmount(calculateAccountTypeTotal('liability')!)}
                       </p>
                     )}
                   </div>
@@ -706,8 +707,8 @@ export default function AccountingPage() {
                     {calculateAccountTypeTotal('equity') === null ? (
                       <p className="text-sm text-gray-500 italic">No hay datos</p>
                     ) : (
-                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('equity')?.toLocaleString()}`}>
-                        RD${calculateAccountTypeTotal('equity')?.toLocaleString()}
+                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${formatAmount(calculateAccountTypeTotal('equity')!)}`}>
+                        RD${formatAmount(calculateAccountTypeTotal('equity')!)}
                       </p>
                     )}
                   </div>
@@ -724,8 +725,8 @@ export default function AccountingPage() {
                     {calculateAccountTypeTotal('income') === null ? (
                       <p className="text-sm text-gray-500 italic">No hay datos</p>
                     ) : (
-                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${calculateAccountTypeTotal('income')?.toLocaleString()}`}>
-                        RD${calculateAccountTypeTotal('income')?.toLocaleString()}
+                      <p className="text-base font-bold text-gray-900 truncate" title={`RD$${formatAmount(calculateAccountTypeTotal('income')!)}`}>
+                        RD${formatAmount(calculateAccountTypeTotal('income')!)}
                       </p>
                     )}
                   </div>
@@ -766,16 +767,16 @@ export default function AccountingPage() {
                           {entry.entry_number}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {new Date(entry.entry_date).toLocaleDateString()}
+                          {new Date(entry.entry_date).toLocaleDateString('es-DO')}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-900">
                           {entry.description}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          RD${entry.total_debit.toLocaleString()}
+                          RD${formatAmount(entry.total_debit)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          RD${entry.total_credit.toLocaleString()}
+                          RD${formatAmount(entry.total_credit)}
                         </td>
                       </tr>
                     ))}
@@ -838,7 +839,7 @@ export default function AccountingPage() {
                         {entry.entry_number}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {new Date(entry.entry_date).toLocaleDateString()}
+                        {new Date(entry.entry_date).toLocaleDateString('es-DO')}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-900">
                         {entry.description}
@@ -1112,16 +1113,16 @@ export default function AccountingPage() {
                       <div className="flex justify-between items-center">
                         <div className="text-sm">
                           <span className="font-medium">Total Débito: </span>
-                          <span className="text-blue-600">RD${totalDebit.toLocaleString()}</span>
+                          <span className="text-blue-600">RD${formatAmount(totalDebit)}</span>
                         </div>
                         <div className="text-sm">
                           <span className="font-medium">Total Crédito: </span>
-                          <span className="text-green-600">RD${totalCredit.toLocaleString()}</span>
+                          <span className="text-green-600">RD${formatAmount(totalCredit)}</span>
                         </div>
                         <div className="text-sm">
                           <span className="font-medium">Diferencia: </span>
                           <span className={`${Math.abs(totalDebit - totalCredit) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
-                            RD${Math.abs(totalDebit - totalCredit).toLocaleString()}
+                            RD${formatAmount(Math.abs(totalDebit - totalCredit))}
                           </span>
                         </div>
                       </div>

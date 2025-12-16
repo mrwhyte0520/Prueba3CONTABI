@@ -8,6 +8,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { toast } from 'sonner';
 import { customersService, invoicesService, receiptsService, inventoryService, customerTypesService, cashClosingService, taxService } from '../../services/database';
 import { exportToExcelStyled } from '../../utils/exportImportUtils';
+import { formatAmount } from '../../utils/numberFormat';
 
 interface Product {
   id: string;
@@ -66,7 +67,7 @@ export default function POSPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [paymentMethod, setPaymentMethod] = useState('');
   const [amountReceived, setAmountReceived] = useState('');
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -129,10 +130,32 @@ export default function POSPage() {
     return `${digits.slice(0,3)}-${digits.slice(3,6)}-${digits.slice(6)}`;
   };
 
+  const formatAmountInput = (raw: string): string => {
+    const cleaned = String(raw ?? '').replace(/\s+/g, '');
+    if (!cleaned) return '';
+
+    const unsigned = cleaned.replace(/[^0-9.]/g, '');
+    const firstDot = unsigned.indexOf('.');
+    const intPart = firstDot === -1 ? unsigned : unsigned.slice(0, firstDot);
+    const rest = firstDot === -1 ? '' : unsigned.slice(firstDot + 1);
+
+    const intNormalized = intPart.replace(/^0+(?=\d)/, '');
+    const intWithCommas = intNormalized.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const decimals = rest.replace(/\./g, '').slice(0, 2);
+
+    const hasDot = firstDot !== -1;
+    return hasDot ? `${intWithCommas}.${decimals}` : intWithCommas;
+  };
+
+  const parseAmountInput = (formatted: string): number => {
+    const normalized = String(formatted ?? '').replace(/,/g, '').trim();
+    if (!normalized) return 0;
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : 0;
+  };
+
   const handleAmountReceivedChange = (raw: string) => {
-    // Permitir solo dígitos, coma y punto, y normalizar a punto decimal
-    const cleaned = raw.replace(/[^0-9.,]/g, '').replace(',', '.');
-    setAmountReceived(cleaned);
+    setAmountReceived(formatAmountInput(raw));
   };
 
   const handleCashDenominationChange = (index: number, raw: string) => {
@@ -529,8 +552,14 @@ export default function POSPage() {
       alert('Debes seleccionar un cliente antes de procesar la venta');
       return;
     }
+
+    if (!paymentMethod) {
+      alert('Debes seleccionar la forma de pago');
+      return;
+    }
+
     const total = getTotal();
-    const received = parseFloat(amountReceived) || total;
+    const received = parseAmountInput(amountReceived) || total;
     
     if (received >= total || paymentMethod !== 'cash') {
       const newSale: Sale = {
@@ -685,10 +714,11 @@ export default function POSPage() {
         }
       }
       
-      alert(`Venta procesada exitosamente. ${paymentMethod === 'cash' ? `Cambio: RD$${(received - total).toFixed(2)}` : ''}`);
+      alert(`Venta procesada exitosamente. ${paymentMethod === 'cash' ? `Cambio: RD$${formatAmount(received - total)}` : ''}`);
       setCart([]);
       setSelectedCustomer(null);
       setAmountReceived('');
+      setPaymentMethod('');
       setShowPaymentModal(false);
       loadProducts();
     } else {
@@ -900,7 +930,7 @@ export default function POSPage() {
               </div>
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Ingresos Hoy</p>
-                <p className="text-2xl font-bold text-gray-900">RD${todayStats.totalAmount.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-gray-900">RD${formatAmount(todayStats.totalAmount)}</p>
               </div>
             </div>
           </div>
@@ -974,7 +1004,7 @@ export default function POSPage() {
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-medium">{product.quantity} unidades</div>
-                    <div className="text-xs text-gray-500">RD${product.revenue.toLocaleString()}</div>
+                    <div className="text-xs text-gray-500">RD${formatAmount(product.revenue)}</div>
                   </div>
                 </div>
               ))}
@@ -1005,7 +1035,7 @@ export default function POSPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {sale.customer?.name || 'Cliente General'}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">RD${sale.total.toLocaleString()}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">RD${formatAmount(sale.total)}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">{sale.paymentMethod}</td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
@@ -1122,7 +1152,7 @@ export default function POSPage() {
               {/* Precio + botón agregar */}
               <div className="mt-auto flex items-center justify-between pt-2">
                 <span className="text-base font-extrabold text-blue-600 max-w-[70%] truncate leading-tight">
-                  RD${product.price.toLocaleString()}
+                  RD${formatAmount(product.price)}
                 </span>
                 <button
                   disabled={product.stock <= 0}
@@ -1297,8 +1327,8 @@ export default function POSPage() {
 
                   <div className="flex-1 min-w-0">
                     <h4 className="font-medium text-gray-900 text-sm truncate">{item.name}</h4>
-                    <p className="text-xs text-gray-500">RD${item.price.toLocaleString()} c/u</p>
-                    <p className="text-sm font-semibold text-gray-900">RD${item.total.toLocaleString()}</p>
+                    <p className="text-xs text-gray-500">RD${formatAmount(item.price)} c/u</p>
+                    <p className="text-sm font-semibold text-gray-900">RD${formatAmount(item.total)}</p>
                     <p className={`text-xs mt-0.5 ${
                       item.quantity >= item.stock
                         ? 'text-red-600 font-medium'
@@ -1429,20 +1459,24 @@ export default function POSPage() {
             <div className="space-y-2 mb-4">
               <div className="flex justify-between text-sm">
                 <span>Subtotal:</span>
-                <span>RD${getSubtotal().toLocaleString()}</span>
+                <span>RD${formatAmount(getSubtotal())}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span>ITBIS (18%):</span>
-                <span>RD${getTax().toFixed(2)}</span>
+                <span>RD${formatAmount(getTax())}</span>
               </div>
               <div className="flex justify-between text-lg font-bold border-t pt-2">
                 <span>Total:</span>
-                <span>RD${getTotal().toFixed(2)}</span>
+                <span>RD${formatAmount(getTotal())}</span>
               </div>
             </div>
             
             <button
-              onClick={() => setShowPaymentModal(true)}
+              onClick={() => {
+                setPaymentMethod('');
+                setAmountReceived('');
+                setShowPaymentModal(true);
+              }}
               className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors whitespace-nowrap"
             >
               Procesar Pago
@@ -1531,7 +1565,7 @@ export default function POSPage() {
                     {product.stock}
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900 text-right">
-                    RD${product.price.toLocaleString()}
+                    RD${formatAmount(product.price)}
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-sm text-center">
                     <span
@@ -1699,19 +1733,19 @@ export default function POSPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Total en ventas:</span>
-                <span className="font-medium">RD${totalSalesAmount.toLocaleString()}</span>
+                <span className="font-medium">RD${formatAmount(totalSalesAmount)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Efectivo esperado en caja:</span>
-                <span className="font-medium">RD${totalCash.toLocaleString()}</span>
+                <span className="font-medium">RD${formatAmount(totalCash)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Tarjetas:</span>
-                <span className="font-medium">RD${totalCard.toLocaleString()}</span>
+                <span className="font-medium">RD${formatAmount(totalCard)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Transferencias:</span>
-                <span className="font-medium">RD${totalTransfer.toLocaleString()}</span>
+                <span className="font-medium">RD${formatAmount(totalTransfer)}</span>
               </div>
             </div>
           </div>
@@ -1740,7 +1774,7 @@ export default function POSPage() {
                     return (
                       <tr key={row.value}>
                         <td className="px-4 py-2 whitespace-nowrap text-gray-700">
-                          RD${row.value.toLocaleString()}
+                          RD${formatAmount(row.value)}
                         </td>
                         <td className="px-4 py-2 whitespace-nowrap text-right">
                           <input
@@ -1752,7 +1786,7 @@ export default function POSPage() {
                           />
                         </td>
                         <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900">
-                          RD${rowTotal.toLocaleString()}
+                          RD${formatAmount(rowTotal)}
                         </td>
                       </tr>
                     );
@@ -1764,7 +1798,7 @@ export default function POSPage() {
                       Total contado en efectivo
                     </td>
                     <td className="px-4 py-2 text-right font-semibold text-gray-900">
-                      RD${countedCash.toLocaleString()}
+                      RD${formatAmount(countedCash)}
                     </td>
                   </tr>
                   <tr>
@@ -1780,7 +1814,7 @@ export default function POSPage() {
                           : 'text-red-600'
                       }`}
                     >
-                      RD${cashDifference.toLocaleString()}
+                      RD${formatAmount(cashDifference)}
                     </td>
                   </tr>
                 </tfoot>
@@ -1825,7 +1859,7 @@ export default function POSPage() {
                       {sale.customer?.name || 'Cliente General'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 text-right">
-                      RD${sale.total.toLocaleString()}
+                      RD${formatAmount(sale.total)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
                       {sale.paymentMethod === 'cash'
@@ -1914,7 +1948,7 @@ export default function POSPage() {
                     {sale.items.length} productos
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    RD${sale.total.toLocaleString()}
+                    RD${formatAmount(sale.total)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
                     {sale.paymentMethod === 'cash' ? 'Efectivo' : 
@@ -1959,12 +1993,12 @@ export default function POSPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Ingresos:</span>
-                <span className="font-medium">RD${todayStats.totalAmount.toLocaleString()}</span>
+                <span className="font-medium">RD${formatAmount(todayStats.totalAmount)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Promedio por Venta:</span>
                 <span className="font-medium">
-                  RD${todayStats.totalSales > 0 ? (todayStats.totalAmount / todayStats.totalSales).toFixed(0) : '0'}
+                  RD${formatAmount(todayStats.totalSales > 0 ? (todayStats.totalAmount / todayStats.totalSales) : 0)}
                 </span>
               </div>
             </div>
@@ -2033,7 +2067,7 @@ export default function POSPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{product.name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{product.quantity} unidades</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD${product.revenue.toLocaleString()}
+                      RD${formatAmount(product.revenue)}
                     </td>
                   </tr>
                 ))}
@@ -2168,7 +2202,11 @@ export default function POSPage() {
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-lg font-semibold">Procesar Pago</h3>
                 <button
-                  onClick={() => setShowPaymentModal(false)}
+                  onClick={() => {
+                    setShowPaymentModal(false);
+                    setPaymentMethod('');
+                    setAmountReceived('');
+                  }}
                   className="text-gray-400 hover:text-gray-600"
                 >
                   <i className="ri-close-line"></i>
@@ -2177,7 +2215,7 @@ export default function POSPage() {
               
               <div className="mb-4">
                 <div className="text-2xl font-bold text-center mb-4">
-                  Total: RD${getTotal().toFixed(2)}
+                  Total: RD${formatAmount(getTotal())}
                 </div>
                 
                 <div className="mb-4">
@@ -2189,6 +2227,7 @@ export default function POSPage() {
                     onChange={(e) => setPaymentMethod(e.target.value)}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
+                    <option value="">Seleccionar...</option>
                     <option value="cash">Efectivo</option>
                     <option value="card">Tarjeta</option>
                     <option value="transfer">Transferencia</option>
@@ -2210,7 +2249,7 @@ export default function POSPage() {
                     />
                     {amountReceived && (
                       <div className="mt-2 text-sm">
-                        Cambio: RD${Math.max(0, parseFloat(amountReceived) - getTotal()).toFixed(2)}
+                        Cambio: RD${formatAmount(Math.max(0, parseAmountInput(amountReceived) - getTotal()))}
                       </div>
                     )}
                   </div>

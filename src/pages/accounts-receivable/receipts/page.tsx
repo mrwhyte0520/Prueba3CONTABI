@@ -9,6 +9,7 @@ import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
 import { customersService, receiptsService, invoicesService, receiptApplicationsService, settingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { formatDateEsDO } from '../../../utils/date';
 
 interface Receipt {
   id: string;
@@ -199,7 +200,7 @@ export default function ReceiptsPage() {
     doc.text('Reporte de Recibos de Cobro', 20, 30);
     
     doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 45);
+    doc.text(`Fecha de generación: ${formatDateEsDO(new Date())}`, 20, 45);
     doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : statusFilter}`, 20, 55);
     doc.text(`Método de pago: ${paymentMethodFilter === 'all' ? 'Todos' : getPaymentMethodName(paymentMethodFilter)}`, 20, 65);
     

@@ -4,6 +4,7 @@ import { saveAs } from 'file-saver';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { settingsService } from '../services/database';
+import { formatAmount } from './numberFormat';
 
 export const exportToExcel = (data: any[], fileName: string) => {
   try {
@@ -140,8 +141,8 @@ export const exportToExcelWithHeaders = (
 };
 
 // Función para cargar una imagen como base64
-const loadImageAsBase64 = (url: string): Promise<string> => {
-  return new Promise((resolve, reject) => {
+export const loadImageAsBase64 = (url: string): Promise<string> => {
+  return new Promise((resolve, _reject) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
     
@@ -261,7 +262,7 @@ export const exportToPdf = async (
         if (value === undefined || value === null) return '';
         // Formatear números con separadores de miles
         if (typeof value === 'number') {
-          return value.toLocaleString('es-ES');
+          return formatAmount(value);
         }
         return String(value);
       })

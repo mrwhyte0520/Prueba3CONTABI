@@ -1,8 +1,10 @@
+```tsx
 import { useState, useEffect } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { exportToPdf } from '../../../utils/exportImportUtils';
 import { toast } from 'sonner';
 import { useAuth } from '../../../hooks/useAuth';
+import { formatAmount } from '../../../utils/numberFormat';
 import {
   quotesService,
   customersService,
@@ -324,7 +326,7 @@ function NewQuoteForm({ customers, paymentTerms, currencies, salesReps, stores, 
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <span className="text-sm font-medium">RD$ {row.total.toLocaleString('es-DO')}</span>
+                    <span className="text-sm font-medium">{currencyCode} {formatAmount(row.total)}</span>
                   </td>
                   <td className="px-4 py-3">
                     <button onClick={() => removeRow(idx)} className="text-red-600 hover:text-red-800">
@@ -357,20 +359,20 @@ function NewQuoteForm({ customers, paymentTerms, currencies, salesReps, stores, 
           <div className="space-y-2">
             <div className="flex justify-between">
               <span className="text-sm text-gray-600">Subtotal:</span>
-              <span className="text-sm font-medium">{currencyCode} {grossSubtotal.toLocaleString('es-DO')}</span>
+              <span className="text-sm font-medium">{currencyCode} {formatAmount(grossSubtotal)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-gray-600">Descuento:</span>
-              <span className="text-sm font-medium">- {currencyCode} {totalDiscount.toLocaleString('es-DO')}</span>
+              <span className="text-sm font-medium">- {currencyCode} {formatAmount(totalDiscount)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-gray-600">ITBIS (18%):</span>
-              <span className="text-sm font-medium">{currencyCode} {tax.toLocaleString('es-DO')}</span>
+              <span className="text-sm font-medium">{currencyCode} {formatAmount(tax)}</span>
             </div>
             <div className="border-t border-gray-200 pt-2">
               <div className="flex justify-between">
                 <span className="text-base font-semibold">Total:</span>
-                <span className="text-base font-semibold">{currencyCode} {total.toLocaleString('es-DO')}</span>
+                <span className="text-base font-semibold">{currencyCode} {formatAmount(total)}</span>
               </div>
             </div>
           </div>
@@ -641,7 +643,7 @@ export default function QuotesPage() {
         project: quote.project || 'Sin proyecto',
         date: new Date(quote.date).toLocaleDateString('es-DO'),
         validUntil: new Date(quote.validUntil).toLocaleDateString('es-DO'),
-        total: `${quote.currency} ${quote.total.toLocaleString('es-DO')}`,
+        total: `${quote.currency} ${formatAmount(quote.total)}`,
         status: getStatusText(quote.status),
         probability: `${quote.probability}%`
       }));
@@ -703,8 +705,8 @@ export default function QuotesPage() {
           <tr>
             <td>${item.description}</td>
             <td>${item.quantity}</td>
-            <td>${quote.currency} ${item.price.toLocaleString('es-DO')}</td>
-            <td>${quote.currency} ${item.total.toLocaleString('es-DO')}</td>
+            <td>${quote.currency} ${formatAmount(item.price)}</td>
+            <td>${quote.currency} ${formatAmount(item.total)}</td>
           </tr>`
       )
       .join('');
@@ -748,15 +750,15 @@ export default function QuotesPage() {
             <tfoot>
               <tr>
                 <td colspan="3" class="total">Subtotal:</td>
-                <td>${quote.currency} ${quote.amount.toLocaleString('es-DO')}</td>
+                <td>${quote.currency} ${formatAmount(quote.amount)}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">Impuestos:</td>
-                <td>${quote.currency} ${quote.tax.toLocaleString('es-DO')}</td>
+                <td>${quote.currency} ${formatAmount(quote.tax)}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">Total:</td>
-                <td>${quote.currency} ${quote.total.toLocaleString('es-DO')}</td>
+                <td>${quote.currency} ${formatAmount(quote.total)}</td>
               </tr>
             </tfoot>
           </table>
@@ -1032,7 +1034,7 @@ export default function QuotesPage() {
               </div>
             </div>
             <div className="mt-4">
-              <p className="text-sm text-gray-500">Valor Total (suma nominal): {quotes.reduce((sum, quote) => sum + quote.total, 0).toLocaleString()}</p>
+              <p className="text-sm text-gray-500">Valor Total (suma nominal): {formatAmount(quotes.reduce((sum, quote) => sum + quote.total, 0))}</p>
             </div>
           </div>
 
@@ -1049,7 +1051,7 @@ export default function QuotesPage() {
               </div>
             </div>
             <div className="mt-4">
-              <p className="text-sm text-gray-500">Valor (nominal): {quotes.filter(q => q.status === 'approved').reduce((sum, quote) => sum + quote.total, 0).toLocaleString()}</p>
+              <p className="text-sm text-gray-500">Valor (nominal): {formatAmount(quotes.filter(q => q.status === 'approved').reduce((sum, quote) => sum + quote.total, 0))}</p>
             </div>
           </div>
 
@@ -1066,7 +1068,7 @@ export default function QuotesPage() {
               </div>
             </div>
             <div className="mt-4">
-              <p className="text-sm text-gray-500">Valor (nominal): {quotes.filter(q => q.status === 'pending' || q.status === 'under_review').reduce((sum, quote) => sum + quote.total, 0).toLocaleString()}</p>
+              <p className="text-sm text-gray-500">Valor (nominal): {formatAmount(quotes.filter(q => q.status === 'pending' || q.status === 'under_review').reduce((sum, quote) => sum + quote.total, 0))}</p>
             </div>
           </div>
 
@@ -1136,7 +1138,7 @@ export default function QuotesPage() {
 
         {/* Quotes Table */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          <div className="p-6 border-b border-gray-200">
+          <div className="p-6 border-b border-gray-200 flex items-center justify-between">
             <h3 className="text-lg font-semibold text-gray-900">
               Cotizaciones ({filteredQuotes.length})
             </h3>
@@ -1194,7 +1196,7 @@ export default function QuotesPage() {
                       {new Date(quote.validUntil).toLocaleDateString('es-DO')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {quote.currency} {quote.total.toLocaleString()}
+                      {quote.currency} {formatAmount(quote.total)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`text-sm font-medium ${getProbabilityColor(quote.probability)}`}>
@@ -1325,23 +1327,23 @@ export default function QuotesPage() {
                         <tr key={idx} className="border-t border-gray-100">
                           <td className="px-4 py-2">{item.description}</td>
                           <td className="px-4 py-2">{item.quantity}</td>
-                          <td className="px-4 py-2">{viewQuote.currency} {item.price.toLocaleString('es-DO')}</td>
-                          <td className="px-4 py-2">{viewQuote.currency} {item.total.toLocaleString('es-DO')}</td>
+                          <td className="px-4 py-2">{viewQuote.currency} {formatAmount(item.price)}</td>
+                          <td className="px-4 py-2">{viewQuote.currency} {formatAmount(item.total)}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot className="bg-gray-50">
                       <tr>
                         <td colSpan={3} className="px-4 py-2 text-right font-medium">Subtotal:</td>
-                        <td className="px-4 py-2 font-semibold">{viewQuote.currency} {viewQuote.amount.toLocaleString('es-DO')}</td>
+                        <td className="px-4 py-2 font-semibold">{viewQuote.currency} {formatAmount(viewQuote.amount)}</td>
                       </tr>
                       <tr>
                         <td colSpan={3} className="px-4 py-2 text-right font-medium">Impuestos:</td>
-                        <td className="px-4 py-2 font-semibold">{viewQuote.currency} {viewQuote.tax.toLocaleString('es-DO')}</td>
+                        <td className="px-4 py-2 font-semibold">{viewQuote.currency} {formatAmount(viewQuote.tax)}</td>
                       </tr>
                       <tr>
                         <td colSpan={3} className="px-4 py-2 text-right font-semibold">Total:</td>
-                        <td className="px-4 py-2 font-bold">{viewQuote.currency} {viewQuote.total.toLocaleString('es-DO')}</td>
+                        <td className="px-4 py-2 font-bold">{viewQuote.currency} {formatAmount(viewQuote.total)}</td>
                       </tr>
                     </tfoot>
                   </table>

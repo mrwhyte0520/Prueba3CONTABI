@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, type FC } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { resolveTenantId, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
+import { formatAmount } from '../../../utils/numberFormat';
 
 // Estilos CSS para impresión
 const printStyles = `
@@ -93,7 +94,7 @@ const getEntryDocumentType = (entry: LedgerEntry): string => {
   return 'Otro';
 };
 
-const GeneralLedgerPage: React.FC = () => {
+const GeneralLedgerPage: FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -607,7 +608,7 @@ const GeneralLedgerPage: React.FC = () => {
                     </div>
                     <div className="text-right">
                       <div className={`text-sm font-medium ${getBalanceColor(account.balance, account.normalBalance)}`}>
-                        RD${Math.abs(account.balance).toLocaleString()}
+                        RD${formatAmount(Math.abs(account.balance))}
                       </div>
                       <div className={`text-xs ${account.balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         {account.normalBalance === 'debit' ? 'Débito' : 'Crédito'}
@@ -638,7 +639,7 @@ const GeneralLedgerPage: React.FC = () => {
                   <div className="text-right">
                     <div className="text-sm text-gray-600">Balance Actual</div>
                     <div className={`text-xl font-bold ${getBalanceColor(selectedAccount.balance, selectedAccount.normalBalance)}`}>
-                      RD${Math.abs(selectedAccount.balance).toLocaleString()}
+                      RD${formatAmount(Math.abs(selectedAccount.balance))}
                     </div>
                   </div>
                 </div>
@@ -819,7 +820,7 @@ const GeneralLedgerPage: React.FC = () => {
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                              RD${Math.abs(openingBalance).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              RD${formatAmount(Math.abs(openingBalance))}
                             </td>
                           </tr>
                           {filteredLedgerEntries.length > 0 ? (
@@ -850,19 +851,16 @@ const GeneralLedgerPage: React.FC = () => {
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                   {entry.debit > 0
-                                    ? `RD$${entry.debit.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                    ? `RD$${formatAmount(entry.debit)}`
                                     : '-'}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                   {entry.credit > 0
-                                    ? `RD$${entry.credit.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                    ? `RD$${formatAmount(entry.credit)}`
                                     : '-'}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                  RD${Math.abs(entry.balance).toLocaleString('es-DO', {
-                                    minimumFractionDigits: 2,
-                                    maximumFractionDigits: 2,
-                                  })}
+                                  RD${formatAmount(Math.abs(entry.balance))}
                                 </td>
                               </tr>
                             ))
@@ -886,16 +884,13 @@ const GeneralLedgerPage: React.FC = () => {
                             Totales:
                           </td>
                           <td className="px-6 py-3 font-bold text-gray-900">
-                            RD${totalDebits.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            RD${formatAmount(totalDebits)}
                           </td>
                           <td className="px-6 py-3 font-bold text-gray-900">
-                            RD${totalCredits.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            RD${formatAmount(totalCredits)}
                           </td>
                           <td className="px-6 py-3 font-bold text-gray-900">
-                            RD${Math.abs(finalBalance).toLocaleString('es-DO', {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
+                            RD${formatAmount(Math.abs(finalBalance))}
                           </td>
                         </tr>
                       </tfoot>
@@ -915,22 +910,19 @@ const GeneralLedgerPage: React.FC = () => {
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Débitos</div>
                       <div className="text-lg font-bold text-green-600">
-                        RD${totalDebits.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        RD${formatAmount(totalDebits)}
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Créditos</div>
                       <div className="text-lg font-bold text-red-600">
-                        RD${totalCredits.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        RD${formatAmount(totalCredits)}
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Balance Final</div>
                       <div className={`text-lg font-bold ${getBalanceColor(finalBalance, selectedAccount.normalBalance)}`}>
-                        RD${Math.abs(finalBalance).toLocaleString('es-DO', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        RD${formatAmount(Math.abs(finalBalance))}
                       </div>
                     </div>
                   </div>

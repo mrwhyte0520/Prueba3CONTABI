@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { FeatureGuard } from '../../../components/common/FeatureGuard';
 import { useAuth } from '../../../hooks/useAuth';
 import { chartAccountsService, invoicesService } from '../../../services/database';
+import { formatMoney } from '../../../utils/numberFormat';
 
 export default function BasicDashboard() {
   const { user } = useAuth();
@@ -52,7 +52,7 @@ export default function BasicDashboard() {
     fetchData();
   }, [user]);
 
-  const formatCurrency = (amount: number) => new Intl.NumberFormat('es-DO', { style: 'currency', currency: 'DOP' }).format(amount);
+  const formatCurrency = (amount: number) => formatMoney(amount);
 
   return (
     <div className="space-y-6">

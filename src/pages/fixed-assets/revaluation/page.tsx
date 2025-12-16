@@ -4,6 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { fixedAssetsService, revaluationService, assetTypesService, chartAccountsService, journalEntriesService, settingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface Revaluation {
   id: string;
@@ -596,10 +597,7 @@ export default function RevaluationPage() {
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('es-DO', {
-      style: 'currency',
-      currency: 'DOP'
-    }).format(amount);
+    return formatMoney(amount, 'RD$');
   };
 
   return (

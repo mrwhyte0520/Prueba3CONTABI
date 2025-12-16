@@ -9,6 +9,7 @@ import {
   bankExchangeRatesService,
   bankReconciliationService,
 } from '../../services/database';
+import { formatMoney } from '../../utils/numberFormat';
 
 interface Bank {
   id: string;
@@ -50,11 +51,8 @@ export default function BankAccountsPage() {
   const [editingBank, setEditingBank] = useState<Bank | null>(null);
 
   const formatCurrency = (value: number, currency: string = 'DOP') => {
-    return new Intl.NumberFormat('es-DO', {
-      style: 'currency',
-      currency: currency,
-      minimumFractionDigits: 2,
-    }).format(value);
+    const label = currency === 'DOP' ? 'RD$' : currency === 'USD' ? '$' : currency;
+    return formatMoney(value, label);
   };
 
   const loadBanks = async () => {
@@ -70,13 +68,17 @@ export default function BankAccountsPage() {
         bankCurrenciesService.getAll(uid),
       ]);
 
-      const mappedCurrencies = (currs || []).map((c: any) => ({
-        code: c.code as string,
-        is_base: !!c.is_base,
-        is_active: c.is_active !== false,
-      })).filter((c) => c.is_active);
+      type CurrencyInfo = { code: string; is_base: boolean; is_active: boolean };
 
-      const baseCurrency = mappedCurrencies.find((c) => c.is_base) || mappedCurrencies[0];
+      const mappedCurrencies: CurrencyInfo[] = ((currs as any[]) || [])
+        .map((c: any): CurrencyInfo => ({
+          code: c.code as string,
+          is_base: !!c.is_base,
+          is_active: c.is_active !== false,
+        }))
+        .filter((c: CurrencyInfo) => c.is_active);
+
+      const baseCurrency = mappedCurrencies.find((c: CurrencyInfo) => c.is_base) || mappedCurrencies[0];
       const baseCode = baseCurrency?.code || 'DOP';
       setBaseCurrencyCode(baseCode);
 

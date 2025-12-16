@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import * as ExcelJS from 'exceljs';
+
 import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
 import {
@@ -16,7 +17,10 @@ import {
   accountingSettingsService,
   chartAccountsService,
   journalEntriesService,
+  receiptsService,
+  receiptApplicationsService,
 } from '../../../services/database';
+import { formatAmount } from '../../../utils/numberFormat';
 
 interface Invoice {
   id: string;
@@ -50,6 +54,7 @@ interface Customer {
   type: 'regular' | 'vip';
   paymentTermId?: string | null;
   customerTypeId?: string | null;
+  arAccountId?: string | null;
 }
 
 export default function InvoicesPage() {
@@ -131,6 +136,7 @@ export default function InvoicesPage() {
         type: (c.type === 'vip' ? 'vip' : 'regular') as 'regular' | 'vip',
         paymentTermId: c.paymentTermId ?? c.payment_term_id ?? null,
         customerTypeId: c.customerType ?? c.customer_type ?? null,
+        arAccountId: c.arAccountId ?? c.ar_account_id ?? null,
       }));
       setCustomers(mapped);
       setInventoryItems(items || []);
@@ -285,10 +291,21 @@ export default function InvoicesPage() {
     }
   };
 
+  const getPaymentMethodName = (method: string) => {
+    switch (method) {
+      case 'cash': return 'Efectivo';
+      case 'check': return 'Cheque';
+      case 'transfer': return 'Transferencia';
+      case 'card': return 'Tarjeta';
+      default: return 'Otro';
+    }
+  };
+
   const filteredInvoices = invoices.filter(invoice => {
     const matchesSearch = invoice.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          invoice.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || invoice.status === statusFilter;
+
     return matchesSearch && matchesStatus;
   });
 
@@ -357,9 +374,9 @@ export default function InvoicesPage() {
 
     const summaryData = [
       ['Concepto', 'Monto'],
-      ['Total Facturado', `RD$ ${totalAmount.toLocaleString()}`],
-      ['Total Pagado', `RD$ ${totalPaid.toLocaleString()}`],
-      ['Saldo Pendiente', `RD$ ${totalBalance.toLocaleString()}`],
+      ['Total Facturado', `RD$ ${formatAmount(totalAmount)}`],
+      ['Total Pagado', `RD$ ${formatAmount(totalPaid)}`],
+      ['Saldo Pendiente', `RD$ ${formatAmount(totalBalance)}`],
       ['Número de Facturas', filteredInvoices.length.toString()]
     ];
 
@@ -381,9 +398,9 @@ export default function InvoicesPage() {
       invoice.customerName,
       invoice.date,
       invoice.dueDate,
-      `RD$ ${invoice.amount.toLocaleString()}`,
-      `RD$ ${invoice.paidAmount.toLocaleString()}`,
-      `RD$ ${invoice.balance.toLocaleString()}`,
+      `RD$ ${formatAmount(invoice.amount)}`,
+      `RD$ ${formatAmount(invoice.paidAmount)}`,
+      `RD$ ${formatAmount(invoice.balance)}`,
       getStatusName(invoice.status)
     ]);
     
@@ -444,13 +461,13 @@ export default function InvoicesPage() {
 
     const resumenStartRow = resumenTitleRow.number + 1;
     worksheet.getCell(`A${resumenStartRow}`).value = 'Total Facturado';
-    worksheet.getCell(`B${resumenStartRow}`).value = totalAmount;
+    worksheet.getCell(`B${resumenStartRow}`).value = formatAmount(totalAmount);
 
     worksheet.getCell(`A${resumenStartRow + 1}`).value = 'Total Pagado';
-    worksheet.getCell(`B${resumenStartRow + 1}`).value = totalPaid;
+    worksheet.getCell(`B${resumenStartRow + 1}`).value = formatAmount(totalPaid);
 
     worksheet.getCell(`A${resumenStartRow + 2}`).value = 'Saldo Pendiente';
-    worksheet.getCell(`B${resumenStartRow + 2}`).value = totalBalance;
+    worksheet.getCell(`B${resumenStartRow + 2}`).value = formatAmount(totalBalance);
 
     worksheet.getCell(`A${resumenStartRow + 3}`).value = 'Número de Facturas';
     worksheet.getCell(`B${resumenStartRow + 3}`).value = filteredInvoices.length;
@@ -486,23 +503,19 @@ export default function InvoicesPage() {
 
     filteredInvoices.forEach((invoice) => {
       const customer = customers.find((c) => c.id === invoice.customerId);
-      const customerDocument = customer?.document || '';
-      const customerPhone = customer?.phone || '';
-      const customerEmail = customer?.email || '';
-      const customerAddress = customer?.address || '';
 
       worksheet.addRow([
         invoice.invoiceNumber,
         invoice.customerName,
-        customerDocument,
-        customerPhone,
-        customerEmail,
-        customerAddress,
+        customer?.document || '',
+        customer?.phone || '',
+        customer?.email || '',
+        customer?.address || '',
         invoice.date,
         invoice.dueDate,
-        invoice.amount,
-        invoice.paidAmount,
-        invoice.balance,
+        formatAmount(invoice.amount),
+        formatAmount(invoice.paidAmount),
+        formatAmount(invoice.balance),
         getStatusName(invoice.status),
         invoice.daysOverdue,
       ]);
@@ -558,7 +571,7 @@ export default function InvoicesPage() {
   const handleViewInvoice = (invoiceId: string) => {
     const invoice = invoices.find(inv => inv.id === invoiceId);
     if (invoice) {
-      alert(`Detalles de la factura ${invoice.invoiceNumber}:\n\nCliente: ${invoice.customerName}\nMonto: RD$ ${invoice.amount.toLocaleString()}\nSaldo: RD$ ${invoice.balance.toLocaleString()}\nEstado: ${getStatusName(invoice.status)}`);
+      alert(`Detalles de la factura ${invoice.invoiceNumber}:\n\nCliente: ${invoice.customerName}\nMonto: RD$ ${formatAmount(invoice.amount)}\nSaldo: RD$ ${formatAmount(invoice.balance)}\nEstado: ${getStatusName(invoice.status)}`);
     }
   };
 
@@ -629,8 +642,8 @@ export default function InvoicesPage() {
                   <tr>
                     <td>${item.description}</td>
                     <td>${item.quantity}</td>
-                    <td>RD$ ${item.price.toLocaleString()}</td>
-                    <td>RD$ ${item.total.toLocaleString()}</td>
+                    <td>RD$ ${formatAmount(item.price)}</td>
+                    <td>RD$ ${formatAmount(item.total)}</td>
                   </tr>`
                 )
                 .join('')}
@@ -638,23 +651,23 @@ export default function InvoicesPage() {
             <tfoot>
               <tr>
                 <td colspan="3" class="total">Subtotal:</td>
-                <td>RD$ ${invoice.subtotal.toLocaleString()}</td>
+                <td>RD$ ${formatAmount(invoice.subtotal)}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">ITBIS:</td>
-                <td>RD$ ${invoice.tax.toLocaleString()}</td>
+                <td>RD$ ${formatAmount(invoice.tax)}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">Total:</td>
-                <td>RD$ ${invoice.amount.toLocaleString()}</td>
+                <td>RD$ ${formatAmount(invoice.amount)}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">Pagado:</td>
-                <td>RD$ ${invoice.paidAmount.toLocaleString()}</td>
+                <td>RD$ ${formatAmount(invoice.paidAmount)}</td>
               </tr>
               <tr>
                 <td colspan="3" class="total">Saldo:</td>
-                <td>RD$ ${invoice.balance.toLocaleString()}</td>
+                <td>RD$ ${formatAmount(invoice.balance)}</td>
               </tr>
             </tfoot>
           </table>
@@ -735,17 +748,17 @@ export default function InvoicesPage() {
       worksheet.addRow([
         item.description,
         item.quantity,
-        item.price,
-        item.total,
+        formatAmount(item.price),
+        formatAmount(item.total),
       ]);
     });
 
     worksheet.addRow([]);
-    worksheet.addRow(['', '', 'Subtotal', invoice.subtotal]);
-    worksheet.addRow(['', '', 'ITBIS', invoice.tax]);
-    worksheet.addRow(['', '', 'Total', invoice.amount]);
-    worksheet.addRow(['', '', 'Pagado', invoice.paidAmount]);
-    worksheet.addRow(['', '', 'Saldo', invoice.balance]);
+    worksheet.addRow(['', '', 'Subtotal', formatAmount(invoice.subtotal)]);
+    worksheet.addRow(['', '', 'ITBIS', formatAmount(invoice.tax)]);
+    worksheet.addRow(['', '', 'Total', formatAmount(invoice.amount)]);
+    worksheet.addRow(['', '', 'Pagado', formatAmount(invoice.paidAmount)]);
+    worksheet.addRow(['', '', 'Saldo', formatAmount(invoice.balance)]);
 
     worksheet.columns = [
       { width: 40 },
@@ -844,15 +857,11 @@ export default function InvoicesPage() {
 
     const formData = new FormData(e.currentTarget);
 
-    // Si se abrió desde una fila, usamos esa factura; si no, tomamos la del select
-    const invoiceId = selectedInvoice
-      ? selectedInvoice.id
-      : String(formData.get('invoice_id') || '');
-
+    const invoiceId = selectedInvoice ? selectedInvoice.id : String(formData.get('invoice_id') || '');
     const amountToPay = Number(formData.get('amount_to_pay') || 0);
     const paymentMethod = String(formData.get('payment_method') || 'cash');
     const reference = String(formData.get('reference') || '').trim();
-    const cashAccountId = String(formData.get('cash_account_id') || '');
+    const cashAccountIdFromForm = String(formData.get('cash_account_id') || '');
 
     if (!invoiceId) {
       alert('Debes seleccionar una factura');
@@ -870,23 +879,39 @@ export default function InvoicesPage() {
       return;
     }
 
-    // Si el monto es mayor que el saldo, se permite y se calcula devuelta
     const effectivePayment = Math.min(amountToPay, currentInvoice.balance);
     const change = amountToPay - effectivePayment;
-
-    if (!cashAccountId) {
-      alert('Debes seleccionar la cuenta contable 100101 donde se registrará el cobro.');
-      return;
-    }
+    const paymentDate = new Date().toISOString().slice(0, 10);
 
     const newPaid = currentInvoice.paidAmount + effectivePayment;
     const newBalance = currentInvoice.amount - newPaid;
     const newStatus: Invoice['status'] = newBalance > 0 ? 'partial' : 'paid';
 
     try {
-      const paymentDate = new Date().toISOString().slice(0, 10);
+      const settings = await accountingSettingsService.get(user.id);
+      const normalizeCode = (code: string | null | undefined) => String(code || '').replace(/\./g, '');
 
-      // 1) Registrar pago en tabla customer_payments
+      let cashAccountId: string | null = cashAccountIdFromForm ? cashAccountIdFromForm : '';
+      if (!cashAccountId) {
+        cashAccountId = (settings as any)?.cash_account_id ? String((settings as any).cash_account_id) : '';
+      }
+      if (!cashAccountId) {
+        const fromState = cashAccounts[0]?.id;
+        if (fromState) cashAccountId = String(fromState);
+      }
+      if (!cashAccountId) {
+        try {
+          const allAccounts = await chartAccountsService.getAll(user.id);
+          const cash100101 = (allAccounts || []).find((a: any) => normalizeCode(a.code) === '100101');
+          if (cash100101?.id) cashAccountId = String(cash100101.id);
+        } catch {
+          // ignore
+        }
+      }
+
+      const customerSpecificArId = customers.find((c) => c.id === currentInvoice.customerId)?.arAccountId;
+      const arAccountId = customerSpecificArId || (settings?.ar_account_id as string | undefined);
+
       const paymentPayload: any = {
         customer_id: currentInvoice.customerId,
         invoice_id: invoiceId,
@@ -899,27 +924,20 @@ export default function InvoicesPage() {
 
       const createdPayment = await customerPaymentsService.create(user.id, paymentPayload);
 
-      // 2) Actualizar saldos de la factura
       await invoicesService.updatePayment(invoiceId, newPaid, newStatus);
       await loadInvoices();
 
-      // 3) Crear asiento contable (Caja/Banco vs Cuentas por Cobrar)
       try {
-        const settings = await accountingSettingsService.get(user.id);
-        const arAccountId = settings?.ar_account_id as string | undefined;
-
-        if (!arAccountId) {
-          alert(
-            'Pago registrado, pero no se pudo crear el asiento contable: configure la cuenta de Cuentas por Cobrar en Ajustes Contables.',
-          );
+        if (!cashAccountId) {
+          alert('Pago registrado, pero no se pudo crear el asiento contable: configure la cuenta de Caja General (100101).');
+        } else if (!arAccountId) {
+          alert('Pago registrado, pero no se pudo crear el asiento contable: configure la cuenta de Cuentas por Cobrar.');
         } else {
-          const paymentAmount = effectivePayment;
-
           const lines: any[] = [
             {
               account_id: cashAccountId,
-              description: 'Cobro de cliente - Caja/Banco',
-              debit_amount: paymentAmount,
+              description: 'Cobro de cliente - Caja General',
+              debit_amount: effectivePayment,
               credit_amount: 0,
               line_number: 1,
             },
@@ -927,14 +945,13 @@ export default function InvoicesPage() {
               account_id: arAccountId,
               description: 'Cobro de cliente - Cuentas por Cobrar',
               debit_amount: 0,
-              credit_amount: paymentAmount,
+              credit_amount: effectivePayment,
               line_number: 2,
             },
           ];
 
-          const customerName = currentInvoice.customerName;
-          const description = customerName
-            ? `Pago factura ${currentInvoice.invoiceNumber} - ${customerName}`
+          const description = currentInvoice.customerName
+            ? `Pago factura ${currentInvoice.invoiceNumber} - ${currentInvoice.customerName}`
             : `Pago factura ${currentInvoice.invoiceNumber}`;
 
           const refText = reference || '';
@@ -955,17 +972,120 @@ export default function InvoicesPage() {
           await journalEntriesService.createWithLines(user.id, entryPayload, lines);
         }
       } catch (jeError) {
-        // eslint-disable-next-line no-console
         console.error('Error creando asiento contable para pago de factura:', jeError);
         alert('Pago registrado, pero ocurrió un error al crear el asiento contable.');
       }
 
+      try {
+        const receiptNumber = `RC-${Date.now()}`;
+        const receiptPayload = {
+          customer_id: currentInvoice.customerId,
+          receipt_number: receiptNumber,
+          receipt_date: paymentDate,
+          amount: effectivePayment,
+          payment_method: paymentMethod,
+          reference: reference || null,
+          concept: `Pago factura ${currentInvoice.invoiceNumber}`,
+          status: 'active' as const,
+        };
+
+        const createdReceipt = await receiptsService.create(user.id, receiptPayload);
+
+        await receiptApplicationsService.create(user.id, {
+          receipt_id: createdReceipt.id,
+          invoice_id: invoiceId,
+          amount_applied: effectivePayment,
+          application_date: paymentDate,
+          notes: null,
+        });
+
+        const receiptNo = (createdReceipt as any)?.receipt_number || receiptNumber;
+        const receiptDate = (createdReceipt as any)?.receipt_date || paymentDate;
+
+        const customer = customers.find((c) => c.id === currentInvoice.customerId);
+        const customerDocument = customer?.document || '';
+        const customerPhone = customer?.phone || '';
+        const customerEmail = customer?.email || '';
+        const customerAddress = customer?.address || '';
+
+        const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
+        const companyRnc =
+          (companyInfo as any)?.rnc || (companyInfo as any)?.tax_id || (companyInfo as any)?.ruc || '';
+
+        const amountText = formatAmount(effectivePayment);
+
+        const receiptHtml = `
+          <html>
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>Recibo ${receiptNo}</title>
+              <style>
+                :root { --bg:#f3f4f6; --card:#fff; --text:#111827; --muted:#6b7280; --border:#e5e7eb; --primary:#2563eb; --primaryDark:#1d4ed8; }
+                *{ box-sizing:border-box; }
+                body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
+                .page{ padding:24px; }
+                .card{ max-width:860px; margin:0 auto; background:var(--card); border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow:0 10px 22px rgba(0,0,0,.08); }
+                .header{ padding:20px 22px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+                .brand h1{ margin:0; font-size:18px; font-weight:800; }
+                .brand p{ margin:4px 0 0; font-size:12px; color:var(--muted); }
+                .title{ text-align:right; }
+                .title h2{ margin:0; font-size:16px; font-weight:800; color:var(--primary); }
+                .title p{ margin:4px 0 0; font-size:12px; color:var(--muted); }
+                .content{ padding:18px 22px 22px; }
+                .grid{ display:grid; grid-template-columns:1fr; gap:12px; }
+                @media (min-width: 720px){ .grid{ grid-template-columns:1fr 1fr; } }
+                .field{ border:1px solid var(--border); border-radius:12px; padding:12px 14px; background:#fafafa; }
+                .label{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+                .value{ margin-top:6px; font-size:14px; font-weight:700; word-break:break-word; }
+                .amount{ margin-top:14px; padding:14px; border-radius:12px; border:1px solid rgba(22,163,74,.25); background: rgba(22,163,74,.08); display:flex; justify-content:space-between; gap:12px; align-items:center; }
+                .amount .label{ color: rgba(22,163,74,.9); }
+                .amount .value{ font-size:18px; }
+                .actions{ margin-top:16px; display:flex; justify-content:flex-end; gap:10px; }
+                .btn{ appearance:none; border:0; border-radius:10px; padding:10px 14px; font-weight:700; font-size:13px; cursor:pointer; }
+                .btnPrimary{ background:var(--primary); color:#fff; }
+                .btnPrimary:hover{ background:var(--primaryDark); }
+                .footer{ padding:14px 22px; border-top:1px solid var(--border); font-size:12px; color:var(--muted); }
+                @media print{ body{ background:#fff; } .page{ padding:0; } .card{ box-shadow:none; border:0; border-radius:0; } .actions{ display:none !important; } }
+              </style>
+            </head>
+            <body>
+              <div class="page">
+                <div class="card">
+                  <div class="header">
+                    <div class="brand">
+                      <h1>${companyName}</h1>
+                      ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : `<p>&nbsp;</p>`}
+                    </div>
+                    <div class="title">
+                      <div>
+                        <div class="label">Monto recibido</div>
+                        <div class="value">RD$ ${amountText}</div>
+                      </div>
+                      <div style="color: rgba(22,163,74,.9); font-weight:800;">Cobro</div>
+                    </div>
+
+                    <div class="actions">
+                      <button class="btn btnPrimary" onclick="window.print()" type="button">Imprimir</button>
+                    </div>
+                  </div>
+
+                  <div class="footer">Este documento fue generado automáticamente por el sistema.</div>
+                </div>
+              </div>
+            </body>
+          </html>
+        `;
+
+        openReceiptPreview(receiptHtml, `Recibo de Cobro #${receiptNo}`, `recibo-${receiptNo}.html`);
+      } catch (receiptError) {
+        console.error('Error generando recibo de cobro automático:', receiptError);
+        alert('Pago registrado, pero ocurrió un error al generar el recibo de cobro.');
+      }
+
       if (change > 0) {
         alert(
-          `Pago registrado correctamente. Devuelta: RD$ ${change.toLocaleString('es-DO', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })}`,
+          `Pago registrado correctamente. Devuelta: RD$ ${formatAmount(change)}`,
         );
       } else {
         alert('Pago registrado exitosamente');
@@ -974,10 +1094,54 @@ export default function InvoicesPage() {
       setShowPaymentModal(false);
       setSelectedInvoice(null);
     } catch (error: any) {
-      // eslint-disable-next-line no-console
       console.error('[Invoices] Error al registrar pago', error);
       alert(`Error al registrar el pago: ${error?.message || 'revisa la consola para más detalles'}`);
     }
+  };
+
+  const [showReceiptPreviewModal, setShowReceiptPreviewModal] = useState(false);
+  const [receiptPreviewTitle, setReceiptPreviewTitle] = useState('');
+  const [receiptPreviewFilename, setReceiptPreviewFilename] = useState('');
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState('');
+  const [receiptPreviewBlob, setReceiptPreviewBlob] = useState<Blob | null>(null);
+  const receiptPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const openReceiptPreview = (html: string, title: string, filename: string) => {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    setReceiptPreviewTitle(title);
+    setReceiptPreviewFilename(filename);
+    setReceiptPreviewBlob(blob);
+    setReceiptPreviewUrl(url);
+    setShowReceiptPreviewModal(true);
+  };
+
+  const handleCloseReceiptPreview = () => {
+    setShowReceiptPreviewModal(false);
+    setReceiptPreviewTitle('');
+    setReceiptPreviewFilename('');
+    setReceiptPreviewBlob(null);
+    setReceiptPreviewUrl('');
+  };
+
+  const handlePrintReceiptPreview = () => {
+    const iframe = receiptPreviewIframeRef.current;
+    const win = iframe?.contentWindow;
+    if (!win) return;
+    win.focus();
+    win.print();
+  };
+
+  const handleDownloadReceiptPreview = () => {
+    if (!receiptPreviewBlob || !receiptPreviewFilename) return;
+    const url = URL.createObjectURL(receiptPreviewBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = receiptPreviewFilename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   return (
@@ -1107,13 +1271,13 @@ export default function InvoicesPage() {
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD${invoice.amount.toLocaleString()}
+                      RD${formatAmount(invoice.amount)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD${invoice.paidAmount.toLocaleString()}
+                      RD${formatAmount(invoice.paidAmount)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD${invoice.balance.toLocaleString()}
+                      RD${formatAmount(invoice.balance)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(invoice.status)}`}>
@@ -1355,7 +1519,7 @@ export default function InvoicesPage() {
                             </td>
                             <td className="px-4 py-2 align-top">
                               <span className="font-medium">
-                                RD$ {item.total.toLocaleString('es-DO')}
+                                RD$ {formatAmount(item.total)}
                               </span>
                             </td>
                             <td className="px-4 py-2 align-top">
@@ -1407,10 +1571,7 @@ export default function InvoicesPage() {
                           <span className="text-sm text-gray-600">Subtotal:</span>
                           <span className="text-sm font-medium">
                             RD${' '}
-                            {newInvoiceSubtotal.toLocaleString('es-DO', {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
+                            {formatAmount(newInvoiceSubtotal)}
                           </span>
                         </div>
                         <div className="flex justify-between items-center space-x-2">
@@ -1455,10 +1616,7 @@ export default function InvoicesPage() {
                           <span className="text-sm text-gray-600">ITBIS ({currentItbisRate.toFixed(2)}%):</span>
                           <span className="text-sm font-medium">
                             RD${' '}
-                            {newInvoiceTax.toLocaleString('es-DO', {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
+                            {formatAmount(newInvoiceTax)}
                           </span>
                         </div>
                         <div className="border-t border-gray-200 pt-2">
@@ -1466,10 +1624,7 @@ export default function InvoicesPage() {
                             <span className="text-base font-semibold">Total:</span>
                             <span className="text-base font-semibold">
                               RD${' '}
-                              {newInvoiceTotal.toLocaleString('es-DO', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}
+                              {formatAmount(newInvoiceTotal)}
                             </span>
                           </div>
                         </div>
@@ -1539,19 +1694,13 @@ export default function InvoicesPage() {
                     Deuda total del cliente:{' '}
                     <span className="font-semibold">
                       RD$
-                      {getCustomerTotalBalance(selectedInvoice.customerId).toLocaleString('es-DO', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {formatAmount(getCustomerTotalBalance(selectedInvoice.customerId))}
                     </span>
                   </p>
                   <p className="text-lg font-semibold text-blue-600">
                     Saldo de esta factura:{' '}
                     RD$
-                    {selectedInvoice.balance.toLocaleString('es-DO', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {formatAmount(selectedInvoice.balance)}
                   </p>
                 </div>
               )}
@@ -1570,7 +1719,7 @@ export default function InvoicesPage() {
                       <option value="">Seleccionar factura</option>
                       {invoices.filter(inv => inv.balance > 0).map((invoice) => (
                         <option key={invoice.id} value={invoice.id}>
-                          {invoice.invoiceNumber} - {invoice.customerName} (RD${invoice.balance.toLocaleString()})
+                          {invoice.invoiceNumber} - {invoice.customerName} (RD${formatAmount(invoice.balance)})
                         </option>
                       ))}
                     </select>
@@ -1656,6 +1805,70 @@ export default function InvoicesPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {showReceiptPreviewModal && (
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={handleCloseReceiptPreview}
+          >
+            <div
+              className="bg-white rounded-lg p-6 w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-4">
+                <div className="min-w-0">
+                  <h3 className="text-xl font-semibold text-gray-900 truncate">{receiptPreviewTitle}</h3>
+                  {receiptPreviewFilename ? (
+                    <p className="text-sm text-gray-500 truncate">{receiptPreviewFilename}</p>
+                  ) : null}
+                </div>
+                <button
+                  onClick={handleCloseReceiptPreview}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <i className="ri-close-line text-2xl"></i>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-auto border border-gray-200 rounded-lg bg-white">
+                {receiptPreviewUrl ? (
+                  <iframe
+                    ref={receiptPreviewIframeRef}
+                    src={receiptPreviewUrl}
+                    title={receiptPreviewTitle}
+                    className="w-full h-[70vh]"
+                  />
+                ) : (
+                  <div className="p-6 text-gray-600">No hay vista previa disponible.</div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 mt-4">
+                {receiptPreviewUrl ? (
+                  <button
+                    onClick={handlePrintReceiptPreview}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    Imprimir
+                  </button>
+                ) : null}
+                <button
+                  onClick={handleCloseReceiptPreview}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+                >
+                  Cerrar
+                </button>
+                <button
+                  onClick={handleDownloadReceiptPreview}
+                  disabled={!receiptPreviewBlob || !receiptPreviewFilename}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  Descargar
+                </button>
+              </div>
             </div>
           </div>
         )}

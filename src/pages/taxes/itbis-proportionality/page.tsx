@@ -5,6 +5,7 @@ import { taxService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface ItbisProportionalityData {
   period: string;
@@ -61,7 +62,7 @@ export default function ItbisProportionalityPage() {
   }, []);
 
   const formatCurrency = (value: number) => {
-    return `RD$ ${Number(value || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return formatMoney(Number(value || 0));
   };
 
   const formatPercent = (value: number) => {

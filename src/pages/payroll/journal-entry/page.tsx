@@ -4,6 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { chartAccountsService, journalEntriesService, resolveTenantId, settingsService } from '../../../services/database';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface PayrollPeriod {
   id: string;
@@ -390,20 +391,20 @@ export default function PayrollJournalEntryPage() {
                         <td className="px-6 py-4 text-sm font-medium text-gray-900">{entry.account}</td>
                         <td className="px-6 py-4 text-sm text-gray-600">{entry.description}</td>
                         <td className="px-6 py-4 text-sm text-right font-medium text-gray-900">
-                          {entry.debit > 0 ? `RD$ ${entry.debit.toLocaleString('es-DO', { minimumFractionDigits: 2 })}` : '-'}
+                          {entry.debit > 0 ? formatMoney(entry.debit) : '-'}
                         </td>
                         <td className="px-6 py-4 text-sm text-right font-medium text-gray-900">
-                          {entry.credit > 0 ? `RD$ ${entry.credit.toLocaleString('es-DO', { minimumFractionDigits: 2 })}` : '-'}
+                          {entry.credit > 0 ? formatMoney(entry.credit) : '-'}
                         </td>
                       </tr>
                     ))}
                     <tr className="bg-gray-100 font-bold">
                       <td colSpan={2} className="px-6 py-4 text-sm text-gray-900 text-right">TOTALES</td>
                       <td className="px-6 py-4 text-sm text-right text-gray-900">
-                        RD$ {totalDebit.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                        {formatMoney(totalDebit)}
                       </td>
                       <td className="px-6 py-4 text-sm text-right text-gray-900">
-                        RD$ {totalCredit.toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                        {formatMoney(totalCredit)}
                       </td>
                     </tr>
                   </tbody>
@@ -428,7 +429,7 @@ export default function PayrollJournalEntryPage() {
                     )}
                   </div>
                   <p className="text-sm text-gray-600">
-                    Diferencia: RD$ {Math.abs(totalDebit - totalCredit).toLocaleString('es-DO', { minimumFractionDigits: 2 })}
+                    Diferencia: {formatMoney(Math.abs(totalDebit - totalCredit))}
                   </p>
                 </div>
                 <button

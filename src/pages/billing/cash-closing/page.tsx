@@ -3,6 +3,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { toast } from 'sonner';
 import { useAuth } from '../../../hooks/useAuth';
 import { cashClosingService, invoicesService, receiptsService, settingsService } from '../../../services/database';
+import { formatMoney } from '../../../utils/numberFormat';
 
 // Importación dinámica de jsPDF para evitar errores de compilación
 const loadJsPDF = async () => {
@@ -19,7 +20,6 @@ export default function CashClosingPage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [searchTerm, setSearchTerm] = useState('');
   const [cashClosings, setCashClosings] = useState<any[]>([]);
-  const [dailyInvoices, setDailyInvoices] = useState<any[]>([]);
   const [dailyReceipts, setDailyReceipts] = useState<any[]>([]);
 
   // Datos del turno actual (por ahora manuales, más adelante se pueden conectar a ventas reales)
@@ -86,12 +86,6 @@ export default function CashClosingPage() {
     setShowViewClosingModal(true);
   };
 
-  const handlePrintClosing = (closingId: string) => {
-    // Por ahora, usar el PDF general de turno actual; más adelante se puede cargar los datos del cierre seleccionado
-    toast.info('Generando PDF del cierre...');
-    exportToPDF();
-  };
-
   const handleReviewClosing = async (closingId: string) => {
     if (!user?.id) {
       toast.error('Debes iniciar sesión para revisar cierres');
@@ -145,8 +139,6 @@ export default function CashClosingPage() {
           const invDate = (inv.invoice_date || inv.created_at || '').slice(0, 10);
           return invDate === selectedDate;
         });
-
-        setDailyInvoices(invoicesForDay);
 
         const totalSales = invoicesForDay.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount) || 0), 0);
 
@@ -252,16 +244,15 @@ export default function CashClosingPage() {
       const transferCount = countByMethod('transfer');
       const otherCount = Math.max(receiptsCount - cashCount - cardCount - transferCount, 0);
 
-      const formatAmount = (value: number) =>
-        `RD$ ${Number(value || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const formatMoneyRD = (value: number) => formatMoney(value, 'RD$');
 
       const salesData = [
         ['Concepto', 'Transacciones', 'Monto'],
-        ['Ventas en Efectivo', String(cashCount), formatAmount(currentShift.cashSales)],
-        ['Ventas con Tarjeta', String(cardCount), formatAmount(currentShift.cardSales)],
-        ['Ventas por Transferencia', String(transferCount), formatAmount(currentShift.transferSales)],
-        ['Otros Métodos', String(otherCount), formatAmount(currentShift.otherSales)],
-        ['Total Ventas', String(receiptsCount), formatAmount(currentShift.currentSales)]
+        ['Ventas en Efectivo', String(cashCount), formatMoneyRD(currentShift.cashSales)],
+        ['Ventas con Tarjeta', String(cardCount), formatMoneyRD(currentShift.cardSales)],
+        ['Ventas por Transferencia', String(transferCount), formatMoneyRD(currentShift.transferSales)],
+        ['Otros Métodos', String(otherCount), formatMoneyRD(currentShift.otherSales)],
+        ['Total Ventas', String(receiptsCount), formatMoneyRD(currentShift.currentSales)]
       ];
 
       (doc as any).autoTable({
@@ -289,7 +280,7 @@ export default function CashClosingPage() {
         ['RD$ 10', '30', 'RD$ 300.00'],
         ['RD$ 5', '20', 'RD$ 100.00'],
         ['RD$ 1', '50', 'RD$ 50.00'],
-        ['Total Efectivo', '', formatAmount(expectedCashBalance)]
+        ['Total Efectivo', '', formatMoneyRD(expectedCashBalance)]
       ];
 
       (doc as any).autoTable({
@@ -307,11 +298,11 @@ export default function CashClosingPage() {
       
       const summaryData = [
         ['Concepto', 'Monto'],
-        ['Saldo Inicial', `RD$ ${currentShift.openingBalance.toLocaleString()}.00`],
-        ['Total Ventas del Día', `RD$ ${currentShift.currentSales.toLocaleString()}.00`],
-        ['Ventas en Efectivo', `RD$ ${currentShift.cashSales.toLocaleString()}.00`],
-        ['Gastos del Turno', `RD$ ${currentShift.expenses.toLocaleString()}.00`],
-        ['Efectivo Esperado', `RD$ ${expectedCashBalance.toLocaleString()}.00`],
+        ['Saldo Inicial', formatMoneyRD(currentShift.openingBalance)],
+        ['Total Ventas del Día', formatMoneyRD(currentShift.currentSales)],
+        ['Ventas en Efectivo', formatMoneyRD(currentShift.cashSales)],
+        ['Gastos del Turno', formatMoneyRD(currentShift.expenses)],
+        ['Efectivo Esperado', formatMoneyRD(expectedCashBalance)],
         ['Estado', 'Turno Activo']
       ];
 
@@ -381,19 +372,19 @@ export default function CashClosingPage() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="bg-white bg-opacity-20 rounded-lg p-4">
               <p className="text-blue-100 text-sm">Saldo Inicial</p>
-              <p className="text-2xl font-bold">RD$ {currentShift.openingBalance.toLocaleString()}</p>
+              <p className="text-2xl font-bold">{formatMoney(currentShift.openingBalance)}</p>
             </div>
             <div className="bg-white bg-opacity-20 rounded-lg p-4">
               <p className="text-blue-100 text-sm">Ventas Actuales</p>
-              <p className="text-2xl font-bold">RD$ {currentShift.currentSales.toLocaleString()}</p>
+              <p className="text-2xl font-bold">{formatMoney(currentShift.currentSales)}</p>
             </div>
             <div className="bg-white bg-opacity-20 rounded-lg p-4">
               <p className="text-blue-100 text-sm">Gastos</p>
-              <p className="text-2xl font-bold">RD$ {currentShift.expenses.toLocaleString()}</p>
+              <p className="text-2xl font-bold">{formatMoney(currentShift.expenses)}</p>
             </div>
             <div className="bg-white bg-opacity-20 rounded-lg p-4">
               <p className="text-blue-100 text-sm">Efectivo Esperado</p>
-              <p className="text-2xl font-bold">RD$ {expectedCashBalance.toLocaleString()}</p>
+              <p className="text-2xl font-bold">{formatMoney(expectedCashBalance)}</p>
             </div>
           </div>
         </div>
@@ -406,7 +397,7 @@ export default function CashClosingPage() {
                 <div>
                   <p className="text-sm font-medium text-gray-600">{method.name}</p>
                   <p className="text-2xl font-bold text-gray-900 mt-1">
-                    RD$ {method.amount.toLocaleString()}
+                    {formatMoney(method.amount)}
                   </p>
                 </div>
                 <div className={`w-12 h-12 rounded-lg flex items-center justify-center bg-${method.color}-100`}>
@@ -527,17 +518,17 @@ export default function CashClosingPage() {
                       <div className="text-sm text-gray-900">{closing.shift_name || closing.shift}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      RD$ {Number(closing.total_sales ?? closing.totalSales ?? 0).toLocaleString()}
+                      {formatMoney(Number(closing.total_sales ?? closing.totalSales ?? 0))}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {Number(closing.expected_cash_balance ?? closing.expectedBalance ?? 0).toLocaleString()}
+                      {formatMoney(Number(closing.expected_cash_balance ?? closing.expectedBalance ?? 0))}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      RD$ {Number(closing.actual_cash_balance ?? closing.actualBalance ?? 0).toLocaleString()}
+                      {formatMoney(Number(closing.actual_cash_balance ?? closing.actualBalance ?? 0))}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`text-sm font-medium ${getDifferenceColor(Number(closing.difference || 0))}`}>
-                        {Number(closing.difference || 0) >= 0 ? '+' : ''}RD$ {Number(closing.difference || 0).toLocaleString()}
+                        {Number(closing.difference || 0) >= 0 ? '+ ' : ''}{formatMoney(Number(closing.difference || 0))}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">

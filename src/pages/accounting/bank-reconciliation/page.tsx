@@ -91,11 +91,21 @@ export default function BankReconciliationPage() {
 
     setLoading(true);
     try {
+      const bookBalanceValue = await bankReconciliationService.getBookBalanceForBankAccount(
+        user.id,
+        selectedBank,
+        reconciliationDate,
+      );
+
+      const bankStatementBalanceValue = bankStatement?.ending_balance ?? bookBalanceValue;
+
       // Obtener o crear conciliación
       const reconciliation = await bankReconciliationService.getOrCreateReconciliation(
         user.id,
         selectedBank,
         reconciliationDate,
+        bankStatementBalanceValue,
+        bookBalanceValue,
       );
       setReconciliationId(reconciliation.id);
 
@@ -273,12 +283,12 @@ export default function BankReconciliationPage() {
     try {
       // Crear contenido CSV
       let csvContent = 'Conciliación Bancaria\n';
-      csvContent += `Generado: ${new Date().toLocaleDateString()}\n\n`;
+      csvContent += `Generado: ${new Date().toLocaleDateString('es-DO')}\n\n`;
       csvContent += 'Fecha,Descripción,Referencia,Débito,Crédito,Estado\n';
       // Exportar items del estado bancario como referencia
       bankItems.forEach((item: ReconciliationItem) => {
         const row = [
-          new Date(item.date).toLocaleDateString(),
+          new Date(item.date).toLocaleDateString('es-DO'),
           `"${item.description}"`,
           '',
           item.amount < 0 ? Math.abs(item.amount).toLocaleString() : '',
@@ -500,7 +510,7 @@ export default function BankReconciliationPage() {
                       {bookItems.map((item) => (
                         <tr key={item.id} className={item.is_matched ? 'bg-green-50' : ''}>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {new Date(item.date).toLocaleDateString()}
+                            {new Date(item.date).toLocaleDateString('es-DO')}
                           </td>
                           <td className="px-4 py-4 text-sm text-gray-900">
                             {item.description}
@@ -730,7 +740,7 @@ export default function BankReconciliationPage() {
                       {bankItems.map((item) => (
                         <tr key={item.id} className={item.is_matched ? 'bg-green-50' : ''}>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {new Date(item.date).toLocaleDateString()}
+                            {new Date(item.date).toLocaleDateString('es-DO')}
                           </td>
                           <td className="px-4 py-4 text-sm text-gray-900">
                             {item.description}

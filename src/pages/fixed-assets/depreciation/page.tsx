@@ -4,6 +4,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { fixedAssetsService, assetDepreciationService, settingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
+import { formatMoney } from '../../../utils/numberFormat';
 
 interface DepreciationEntry {
   id: string;
@@ -184,10 +185,7 @@ export default function DepreciationPage() {
 
     // Función auxiliar para formatear moneda
     const formatCurrency = (amount: number) => {
-      return new Intl.NumberFormat('es-DO', {
-        style: 'currency',
-        currency: 'DOP'
-      }).format(amount);
+      return formatMoney(amount, 'RD$');
     };
 
     // Generar contenido HTML para el PDF
@@ -367,10 +365,7 @@ export default function DepreciationPage() {
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('es-DO', {
-      style: 'currency',
-      currency: 'DOP'
-    }).format(amount);
+    return formatMoney(amount, 'RD$');
   };
 
   return (

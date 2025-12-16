@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import * as ExcelJS from 'exceljs';
-import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
 import {
   apInvoicesService,
@@ -19,6 +18,7 @@ import {
   taxService,
   settingsService,
 } from '../../../services/database';
+import { formatAmount } from '../../../utils/numberFormat';
 
 interface APInvoice {
   id: string;
@@ -80,6 +80,17 @@ export default function APInvoicesPage() {
 
   const [showModal, setShowModal] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<APInvoice | null>(null);
+
+  const [showDocumentPreviewModal, setShowDocumentPreviewModal] = useState(false);
+  const [documentPreviewType, setDocumentPreviewType] = useState<'pdf' | 'table' | 'html'>('html');
+  const [documentPreviewTitle, setDocumentPreviewTitle] = useState('');
+  const [documentPreviewFilename, setDocumentPreviewFilename] = useState('');
+  const [documentPreviewUrl, setDocumentPreviewUrl] = useState('');
+  const [documentPreviewBlob, setDocumentPreviewBlob] = useState<Blob | null>(null);
+  const [documentPreviewHeaders, setDocumentPreviewHeaders] = useState<string[]>([]);
+  const [documentPreviewRows, setDocumentPreviewRows] = useState<Array<Array<string | number>>>([]);
+  const [documentPreviewSummary, setDocumentPreviewSummary] = useState<Array<{ label: string; value: string }>>([]);
+  const documentPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const [headerForm, setHeaderForm] = useState({
     supplierId: '',
@@ -156,12 +167,13 @@ export default function APInvoicesPage() {
       setPurchaseOrders(poRows || []);
       setStores((storesData || []).filter((s: any) => s.is_active !== false));
 
-      const expense = (accounts || []).filter((acc: any) => {
-        if (!acc.allow_posting && !acc.allowPosting) return false;
-        const type = acc.type || acc.account_type;
-        if (!type) return false;
-        return String(type).toLowerCase().includes('expense') || String(type).toLowerCase().includes('gasto');
-      });
+      const expense = (accounts || [])
+        .filter((acc: any) => {
+          const code = String(acc.code || '').trim();
+          const normalized = code.replace(/\./g, '');
+          return normalized.startsWith('5') || normalized.startsWith('6');
+        })
+        .sort((a: any, b: any) => String(a.code || '').localeCompare(String(b.code || '')));
       setExpenseAccounts(expense);
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -475,12 +487,19 @@ export default function APInvoicesPage() {
         expenseAccountId: l.expense_account_id || '',
         quantity: String(l.quantity ?? '1'),
         unitPrice: String(l.unit_price ?? '0'),
+        inventoryItemId: l.inventory_item_id ? String(l.inventory_item_id) : '',
+        discountPercentage: l.discount_percentage != null ? String(l.discount_percentage) : '0',
+        purchaseOrderItemId: l.purchase_order_item_id ? String(l.purchase_order_item_id) : undefined,
       }));
-      setLines(mappedLines.length > 0 ? mappedLines : [{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0' }]);
+      setLines(
+        mappedLines.length > 0
+          ? mappedLines
+          : [{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0', inventoryItemId: '', discountPercentage: '0' }]
+      );
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error cargando líneas de factura de suplidor', error);
-      setLines([{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0' }]);
+      setLines([{ description: '', expenseAccountId: '', quantity: '1', unitPrice: '0', inventoryItemId: '', discountPercentage: '0' }]);
     }
 
     setShowModal(true);
@@ -565,6 +584,79 @@ export default function APInvoicesPage() {
     }
   };
 
+  useEffect(() => {
+    return () => {
+      if (documentPreviewUrl) {
+        URL.revokeObjectURL(documentPreviewUrl);
+      }
+    };
+  }, [documentPreviewUrl]);
+
+  const handleCloseDocumentPreview = () => {
+    setShowDocumentPreviewModal(false);
+    setDocumentPreviewType('html');
+    setDocumentPreviewTitle('');
+    setDocumentPreviewFilename('');
+    setDocumentPreviewUrl('');
+    setDocumentPreviewBlob(null);
+    setDocumentPreviewHeaders([]);
+    setDocumentPreviewRows([]);
+    setDocumentPreviewSummary([]);
+  };
+
+  const handleDownloadDocumentPreview = () => {
+    if (!documentPreviewBlob || !documentPreviewFilename) return;
+    const url = URL.createObjectURL(documentPreviewBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = documentPreviewFilename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const handlePrintDocumentPreview = () => {
+    const iframe = documentPreviewIframeRef.current;
+    const win = iframe?.contentWindow;
+    if (!win) return;
+    win.focus();
+    win.print();
+  };
+
+  const openHtmlPreview = (html: string, title: string, filename: string) => {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    setDocumentPreviewType('html');
+    setDocumentPreviewTitle(title);
+    setDocumentPreviewFilename(filename);
+    setDocumentPreviewBlob(blob);
+    setDocumentPreviewUrl(url);
+    setDocumentPreviewHeaders([]);
+    setDocumentPreviewRows([]);
+    setDocumentPreviewSummary([]);
+    setShowDocumentPreviewModal(true);
+  };
+
+  const openTablePreview = (payload: {
+    title: string;
+    filename: string;
+    blob: Blob;
+    headers: string[];
+    rows: Array<Array<string | number>>;
+    summary?: Array<{ label: string; value: string }>;
+  }) => {
+    setDocumentPreviewType('table');
+    setDocumentPreviewTitle(payload.title);
+    setDocumentPreviewFilename(payload.filename);
+    setDocumentPreviewBlob(payload.blob);
+    setDocumentPreviewUrl('');
+    setDocumentPreviewHeaders(payload.headers);
+    setDocumentPreviewRows(payload.rows);
+    setDocumentPreviewSummary(payload.summary || []);
+    setShowDocumentPreviewModal(true);
+  };
+
   const handlePrintInvoice = async (invoice: APInvoice) => {
     try {
       const dbLines = await apInvoiceLinesService.getByInvoice(invoice.id);
@@ -592,16 +684,12 @@ export default function APInvoicesPage() {
       const supplierName = invoice.legalName || invoice.supplierName;
       const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
       const companyRnc = (companyInfo as any)?.ruc || (companyInfo as any)?.tax_id || '';
-      const printWindow = window.open('', '_blank');
-      if (!printWindow) {
-        alert('No se pudo abrir la ventana de impresión.');
-        return;
-      }
 
-      printWindow.document.write(`
+      const safeNumber = invoice.invoiceNumber || invoice.id;
+      const html = `
         <html>
           <head>
-            <title>Factura de Suplidor ${invoice.invoiceNumber}</title>
+            <title>Factura de Suplidor ${safeNumber}</title>
             <style>
               body { font-family: Arial, sans-serif; padding: 20px; }
               .header { text-align: center; margin-bottom: 20px; }
@@ -615,7 +703,7 @@ export default function APInvoicesPage() {
             <div class="header">
               <h1>${companyName}</h1>
               ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
-              <h2>Factura de Suplidor #${invoice.invoiceNumber}</h2>
+              <h2>Factura de Suplidor #${safeNumber}</h2>
               <p>Fecha: ${new Date(invoice.invoiceDate).toLocaleDateString('es-DO')}</p>
             </div>
             <div class="details">
@@ -642,8 +730,8 @@ export default function APInvoicesPage() {
                     <tr>
                       <td>${item.description}</td>
                       <td>${item.quantity}</td>
-                      <td>${invoice.currency} ${item.unitPrice.toLocaleString()}</td>
-                      <td>${invoice.currency} ${item.total.toLocaleString()}</td>
+                      <td>${invoice.currency} ${formatAmount(item.unitPrice)}</td>
+                      <td>${invoice.currency} ${formatAmount(item.total)}</td>
                     </tr>`
                   )
                   .join('')}
@@ -651,28 +739,23 @@ export default function APInvoicesPage() {
               <tfoot>
                 <tr>
                   <td colspan="3" class="total">Bruto:</td>
-                  <td>${invoice.currency} ${invoice.totalGross.toLocaleString()}</td>
+                  <td>${invoice.currency} ${formatAmount(invoice.totalGross)}</td>
                 </tr>
                 <tr>
                   <td colspan="3" class="total">ITBIS:</td>
-                  <td>${invoice.currency} ${invoice.totalItbis.toLocaleString()}</td>
+                  <td>${invoice.currency} ${formatAmount(invoice.totalItbis)}</td>
                 </tr>
                 <tr>
                   <td colspan="3" class="total">Total a pagar:</td>
-                  <td>${invoice.currency} ${invoice.totalToPay.toLocaleString()}</td>
+                  <td>${invoice.currency} ${formatAmount(invoice.totalToPay)}</td>
                 </tr>
               </tfoot>
             </table>
-            <script>
-              window.onload = function() {
-                window.print();
-                setTimeout(function() { window.close(); }, 1000);
-              };
-            <\/script>
           </body>
         </html>
-      `);
-      printWindow.document.close();
+      `;
+
+      openHtmlPreview(html, `Factura de Suplidor #${safeNumber}`, `factura_cxp_${safeNumber}.html`);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error al preparar impresión de factura de suplidor', error);
@@ -785,7 +868,24 @@ export default function APInvoicesPage() {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
       const safeNumber = invoice.invoiceNumber || invoice.id;
-      saveAs(blob, `factura_cxp_${safeNumber}.xlsx`);
+
+      openTablePreview({
+        title: `Factura de Suplidor #${safeNumber}`,
+        filename: `factura_cxp_${safeNumber}.xlsx`,
+        blob,
+        headers: ['Descripción', 'Cantidad', 'Precio', 'Total'],
+        rows: items.map((item: any) => [
+          item.description,
+          item.quantity,
+          `${invoice.currency} ${formatAmount(Number(item.unitPrice || 0))}`,
+          `${invoice.currency} ${formatAmount(Number(item.total || 0))}`,
+        ]),
+        summary: [
+          { label: 'Suplidor', value: supplierName },
+          { label: 'Fecha', value: invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString('es-DO') : '' },
+          { label: 'Total a pagar', value: `${invoice.currency} ${formatAmount(invoice.totalToPay)}` },
+        ],
+      });
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Error exportando factura de suplidor a Excel', error);
@@ -843,7 +943,7 @@ export default function APInvoicesPage() {
       }
     }
 
-    const { gross, totalDiscount, grossAfterDiscount, itbis, totalOtherTaxes, otherTaxesDetail, itbisWithheld, isr, toPay } = calculateTotals();
+    const { gross, totalDiscount, itbis, totalOtherTaxes, otherTaxesDetail, itbisWithheld, isr, toPay } = calculateTotals();
     const { affectsItbis } = getCurrentSupplierTaxProfile();
 
     const invoiceNumber = headerForm.invoiceNumber.trim() || `AP-${Date.now()}`;
@@ -1027,16 +1127,16 @@ export default function APInvoicesPage() {
                       <td className="px-4 py-2 whitespace-nowrap text-gray-900">{inv.supplierName}</td>
                       <td className="px-4 py-2 whitespace-nowrap text-gray-900">{inv.invoiceDate}</td>
                       <td className="px-4 py-2 whitespace-nowrap text-gray-900">{inv.dueDate || '-'}</td>
-                      <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900">{inv.currency} {inv.totalGross.toLocaleString()}</td>
-                      <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900">{inv.currency} {inv.totalItbis.toLocaleString()}</td>
+                      <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900">{inv.currency} {formatAmount(inv.totalGross)}</td>
+                      <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900">{inv.currency} {formatAmount(inv.totalItbis)}</td>
                       <td className="px-4 py-2 whitespace-nowrap text-right text-gray-900 font-semibold">
                         <div>
-                          {inv.currency} {inv.totalToPay.toLocaleString()}
+                          {inv.currency} {formatAmount(inv.totalToPay)}
                         </div>
                         {(inv as any).baseTotalToPay != null && inv.currency !== baseCurrencyCode && (
                           <div className="text-xs text-gray-500">
                             ≈ {baseCurrencyCode}{' '}
-                            {(inv as any).baseTotalToPay.toLocaleString()}
+                            {formatAmount((inv as any).baseTotalToPay)}
                           </div>
                         )}
                       </td>
@@ -1085,6 +1185,116 @@ export default function APInvoicesPage() {
           )}
         </div>
 
+        {showDocumentPreviewModal && (
+          <div
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={handleCloseDocumentPreview}
+          >
+            <div
+              className="bg-white rounded-lg p-6 w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-4">
+                <div className="min-w-0">
+                  <h3 className="text-xl font-semibold text-gray-900 truncate">{documentPreviewTitle}</h3>
+                  {documentPreviewFilename ? (
+                    <p className="text-sm text-gray-500 truncate">{documentPreviewFilename}</p>
+                  ) : null}
+                </div>
+                <button
+                  onClick={handleCloseDocumentPreview}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <i className="ri-close-line text-2xl"></i>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-auto border border-gray-200 rounded-lg bg-white">
+                {documentPreviewType === 'table' ? (
+                  <div className="p-4 space-y-4">
+                    {documentPreviewSummary.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {documentPreviewSummary.map((item, idx) => (
+                          <div key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                            <div className="text-xs text-gray-500">{item.label}</div>
+                            <div className="text-sm font-semibold text-gray-900">{item.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr>
+                              {documentPreviewHeaders.map((header, idx) => (
+                                <th
+                                  key={idx}
+                                  className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap"
+                                >
+                                  {header}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {documentPreviewRows.map((row, rowIdx) => (
+                              <tr key={rowIdx} className="hover:bg-gray-50">
+                                {row.map((cell, cellIdx) => (
+                                  <td
+                                    key={cellIdx}
+                                    className="px-4 py-2 text-sm text-gray-900 whitespace-nowrap"
+                                  >
+                                    {cell !== null && cell !== undefined ? String(cell) : ''}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                ) : documentPreviewUrl ? (
+                  <iframe
+                    ref={documentPreviewIframeRef}
+                    src={documentPreviewUrl}
+                    title={documentPreviewTitle}
+                    className="w-full h-[70vh]"
+                  />
+                ) : (
+                  <div className="p-6 text-gray-600">No hay vista previa disponible.</div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 mt-4">
+                {(documentPreviewType === 'pdf' || documentPreviewType === 'html') && documentPreviewUrl ? (
+                  <button
+                    onClick={handlePrintDocumentPreview}
+                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    Imprimir
+                  </button>
+                ) : null}
+                <button
+                  onClick={handleCloseDocumentPreview}
+                  className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+                >
+                  Cerrar
+                </button>
+                <button
+                  onClick={handleDownloadDocumentPreview}
+                  disabled={!documentPreviewBlob || !documentPreviewFilename}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  Descargar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
@@ -1123,7 +1333,7 @@ export default function APInvoicesPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Orden de Compra <span className="text-red-500">*</span></label>
                     <select
-                      value={headerForm.purchaseOrderId}
+                      value={headerForm.purchaseOrderId || ''}
                       onChange={(e) => handlePurchaseOrderChange(e.target.value)}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
@@ -1133,7 +1343,7 @@ export default function APInvoicesPage() {
                         .filter((po: any) => po.status !== 'cancelled')
                         .map((po: any) => (
                           <option key={po.id} value={po.id}>
-                            {(po.po_number || po.id)} - {po.order_date} - Total {Number(po.total_amount || 0).toLocaleString()}
+                            {(po.po_number || po.id)} - {po.order_date} - Total {formatAmount(Number(po.total_amount || 0))}
                           </option>
                         ))}
                     </select>
@@ -1216,7 +1426,7 @@ export default function APInvoicesPage() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Términos de Pago</label>
                     <select
-                      value={headerForm.paymentTermsId}
+                      value={headerForm.paymentTermsId || ''}
                       onChange={(e) => setHeaderForm(prev => ({ ...prev, paymentTermsId: e.target.value }))}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
@@ -1322,7 +1532,7 @@ export default function APInvoicesPage() {
                       type="number"
                       min="0"
                       step="0.01"
-                      value={headerForm.discountValue}
+                      value={headerForm.discountValue || ''}
                       onChange={(e) => setHeaderForm(prev => ({ ...prev, discountValue: e.target.value }))}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       placeholder={headerForm.discountType === 'percentage' ? 'Ej: 10' : 'Ej: 100.00'}
@@ -1369,7 +1579,7 @@ export default function APInvoicesPage() {
                         <div key={index} className="flex gap-2 items-center">
                           <input
                             type="text"
-                            value={tax.name}
+                            value={tax.name || ''}
                             onChange={(e) => handleTaxChange(index, 'name', e.target.value)}
                             placeholder="Ej: Impuesto Selectivo"
                             className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -1380,7 +1590,7 @@ export default function APInvoicesPage() {
                               min="0"
                               max="100"
                               step="0.01"
-                              value={tax.rate}
+                              value={tax.rate || ''}
                               onChange={(e) => handleTaxChange(index, 'rate', e.target.value)}
                               placeholder="0"
                               className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-right focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -1423,7 +1633,7 @@ export default function APInvoicesPage() {
                           const qty = Number(line.quantity) || 0;
                           const price = Number(line.unitPrice) || 0;
                           const lineTotal = qty * price;
-                          const discountPct = Number(line.discountPercentage) || 0;
+                          const discountPct = Number(line.discountPercentage || 0);
                           const discountAmt = lineTotal * (discountPct / 100);
                           const totalAfterDiscount = lineTotal - discountAmt;
                           return (
@@ -1458,7 +1668,7 @@ export default function APInvoicesPage() {
                                 </select>
                                 <input
                                   type="text"
-                                  value={line.description}
+                                  value={line.description || ''}
                                   onChange={(e) => handleLineChange(index, 'description', e.target.value)}
                                   className="w-full border border-gray-300 rounded-md px-1 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                                   placeholder="Descripción"
@@ -1466,7 +1676,7 @@ export default function APInvoicesPage() {
                               </td>
                               <td className="px-2 py-2">
                                 <select
-                                  value={line.expenseAccountId}
+                                  value={line.expenseAccountId || ''}
                                   onChange={(e) => handleLineChange(index, 'expenseAccountId', e.target.value)}
                                   className="w-full border border-gray-300 rounded-md px-1 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                                 >
@@ -1483,7 +1693,7 @@ export default function APInvoicesPage() {
                                   type="number"
                                   min="0"
                                   step="0.01"
-                                  value={line.quantity}
+                                  value={line.quantity || ''}
                                   onChange={(e) => handleLineChange(index, 'quantity', e.target.value)}
                                   className="w-16 border border-gray-300 rounded-md px-1 py-1 text-right text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                                 />
@@ -1493,7 +1703,7 @@ export default function APInvoicesPage() {
                                   type="number"
                                   min="0"
                                   step="0.01"
-                                  value={line.unitPrice}
+                                  value={line.unitPrice || ''}
                                   onChange={(e) => handleLineChange(index, 'unitPrice', e.target.value)}
                                   className="w-20 border border-gray-300 rounded-md px-1 py-1 text-right text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                                 />
@@ -1504,16 +1714,16 @@ export default function APInvoicesPage() {
                                   min="0"
                                   max="100"
                                   step="0.01"
-                                  value={line.discountPercentage}
+                                  value={line.discountPercentage || ''}
                                   onChange={(e) => handleLineChange(index, 'discountPercentage', e.target.value)}
                                   className="w-14 border border-gray-300 rounded-md px-1 py-1 text-right text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                                   placeholder="0"
                                 />
                               </td>
                               <td className="px-2 py-2 text-right text-gray-900 text-xs">
-                                <div>{totalAfterDiscount.toLocaleString()}</div>
+                                <div>{formatAmount(totalAfterDiscount)}</div>
                                 {discountAmt > 0 && (
-                                  <div className="text-red-600 text-xs">-{discountAmt.toLocaleString()}</div>
+                                  <div className="text-red-600 text-xs">-{formatAmount(discountAmt)}</div>
                                 )}
                               </td>
                               <td className="px-2 py-2 text-center">
@@ -1543,27 +1753,27 @@ export default function APInvoicesPage() {
                     </button>
                     <div className="text-right text-sm text-gray-800 space-y-1">
                       {(() => {
-                        const { gross, totalDiscount, grossAfterDiscount, itbis, totalOtherTaxes, otherTaxesDetail, itbisWithheld, isr, toPay } = calculateTotals();
+                        const { gross, totalDiscount, grossAfterDiscount, itbis, otherTaxesDetail, itbisWithheld, isr, toPay } = calculateTotals();
                         return (
                           <>
-                            <div>Bruto: {headerForm.currency} {gross.toLocaleString()}</div>
+                            <div>Bruto: {headerForm.currency} {formatAmount(gross)}</div>
                             {totalDiscount > 0 && (
                               <>
-                                <div className="text-red-600">Descuentos: -{headerForm.currency} {totalDiscount.toLocaleString()}</div>
-                                <div className="text-green-700">Subtotal: {headerForm.currency} {grossAfterDiscount.toLocaleString()}</div>
+                                <div className="text-red-600">Descuentos: -{headerForm.currency} {formatAmount(totalDiscount)}</div>
+                                <div className="text-green-700">Subtotal: {headerForm.currency} {formatAmount(grossAfterDiscount)}</div>
                               </>
                             )}
-                            <div>ITBIS (18%){headerForm.itbisToCost ? ' (al costo)' : ''}: {headerForm.currency} {itbis.toLocaleString()}</div>
+                            <div>ITBIS (18%){headerForm.itbisToCost ? ' (al costo)' : ''}: {headerForm.currency} {formatAmount(itbis)}</div>
                             {itbisWithheld > 0 && (
-                              <div className="text-yellow-700">ITBIS Retenido: -{headerForm.currency} {itbisWithheld.toLocaleString()}</div>
+                              <div className="text-yellow-700">ITBIS Retenido: -{headerForm.currency} {formatAmount(itbisWithheld)}</div>
                             )}
                             {otherTaxesDetail.map((tax, idx) => (
                               <div key={idx} className="text-purple-700">
-                                {tax.name} ({tax.rate}%): {headerForm.currency} {tax.amount.toLocaleString()}
+                                {tax.name} ({tax.rate}%): {headerForm.currency} {formatAmount(tax.amount)}
                               </div>
                             ))}
-                            {isr > 0 && <div>Retenciones ISR: -{headerForm.currency} {isr.toLocaleString()}</div>}
-                            <div className="font-semibold text-lg border-t pt-1">Total a Pagar: {headerForm.currency} {toPay.toLocaleString()}</div>
+                            {isr > 0 && <div>Retenciones ISR: -{headerForm.currency} {formatAmount(isr)}</div>}
+                            <div className="font-semibold text-lg border-t pt-1">Total a Pagar: {headerForm.currency} {formatAmount(toPay)}</div>
                           </>
                         );
                       })()}
