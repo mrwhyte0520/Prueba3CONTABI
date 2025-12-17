@@ -3250,6 +3250,7 @@ export const chartAccountsService = {
           )
         `)
         .eq('user_id', tenantId)
+        .eq('status', 'posted')
         .gte('entry_date', fromDate)
         .lte('entry_date', toDate)
         .order('entry_date');
@@ -3271,38 +3272,69 @@ export const chartAccountsService = {
       let investingCashFlow = 0;
       let financingCashFlow = 0;
 
-      journalEntries?.forEach((entry: any) => {
-        entry.journal_entry_lines?.forEach((line: any) => {
-          const account = line.chart_accounts;
-          const amount = (line.debit_amount || 0) - (line.credit_amount || 0);
+      const normalizeCode = (raw: unknown) => String(raw || '').replace(/\./g, '');
+      const isCashAccountCode = (code: string) =>
+        code.startsWith('10') || code.startsWith('110') || code.startsWith('111') || code.startsWith('1102');
 
-          // Clasificar flujos de efectivo basado en códigos de cuenta
-          const accountCode = String(account?.code || '').replace(/\./g, '');
-          const isCashAccount = accountCode.startsWith('10') || accountCode.startsWith('110') || 
-                               accountCode.startsWith('111') || accountCode.startsWith('1102');
-          
-          if (isCashAccount) {
-            // Cuentas de efectivo y bancos (múltiples formatos)
-            if (entry.description?.toLowerCase().includes('venta') || 
-                entry.description?.toLowerCase().includes('cobro') ||
-                entry.description?.toLowerCase().includes('ingreso') ||
-                entry.description?.toLowerCase().includes('nómina') ||
-                entry.description?.toLowerCase().includes('alquiler') ||
-                entry.description?.toLowerCase().includes('servicios')) {
-              operatingCashFlow += amount;
-            } else if (entry.description?.toLowerCase().includes('compra activo') ||
-                      entry.description?.toLowerCase().includes('inversión') ||
-                      entry.description?.toLowerCase().includes('equipo')) {
-              investingCashFlow += amount;
-            } else if (entry.description?.toLowerCase().includes('préstamo') ||
-                      entry.description?.toLowerCase().includes('capital') ||
-                      entry.description?.toLowerCase().includes('dividendo')) {
-              financingCashFlow += amount;
-            } else {
-              operatingCashFlow += amount; // Por defecto operativo
+      const classifyEntry = (nonCashLines: any[]) => {
+        let hasInvesting = false;
+        let hasFinancing = false;
+
+        (nonCashLines || []).forEach((line: any) => {
+          const acc = line?.chart_accounts;
+          const type = String(acc?.type || '').toLowerCase();
+          const code = normalizeCode(acc?.code);
+
+          if (type === 'liability' || type === 'pasivo' || type === 'equity' || type === 'patrimonio') {
+            hasFinancing = true;
+            return;
+          }
+
+          if (type === 'asset' || type === 'activo') {
+            if (!(code.startsWith('10') || code.startsWith('11') || code.startsWith('12') || code.startsWith('13'))) {
+              hasInvesting = true;
             }
           }
         });
+
+        if (hasInvesting) return 'investing' as const;
+        if (hasFinancing) return 'financing' as const;
+        return 'operating' as const;
+      };
+
+      (journalEntries || []).forEach((entry: any) => {
+        const lines = (entry?.journal_entry_lines || []) as any[];
+        if (!lines || lines.length === 0) return;
+
+        const cashLines: any[] = [];
+        const nonCashLines: any[] = [];
+
+        lines.forEach((line: any) => {
+          const acc = line?.chart_accounts;
+          const code = normalizeCode(acc?.code);
+          if (code && isCashAccountCode(code)) {
+            cashLines.push(line);
+          } else {
+            nonCashLines.push(line);
+          }
+        });
+
+        if (cashLines.length === 0) return;
+
+        const cashAmount = cashLines.reduce((sum, line) => {
+          const debit = Number(line?.debit_amount) || 0;
+          const credit = Number(line?.credit_amount) || 0;
+          return sum + (debit - credit);
+        }, 0);
+
+        const bucket = classifyEntry(nonCashLines);
+        if (bucket === 'investing') {
+          investingCashFlow += cashAmount;
+        } else if (bucket === 'financing') {
+          financingCashFlow += cashAmount;
+        } else {
+          operatingCashFlow += cashAmount;
+        }
       });
 
       const netCashFlow = operatingCashFlow + investingCashFlow + financingCashFlow;

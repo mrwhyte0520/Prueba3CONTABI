@@ -236,12 +236,15 @@ export default function FinancialStatementsPage() {
             effectiveFrom = SYSTEM_START_DATE;
           }
 
+          // Para el Balance General se requiere acumulado (al corte), no solo el movimiento del mes.
+          // Para los demás estados (Resultados/Costos/Gastos) se mantiene el rango del período.
+          const trialFrom = activeTab === 'balance' ? SYSTEM_START_DATE : effectiveFrom;
+
           // Debug: ver rango usado para la balanza
           // eslint-disable-next-line no-console
-          console.log('[FS] loadFinancialData', { selectedPeriod, fromDate: effectiveFrom, toDate });
+          console.log('[FS] loadFinancialData', { selectedPeriod, fromDate: trialFrom, toDate, activeTab });
 
-          // Cargar balanza de comprobación solo del período efectivo
-          trialBalance = await financialReportsService.getTrialBalance(user.id, effectiveFrom, toDate);
+          trialBalance = await financialReportsService.getTrialBalance(user.id, trialFrom, toDate);
 
           // Debug: cuántas cuentas regresó la balanza
           // eslint-disable-next-line no-console
@@ -831,6 +834,9 @@ export default function FinancialStatementsPage() {
   // de forma que se cumpla la ecuación: Activos = Pasivos + Patrimonio + Resultado.
   const totalLiabilitiesAndEquity = totals.totalLiabilities + totals.totalEquity + totals.netIncome;
 
+  const balanceImbalance = totals.totalAssets - totalLiabilitiesAndEquity;
+  const isBalanceBalanced = Math.abs(balanceImbalance) < 0.01;
+
   const comparisonLiabilitiesAndEquity = comparisonTotals
     ? comparisonTotals.totalLiabilities + comparisonTotals.totalEquity + comparisonTotals.netIncome
     : null;
@@ -1324,6 +1330,17 @@ export default function FinancialStatementsPage() {
   const incomeTax = 0;
   const legalReserve = 0;
 
+  const expensesCategoriesTotal =
+    gastosPersonal +
+    gastosGeneralesAdm +
+    gastosMantenimientoAF +
+    gastosDepreciacion +
+    gastosImpuestosNoDeducibles +
+    gastosFinancieros;
+
+  const expensesTotalsImbalance = expensesCategoriesTotal - (totals.totalExpenses || 0);
+  const areExpensesTotalsConsistent = Math.abs(expensesTotalsImbalance) < 0.01;
+
   // Helper para renderizar líneas - oculta en PDF si saldo es 0, pero muestra en pantalla
   const renderBalanceLineIfNotZero = (label: string, amount: number) => {
     const isZero = Math.abs(amount) < 0.01;
@@ -1362,6 +1379,11 @@ export default function FinancialStatementsPage() {
     availableForSale: 0,
     closingInventory: 0,
   });
+
+  const costOfSalesForStatement =
+    (Number(costOfSalesData.availableForSale) || 0) - (Number(costOfSalesData.closingInventory) || 0);
+  const costsTotalsImbalance = costOfSalesForStatement - (totals.totalCosts || 0);
+  const areCostsTotalsConsistent = Math.abs(costsTotalsImbalance) < 0.01;
 
   const downloadExcel = () => {
     try {
@@ -2054,6 +2076,15 @@ export default function FinancialStatementsPage() {
                 </div>
               </div>
 
+              {!areExpensesTotalsConsistent && (
+                <div className="mb-4 bg-yellow-50 border border-yellow-200 text-yellow-900 px-4 py-3 rounded-lg print-hidden">
+                  <div className="font-semibold">Advertencia: Gastos no concilian</div>
+                  <div className="text-sm mt-1">
+                    Diferencia (Suma categorías - Total Gastos): {formatCurrencyRD(expensesTotalsImbalance)}
+                  </div>
+                </div>
+              )}
+
               {showComparisonControls && (
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
                   <div className="flex items-center gap-2">
@@ -2299,6 +2330,15 @@ export default function FinancialStatementsPage() {
                 </div>
               </div>
 
+              {!areCostsTotalsConsistent && (
+                <div className="mb-4 bg-yellow-50 border border-yellow-200 text-yellow-900 px-4 py-3 rounded-lg print-hidden">
+                  <div className="font-semibold">Advertencia: Costos no concilian</div>
+                  <div className="text-sm mt-1">
+                    Diferencia (Costo de Venta - Costos en Resultados): {formatCurrencyRD(costsTotalsImbalance)}
+                  </div>
+                </div>
+              )}
+
               {showComparisonControls && (
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
                   <div className="flex items-center gap-2">
@@ -2497,12 +2537,21 @@ export default function FinancialStatementsPage() {
                 </div>
               )}
 
+              {!isBalanceBalanced && (
+                <div className="mb-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg print-hidden">
+                  <div className="font-semibold">Advertencia: Balance no cuadra</div>
+                  <div className="text-sm mt-1">
+                    Diferencia (Activos - (Pasivos + Patrimonio + Resultado)): {formatCurrencyRD(balanceImbalance)}
+                  </div>
+                </div>
+              )}
+
               {/* Contenido para impresión */}
               <div id="printable-statement">
               {/* Título centrado estilo profesional */}
               <div className="text-center mb-8">
-                <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE SITUACIÓN FINANCIERA</h1>
-                <p className="text-sm text-gray-700 mb-0.5">{periodDates.asOfDateLabel}</p>
+                <h1 className="text-xl font-bold text-gray-900">BALANCE GENERAL</h1>
+                <p className="text-sm text-gray-600">{periodDates.asOfDateLabel}</p>
                 {comparisonPeriodLabel && (
                   <p className="text-xs text-gray-700 mb-0.5">
                     Período comparativo: {comparisonPeriodLabel}
@@ -3089,6 +3138,18 @@ export default function FinancialStatementsPage() {
                   </button>
                 </div>
               </div>
+
+              {Math.abs((cashFlow.netCashFlow || 0) - ((cashFlow.closingCash || 0) - (cashFlow.openingCash || 0))) >= 0.01 && (
+                <div className="mb-4 bg-yellow-50 border border-yellow-200 text-yellow-900 px-4 py-3 rounded-lg print-hidden">
+                  <div className="font-semibold">Advertencia: Flujo de Efectivo no concilia con Caja/Bancos</div>
+                  <div className="text-sm mt-1">
+                    Neto (operación + inversión + financiamiento): {formatCurrencyRD(cashFlow.netCashFlow || 0)}
+                  </div>
+                  <div className="text-sm">
+                    Variación (Cierre - Apertura): {formatCurrencyRD((cashFlow.closingCash || 0) - (cashFlow.openingCash || 0))}
+                  </div>
+                </div>
+              )}
 
               {showComparisonControls && (
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
