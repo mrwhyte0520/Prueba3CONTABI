@@ -7,6 +7,16 @@ const handleDatabaseError = (error: any, fallbackData: any = []) => {
   return fallbackData;
 };
 
+const describeSupabaseError = (error: any) => {
+  if (!error) return 'Unknown error';
+  const parts: string[] = [];
+  if (typeof error?.message === 'string' && error.message) parts.push(error.message);
+  if (typeof error?.code === 'string' && error.code) parts.push(`code=${error.code}`);
+  if (typeof error?.details === 'string' && error.details) parts.push(`details=${error.details}`);
+  if (typeof error?.hint === 'string' && error.hint) parts.push(`hint=${error.hint}`);
+  return parts.join(' | ') || String(error);
+};
+
 // Resolve tenant owner id for a given user (owner or subuser)
 export const resolveTenantId = async (userId: string | null | undefined): Promise<string | null> => {
   if (!userId) return null;
@@ -7641,11 +7651,9 @@ export const invoicesService = {
         throw new Error('No se puede anular una factura con pagos registrados');
       }
 
-      const now = new Date().toISOString();
-
       const { data: updatedInvoice, error: updateError } = await supabase
         .from('invoices')
-        .update({ status: 'cancelled', updated_at: now })
+        .update({ status: 'cancelled' })
         .eq('user_id', tenantId)
         .eq('id', invoiceId)
         .select('*')
@@ -7656,7 +7664,7 @@ export const invoicesService = {
       // Anular los asientos relacionados (Factura y COGS) vinculados por reference = invoiceId
       const { error: reverseError } = await supabase
         .from('journal_entries')
-        .update({ status: 'reversed', updated_at: now })
+        .update({ status: 'reversed' })
         .eq('user_id', tenantId)
         .eq('reference', invoiceId)
         .neq('status', 'reversed');
@@ -7665,7 +7673,7 @@ export const invoicesService = {
 
       return updatedInvoice;
     } catch (error) {
-      console.error('invoicesService.cancel error', error);
+      console.error('invoicesService.cancel error', describeSupabaseError(error));
       throw error;
     }
   },

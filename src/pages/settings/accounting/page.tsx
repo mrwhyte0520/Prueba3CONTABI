@@ -17,6 +17,7 @@ interface AccountingSettings {
   ar_account_id?: string | null;
   sales_account_id?: string | null;
   sales_tax_account_id?: string | null;
+  purchase_tax_account_id?: string | null;
   ap_account_id?: string | null;
   ap_bank_account_id?: string | null;
 }
@@ -42,9 +43,11 @@ export default function AccountingSettingsPage() {
     ar_account_id: null,
     sales_account_id: null,
     sales_tax_account_id: null,
+    purchase_tax_account_id: null,
     ap_account_id: null,
     ap_bank_account_id: null,
   });
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -359,7 +362,7 @@ export default function AccountingSettingsPage() {
             {loadingAccounts ? (
               <p className="text-gray-500 text-sm">Cargando plan de cuentas...</p>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Cuenta de Cuentas por Cobrar (Clientes)
@@ -413,6 +416,25 @@ export default function AccountingSettingsPage() {
                     ))}
                   </select>
                 </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Cuenta de ITBIS por Compra
+                  </label>
+                  <select
+                    value={settings.purchase_tax_account_id || ''}
+                    onChange={(e) => handleInputChange('purchase_tax_account_id', e.target.value || null)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Seleccionar cuenta</option>
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Cuenta de Cuentas por Pagar (Proveedores)
@@ -430,6 +452,7 @@ export default function AccountingSettingsPage() {
                     ))}
                   </select>
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Cuenta de Banco por Defecto para Pagos a Proveedores

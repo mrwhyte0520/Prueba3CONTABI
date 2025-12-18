@@ -38,6 +38,7 @@ interface UiInvoiceItem {
 
 interface UiInvoice {
   id: string; // número visible
+  internalId: string; // id real en DB
   customerId?: string;
   customer: string;
   customerEmail: string;
@@ -47,7 +48,7 @@ interface UiInvoice {
   amount: number; // subtotal
   tax: number;
   total: number;
-  status: 'paid' | 'pending' | 'overdue' | 'draft';
+  status: 'paid' | 'pending' | 'overdue' | 'draft' | 'cancelled';
   date: string;
   dueDate: string;
   items: UiInvoiceItem[];
@@ -225,6 +226,7 @@ export default function InvoicingPage() {
         if (statusDb === 'paid') status = 'paid';
         else if (statusDb === 'overdue') status = 'overdue';
         else if (statusDb === 'draft') status = 'draft';
+        else if (statusDb === 'cancelled') status = 'cancelled';
         else status = 'pending';
 
         let baseTotal: number | null = total;
@@ -249,6 +251,7 @@ export default function InvoicingPage() {
 
         return {
           id: (inv.invoice_number as string) || String(inv.id),
+          internalId: String(inv.id),
           customerId: String((inv as any).customer_id || customerData.id || ''),
           customer: customerData.name || 'Cliente',
           customerEmail: customerData.email || '',
@@ -380,6 +383,7 @@ export default function InvoicingPage() {
       case 'pending': return 'bg-yellow-100 text-yellow-800';
       case 'overdue': return 'bg-red-100 text-red-800';
       case 'draft': return 'bg-gray-100 text-gray-800';
+      case 'cancelled': return 'bg-gray-200 text-gray-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
@@ -390,7 +394,8 @@ export default function InvoicingPage() {
       case 'pending': return 'Pendiente';
       case 'overdue': return 'Vencida';
       case 'draft': return 'Borrador';
-      default: return 'Desconocido';
+      case 'cancelled': return 'Anulada';
+      default: return status;
     }
   };
 
@@ -493,23 +498,38 @@ export default function InvoicingPage() {
     setShowInvoiceDetailModal(true);
   };
 
-  const handleDeleteInvoice = async (invoiceId: string) => {
+  const handleCancelInvoice = async (invoiceId: string) => {
     if (!user?.id) {
-      alert('Debes iniciar sesión para eliminar facturas');
+      alert('Debes iniciar sesión para anular facturas');
       return;
     }
-    if (!confirm(`¿Está seguro de eliminar la factura ${invoiceId}?`)) return;
+
+    const invoice = invoices.find((inv) => inv.id === invoiceId);
+    if (!invoice) return;
+
+    if (invoice.status === 'paid') {
+      alert('No se puede anular una factura pagada. Primero elimina/revierte el pago.');
+      return;
+    }
+
+    if (invoice.status === 'cancelled') {
+      alert('La factura ya está anulada.');
+      return;
+    }
+
+    if (!confirm(`¿Seguro que deseas anular la factura ${invoiceId}?`)) return;
+
     try {
-      await invoicesService.deleteByExternalId(user.id as string, invoiceId);
+      await invoicesService.cancel(user.id as string, invoice.internalId);
       await loadInvoices();
       if (selectedInvoice === invoiceId) {
         setSelectedInvoice(null);
         setShowInvoiceDetailModal(false);
       }
-      alert(`Factura ${invoiceId} eliminada correctamente`);
-    } catch (error) {
-      console.error('Error eliminando factura:', error);
-      alert('Error al eliminar la factura');
+      alert(`Factura ${invoiceId} anulada correctamente`);
+    } catch (error: any) {
+      console.error('Error anulando factura:', error);
+      alert(error?.message || 'Error al anular la factura');
     }
   };
 
@@ -1313,6 +1333,7 @@ export default function InvoicingPage() {
                 <option value="pending">Pendientes</option>
                 <option value="overdue">Vencidas</option>
                 <option value="draft">Borradores</option>
+                <option value="cancelled">Anuladas</option>
               </select>
             </div>
             <div className="flex items-end">
@@ -1405,6 +1426,15 @@ export default function InvoicingPage() {
                           >
                             <i className="ri-edit-line"></i>
                           </button>
+                          {invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
+                            <button
+                              onClick={() => handleCancelInvoice(invoice.id)}
+                              className="text-red-600 hover:text-red-900 p-1"
+                              title="Anular factura"
+                            >
+                              <i className="ri-close-circle-line"></i>
+                            </button>
+                          )}
                           <button
                             onClick={() => handlePrintInvoice(invoice.id)}
                             className="text-gray-600 hover:text-gray-900 p-1"
@@ -1425,13 +1455,6 @@ export default function InvoicingPage() {
                             title="Duplicar factura"
                           >
                             <i className="ri-file-copy-line"></i>
-                          </button>
-                          <button
-                            onClick={() => handleDeleteInvoice(invoice.id)}
-                            className="text-red-600 hover:text-red-900 p-1"
-                            title="Eliminar factura"
-                          >
-                            <i className="ri-delete-bin-line"></i>
                           </button>
                         </div>
                       </td>

@@ -1339,14 +1339,15 @@ export default function InvoicesPage() {
                         >
                           <i className="ri-file-excel-2-line"></i>
                         </button>
-                        <button
-                          onClick={() => handleCancelInvoice(invoice)}
-                          className="text-red-600 hover:text-red-900"
-                          title="Anular"
-                          disabled={invoice.status === 'cancelled' || invoice.paidAmount > 0}
-                        >
-                          <i className="ri-close-circle-line"></i>
-                        </button>
+                        {invoice.status !== 'paid' && invoice.status !== 'cancelled' && invoice.paidAmount <= 0 && (
+                          <button
+                            onClick={() => handleCancelInvoice(invoice)}
+                            className="text-red-600 hover:text-red-900"
+                            title="Anular"
+                          >
+                            <i className="ri-close-circle-line"></i>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

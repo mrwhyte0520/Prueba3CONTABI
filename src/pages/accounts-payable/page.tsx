@@ -295,7 +295,12 @@ export default function AccountsPayablePage() {
 
   // Navigation Functions
   const handleViewAll = (section: string) => {
-    alert(`Viewing all ${section}...`);
+    if (section === 'actividad reciente') {
+      navigate('/accounts-payable/invoices');
+      return;
+    }
+
+    navigate('/accounts-payable');
   };
 
   return (
