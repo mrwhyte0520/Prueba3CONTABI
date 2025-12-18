@@ -49,7 +49,9 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "webnoti:sync-users": "node ./scripts/webnoti-sync-users.mjs",
+    "webnoti:sync-users:dry": "node ./scripts/webnoti-sync-users.mjs --dry-run"
   },
   "type": "module",
   "engines": {
