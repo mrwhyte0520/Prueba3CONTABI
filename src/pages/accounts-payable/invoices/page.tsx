@@ -114,18 +114,33 @@ export default function APInvoicesPage() {
   const [otherTaxes, setOtherTaxes] = useState<Array<{ name: string; rate: string }>>([]);
 
   const expenseTypes606 = [
-    '01 - Gastos de personal',
-    '02 - Gastos por trabajo, suministros y servicios',
+    '01 - Gastos de Personal',
+    '02 - Gastos por Trabajos, Suministros y Servicios',
     '03 - Arrendamientos',
-    '04 - Gastos de activos fijos',
-    '05 - Gastos de representación',
-    '06 - Otras deducciones admitidas',
-    '07 - Gastos financieros',
-    '08 - Gastos extraordinarios',
-    '09 - Compras y gastos que forman parte del costo',
-    '10 - Adquisiciones de activos',
-    '11 - Gastos no admitidos',
+    '04 - Gastos de Activos Fijos',
+    '05 - Gastos de Representación',
+    '06 - Gastos Financieros',
+    '07 - Gastos de Seguros',
+    '08 - Gastos por Provisión de Bienes y Servicios',
+    '09 - Gastos por Otros Conceptos',
+    '10 - Compras de Bienes',
+    '11 - Gastos por Servicios Profesionales',
   ];
+
+  const normalizeExpenseType606 = (value: any) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const needle = raw.toLowerCase();
+    const match = expenseTypes606.find((opt) => opt.toLowerCase() === needle);
+    if (match) return match;
+    const codeMatch = needle.match(/^\s*(\d{2})\s*-/);
+    if (codeMatch) {
+      const code = codeMatch[1];
+      const byCode = expenseTypes606.find((opt) => opt.startsWith(`${code} -`));
+      if (byCode) return byCode;
+    }
+    return raw;
+  };
 
   const [lines, setLines] = useState<LineFormRow[]>([
     { description: '', expenseAccountId: '', quantity: '1', unitPrice: '0', inventoryItemId: '', discountPercentage: '0' },
@@ -133,6 +148,27 @@ export default function APInvoicesPage() {
 
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [companyInfo, setCompanyInfo] = useState<any | null>(null);
+
+  const normalizeSupplierTypeName = (value: any) => String(value || '').trim().toLowerCase();
+  const getSupplierTypeKey = (typeRow: any | null) => {
+    const name = normalizeSupplierTypeName(typeRow?.name);
+    if (name === 'sin especificar') return 'unspecified';
+    if (name === 'persona física' || name === 'persona fisica') return 'persona_fisica';
+    if (name === 'persona jurídica' || name === 'persona juridica') return 'persona_juridica';
+    if (name === 'prestador de servicios') return 'prestador_servicios';
+    if (name === 'proveedor informal') return 'proveedor_informal';
+    return null;
+  };
+
+  const normalizeTaxRegime = (value: any) => String(value || '').trim().toLowerCase();
+  const getTaxRegimeKey = (value: any) => {
+    const v = normalizeTaxRegime(value);
+    if (!v) return null;
+    if (v === 'rst' || v.includes('régimen simplificado') || v.includes('regimen simplificado')) return 'rst';
+    if (v === 'ong' || v.includes('sin fines de lucro') || v.includes('fundación') || v.includes('fundacion')) return 'ong';
+    if (v.includes('no contribuyente') || v.includes('no-contribuyente')) return 'non_taxpayer';
+    return 'normal';
+  };
 
   const handleAddTax = () => {
     setOtherTaxes(prev => [...prev, { name: '', rate: '0' }]);
@@ -277,7 +313,7 @@ export default function APInvoicesPage() {
           status: inv.status || 'pending',
           storeName: (inv as any).store_name || '',
           notes: (inv as any).notes || '',
-          expenseType606: (inv as any).expense_type_606 || '',
+          expenseType606: normalizeExpenseType606((inv as any).expense_type_606) || '',
           purchaseOrderId: (inv as any).purchase_order_id || null,
           // campo adicional usado solo en UI; TypeScript lo admite porque APInvoice es estructura abierta
           baseTotalToPay,
@@ -327,12 +363,30 @@ export default function APInvoicesPage() {
       supplierType = supplierTypes.find((t: any) => String(t.id) === String(selected.supplier_type_id)) || null;
     }
 
-    const affectsItbis = supplierType ? (supplierType.affects_itbis !== false && !supplierType.is_non_taxpayer) : true;
-    const affectsIsr = supplierType ? (supplierType.affects_isr !== false) : true;
+    const supplierTypeKey = getSupplierTypeKey(supplierType);
 
-    const isNonTaxpayer = !!supplierType?.is_non_taxpayer;
-    const isRst = !!supplierType?.is_rst;
-    const isOng = !!supplierType?.is_ong;
+    const regimeKey = getTaxRegimeKey((selected as any)?.tax_regime);
+
+    const baseIsNonTaxpayer = !!supplierType?.is_non_taxpayer;
+    const baseIsRst = !!supplierType?.is_rst;
+    const baseIsOng = !!supplierType?.is_ong;
+
+    const isNonTaxpayer = baseIsNonTaxpayer || regimeKey === 'non_taxpayer';
+    const isRst = baseIsRst || regimeKey === 'rst';
+    const isOng = baseIsOng || regimeKey === 'ong';
+
+    // Reglas mínimas por régimen:
+    // - ONG / no contribuyente: no ITBIS, no retención ISR (por defecto)
+    // - RST: normalmente no factura ITBIS (no crédito fiscal) -> desactivar ITBIS
+    const affectsItbis =
+      supplierType
+        ? (supplierType.affects_itbis !== false && !isNonTaxpayer && !isRst && !isOng)
+        : (!isNonTaxpayer && !isRst && !isOng);
+
+    const affectsIsr =
+      supplierType
+        ? (supplierType.affects_isr !== false && !isOng)
+        : !isOng;
 
     const defaultItbisWithholding =
       taxConfig?.withholding_rates && typeof taxConfig.withholding_rates.itbis === 'number'
@@ -344,15 +398,61 @@ export default function APInvoicesPage() {
         : 0;
 
     const itbisWithholdingRate =
-      selected && typeof selected.itbis_withholding_rate === 'number'
-        ? Number(selected.itbis_withholding_rate)
-        : defaultItbisWithholding;
-    const isrWithholdingRate =
-      selected && typeof selected.isr_withholding_rate === 'number'
-        ? Number(selected.isr_withholding_rate)
-        : defaultIsrWithholding;
+      !affectsItbis
+        ? 0
+        : supplierType && typeof supplierType.itbis_withholding_rate === 'number'
+          ? Number(supplierType.itbis_withholding_rate)
+          : defaultItbisWithholding;
+    const isrWithholdingRate = defaultIsrWithholding;
 
-    return { affectsItbis, affectsIsr, isNonTaxpayer, isRst, isOng, itbisWithholdingRate, isrWithholdingRate };
+    const resolvedItbisWithholdingRate =
+      !affectsItbis
+        ? 0
+        : supplierType && typeof supplierType.itbis_withholding_rate === 'number'
+          ? Number(supplierType.itbis_withholding_rate)
+          : supplierTypeKey === 'prestador_servicios'
+            ? 30
+            : supplierTypeKey === 'persona_fisica'
+              ? 30
+              : supplierTypeKey === 'proveedor_informal'
+                ? 100
+                : 0;
+
+    const resolvedIsrWithholdingRate =
+      !affectsIsr
+        ? 0
+        : supplierTypeKey === 'persona_fisica' && typeof (supplierType as any)?.isr_withholding_rate === 'number'
+          ? Number((supplierType as any).isr_withholding_rate)
+          : supplierTypeKey === 'persona_juridica'
+            ? 0
+            : supplierTypeKey === 'prestador_servicios'
+              ? 10
+              : supplierTypeKey === 'persona_fisica'
+                ? 10
+                : supplierTypeKey === 'proveedor_informal'
+                  ? 10
+                  : isrWithholdingRate;
+
+    const fallbackItbisWithholding =
+      supplierTypeKey === 'unspecified'
+        ? itbisWithholdingRate
+        : resolvedItbisWithholdingRate;
+
+    const fallbackIsrWithholding =
+      supplierTypeKey === 'unspecified'
+        ? isrWithholdingRate
+        : resolvedIsrWithholdingRate;
+
+    return {
+      affectsItbis,
+      affectsIsr,
+      isNonTaxpayer,
+      isRst,
+      isOng,
+      itbisWithholdingRate: fallbackItbisWithholding,
+      isrWithholdingRate: fallbackIsrWithholding,
+      supplierTypeKey,
+    };
   };
 
   const calculateTotals = () => {
@@ -514,7 +614,7 @@ export default function APInvoicesPage() {
         taxId: selected?.tax_id || prev.taxId,
         legalName: selected?.legal_name || selected?.name || prev.legalName,
         paymentTermsId: selected?.payment_terms_id ? String(selected.payment_terms_id) : prev.paymentTermsId,
-        expenseType606: selected?.expense_type_606 || '',
+        expenseType606: normalizeExpenseType606(selected?.expense_type_606) || '',
         purchaseOrderId: '',
       };
     });
@@ -916,12 +1016,6 @@ export default function APInvoicesPage() {
       return;
     }
 
-    // Validar tipo de gasto 606: obligatorio si el suplidor no lo tiene predefinido
-    if (!headerForm.expenseType606 || headerForm.expenseType606.trim() === '') {
-      alert('Debes seleccionar el Tipo de gasto 606. Este campo es obligatorio para cumplimiento tributario.');
-      return;
-    }
-
     const activeLines = lines.filter(l => l.description.trim() !== '' && Number(l.quantity) > 0 && Number(l.unitPrice) >= 0);
     if (activeLines.length === 0) {
       alert('Agrega al menos una línea con descripción y cantidad > 0');
@@ -944,7 +1038,46 @@ export default function APInvoicesPage() {
     }
 
     const { gross, totalDiscount, itbis, totalOtherTaxes, otherTaxesDetail, itbisWithheld, isr, toPay } = calculateTotals();
-    const { affectsItbis } = getCurrentSupplierTaxProfile();
+    const { affectsItbis, supplierTypeKey, isrWithholdingRate } = getCurrentSupplierTaxProfile();
+
+    if (supplierTypeKey === 'proveedor_informal') {
+      if (itbis > 0) {
+        alert('Proveedor informal no puede registrar ITBIS');
+        return;
+      }
+      if (!(isrWithholdingRate > 0)) {
+        alert('Proveedor informal requiere retención de ISR mayor a 0');
+        return;
+      }
+      if (headerForm.documentType && String(headerForm.documentType).trim() !== '' && String(headerForm.documentType).trim() !== 'B17') {
+        alert('Proveedor informal debe registrarse con comprobante B17 (o equivalente interno)');
+        return;
+      }
+    }
+
+    if (supplierTypeKey === 'persona_juridica') {
+      const taxIdDigits = String(headerForm.taxId || '').replace(/\D+/g, '');
+      if (taxIdDigits.length !== 9) {
+        alert('Para Persona Jurídica el RNC debe tener 9 dígitos');
+        return;
+      }
+    }
+
+    if (supplierTypeKey === 'persona_fisica') {
+      const taxIdDigits = String(headerForm.taxId || '').replace(/\D+/g, '');
+      if (taxIdDigits.length !== 11) {
+        alert('Para Persona Física la Cédula debe tener 11 dígitos');
+        return;
+      }
+    }
+
+    if (supplierTypeKey === 'prestador_servicios') {
+      const taxIdDigits = String(headerForm.taxId || '').replace(/\D+/g, '');
+      if (!(taxIdDigits.length === 9 || taxIdDigits.length === 11)) {
+        alert('Para Prestador de Servicios el RNC debe tener 9 dígitos o la Cédula 11 dígitos');
+        return;
+      }
+    }
 
     const invoiceNumber = headerForm.invoiceNumber.trim() || `AP-${Date.now()}`;
     const invoiceDate = headerForm.invoiceDate || new Date().toISOString().slice(0, 10);
@@ -1462,19 +1595,19 @@ export default function APInvoicesPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de gasto 606 *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de gasto 606</label>
                     <select
                       value={headerForm.expenseType606}
                       onChange={(e) => setHeaderForm(prev => ({ ...prev, expenseType606: e.target.value }))}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
-                      <option value="">Seleccione tipo de gasto...</option>
+                      <option value="">Sin especificar</option>
                       {expenseTypes606.map((type) => (
                         <option key={type} value={type}>{type}</option>
                       ))}
                     </select>
                     <p className="mt-1 text-xs text-gray-500">
-                      Obligatorio para formulario 606 de la DGII
+                      Recomendado para el formulario 606 de la DGII
                     </p>
                   </div>
                   <div>

@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { resolveTenantId, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { formatAmount } from '../../../utils/numberFormat';
+import { formatDate } from '../../../utils/dateFormat';
 
 // Estilos CSS para impresión
 const printStyles = `
@@ -245,7 +246,7 @@ const GeneralLedgerPage: FC = () => {
         {
           Asiento: '',
           'Tipo Doc.': 'Balance inicial',
-          Fecha: dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio',
+          Fecha: dateFrom ? formatDate(dateFrom) : 'Inicio',
           Descripción: `Balance inicial - ${selectedAccount.code} ${selectedAccount.name}`,
           Referencia: '',
           Débito: '',
@@ -255,7 +256,7 @@ const GeneralLedgerPage: FC = () => {
         ...filteredLedgerEntries.map(e => ({
           Asiento: e.entryNumber,
           'Tipo Doc.': getEntryDocumentType(e),
-          Fecha: new Date(e.date).toLocaleDateString('es-DO'),
+          Fecha: formatDate(e.date),
           Descripción: e.description || '',
           Referencia: e.reference || '',
           Débito: e.debit > 0 ? e.debit : '',
@@ -289,9 +290,7 @@ const GeneralLedgerPage: FC = () => {
 
       if (dateFrom || dateTo) {
         const row4 = new Array(totalColumns).fill('');
-        row4[centerIndex] = `Período: ${dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} - ${
-          dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'
-        }`;
+        row4[centerIndex] = `Período: ${dateFrom ? formatDate(dateFrom) : 'Inicio'} - ${dateTo ? formatDate(dateTo) : 'Fin'}`;
         headerRows.push(row4);
       }
 
@@ -678,8 +677,8 @@ const GeneralLedgerPage: FC = () => {
                       <option value="">Todos</option>
                       {visiblePeriods.map((period) => (
                         <option key={period.id} value={period.id}>
-                          {period.name} ({new Date(period.start_date).toLocaleDateString('es-DO')} -{' '}
-                          {new Date(period.end_date).toLocaleDateString('es-DO')})
+                          {period.name} ({formatDate(period.start_date)} -{' '}
+                          {formatDate(period.end_date)})
                         </option>
                       ))}
                     </select>
@@ -761,8 +760,8 @@ const GeneralLedgerPage: FC = () => {
                     Cuenta: {selectedAccount.code} - {selectedAccount.name}
                     {(dateFrom || dateTo) && (
                       <div className="text-xs mt-2">
-                        Período: {dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} -{' '}
-                        {dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'}
+                        Período: {dateFrom ? formatDate(dateFrom) : 'Inicio'} -{' '}
+                        {dateTo ? formatDate(dateTo) : 'Fin'}
                       </div>
                     )}
                   </div>
@@ -841,7 +840,7 @@ const GeneralLedgerPage: FC = () => {
                                   {getEntryDocumentType(entry)}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                  {new Date(entry.date).toLocaleDateString()}
+                                  {formatDate(entry.date)}
                                 </td>
                                 <td className="px-6 py-4 text-sm text-gray-900">
                                   {entry.description}

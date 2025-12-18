@@ -3,6 +3,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { resolveTenantId } from '../../../services/database';
+import { formatDate } from '../../../utils/dateFormat';
 
 interface AccountingPeriod {
   id: string;
@@ -80,20 +81,20 @@ const AccountingPeriodsPage: FC = () => {
     try {
       // Crear contenido CSV
       let csvContent = 'Períodos Contables\n';
-      csvContent += `Generado: ${new Date().toLocaleDateString('es-DO')}\n\n`;
+      csvContent += `Generado: ${formatDate(new Date())}\n\n`;
       csvContent += 'Período,Fecha Inicio,Fecha Fin,Año Fiscal,Estado,Asientos,Total Débitos,Total Créditos,Fecha Cierre,Cerrado Por\n';
       
       filteredPeriods.forEach(period => {
         const row = [
           `"${period.name}"`,
-          new Date(period.start_date).toLocaleDateString('es-DO'),
-          new Date(period.end_date).toLocaleDateString('es-DO'),
+          formatDate(period.start_date),
+          formatDate(period.end_date),
           period.fiscal_year,
           period.status === 'open' ? 'Abierto' : period.status === 'closed' ? 'Cerrado' : 'Bloqueado',
           period.entries_count || 0,
           `RD$${(period.total_debits || 0).toLocaleString()}`,
           `RD$${(period.total_credits || 0).toLocaleString()}`,
-          period.closed_at ? new Date(period.closed_at).toLocaleDateString('es-DO') : '',
+          period.closed_at ? formatDate(period.closed_at) : '',
           period.closed_by || ''
         ].join(',');
         csvContent += row + '\n';
@@ -548,10 +549,10 @@ const AccountingPeriodsPage: FC = () => {
                     {period.name}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(period.start_date).toLocaleDateString('es-DO')}
+                    {formatDate(period.start_date)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(period.end_date).toLocaleDateString('es-DO')}
+                    {formatDate(period.end_date)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {period.fiscal_year}
@@ -734,13 +735,13 @@ const AccountingPeriodsPage: FC = () => {
                     <div>
                       <span className="text-sm font-medium text-gray-500">Fecha Inicio:</span>
                       <span className="ml-2 text-sm text-gray-900">
-                        {new Date(selectedPeriod.start_date).toLocaleDateString('es-DO')}
+                        {formatDate(selectedPeriod.start_date)}
                       </span>
                     </div>
                     <div>
                       <span className="text-sm font-medium text-gray-500">Fecha Fin:</span>
                       <span className="ml-2 text-sm text-gray-900">
-                        {new Date(selectedPeriod.end_date).toLocaleDateString('es-DO')}
+                        {formatDate(selectedPeriod.end_date)}
                       </span>
                     </div>
                     <div>
@@ -780,7 +781,7 @@ const AccountingPeriodsPage: FC = () => {
                     <div>
                       <span className="text-sm font-medium text-gray-500">Creado:</span>
                       <span className="ml-2 text-sm text-gray-900">
-                        {new Date(selectedPeriod.created_at).toLocaleDateString('es-DO')}
+                        {formatDate(selectedPeriod.created_at)}
                       </span>
                     </div>
                     {selectedPeriod.closed_at && (
@@ -788,7 +789,7 @@ const AccountingPeriodsPage: FC = () => {
                         <div>
                           <span className="text-sm font-medium text-gray-500">Cerrado:</span>
                           <span className="ml-2 text-sm text-gray-900">
-                            {new Date(selectedPeriod.closed_at).toLocaleDateString('es-DO')}
+                            {formatDate(selectedPeriod.closed_at)}
                           </span>
                         </div>
                         <div>

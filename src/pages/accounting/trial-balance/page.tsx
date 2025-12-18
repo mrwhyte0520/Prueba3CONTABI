@@ -5,6 +5,7 @@ import { supabase } from '../../../lib/supabase';
 import { financialReportsService, settingsService } from '../../../services/database';
 import * as XLSX from 'xlsx';
 import { formatMoney } from '../../../utils/numberFormat';
+import { formatDate } from '../../../utils/dateFormat';
 
 // Estilos CSS para impresión
 const printStyles = `
@@ -403,9 +404,7 @@ const TrialBalancePage: FC = () => {
 
       if (fromDateLabel && toDateLabel) {
         const row3 = new Array(totalColumns).fill('');
-        row3[centerIndex] = `Período: ${new Date(fromDateLabel).toLocaleDateString('es-DO')} al ${
-          new Date(toDateLabel).toLocaleDateString('es-DO')
-        }`;
+        row3[centerIndex] = `Período: ${formatDate(fromDateLabel)} al ${formatDate(toDateLabel)}`;
         headerRows.push(row3);
       }
 
@@ -544,8 +543,8 @@ const TrialBalancePage: FC = () => {
                 <option value="">Todos</option>
                 {visiblePeriods.map((period) => (
                   <option key={period.id} value={period.id}>
-                    {period.name} ({new Date(period.start_date).toLocaleDateString('es-DO')} -{' '}
-                    {new Date(period.end_date).toLocaleDateString('es-DO')})
+                    {period.name} ({formatDate(period.start_date)} -{' '}
+                    {formatDate(period.end_date)})
                   </option>
                 ))}
               </select>
@@ -569,8 +568,8 @@ const TrialBalancePage: FC = () => {
             <div className="text-sm text-gray-600">
               Período del reporte:{' '}
               <span className="font-medium text-gray-800">
-                {new Date(fromDateLabel).toLocaleDateString('es-DO')} al{' '}
-                {new Date(toDateLabel).toLocaleDateString('es-DO')}
+                {formatDate(fromDateLabel)} al{' '}
+                {formatDate(toDateLabel)}
               </span>
             </div>
           )}
@@ -585,8 +584,8 @@ const TrialBalancePage: FC = () => {
         )}
         <div className="hidden print:block print-title">BALANZA DE COMPROBACIÓN</div>
         <div className="hidden print:block print-period">
-          Período: {fromDateLabel && new Date(fromDateLabel).toLocaleDateString('es-DO')} al{' '}
-          {toDateLabel && new Date(toDateLabel).toLocaleDateString('es-DO')}
+          Período: {fromDateLabel && formatDate(fromDateLabel)} al{' '}
+          {toDateLabel && formatDate(toDateLabel)}
         </div>
       <div className="bg-white rounded-lg shadow overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">

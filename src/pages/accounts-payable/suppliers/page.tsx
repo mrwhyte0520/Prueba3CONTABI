@@ -17,6 +17,47 @@ declare module 'jspdf' {
   }
 }
 
+function onlyDigits(value: string) {
+  return value.replace(/\D+/g, '');
+}
+
+function formatRnc(digits: string) {
+  const d = digits.slice(0, 9);
+  const a = d.slice(0, 1);
+  const b = d.slice(1, 3);
+  const c = d.slice(3, 8);
+  const e = d.slice(8, 9);
+  if (!d) return '';
+  if (d.length <= 1) return a;
+  if (d.length <= 3) return `${a}-${b}`;
+  if (d.length <= 8) return `${a}-${b}-${c}`;
+  return `${a}-${b}-${c}-${e}`;
+}
+
+function formatCedula(digits: string) {
+  const d = digits.slice(0, 11);
+  const a = d.slice(0, 3);
+  const b = d.slice(3, 10);
+  const c = d.slice(10, 11);
+  if (!d) return '';
+  if (d.length <= 3) return a;
+  if (d.length <= 10) return `${a}-${b}`;
+  return `${a}-${b}-${c}`;
+}
+
+function formatTaxId(documentType: string, inputValue: string) {
+  const digits = onlyDigits(inputValue);
+  if (documentType === 'RNC') return formatRnc(digits);
+  if (documentType === 'Cédula') return formatCedula(digits);
+  return inputValue;
+}
+
+function getTaxIdDigitsLimit(documentType: string) {
+  if (documentType === 'RNC') return 9;
+  if (documentType === 'Cédula') return 11;
+  return null;
+}
+
 export default function SuppliersPage() {
   const { user } = useAuth();
   const [showModal, setShowModal] = useState(false);
@@ -53,10 +94,6 @@ export default function SuppliersPage() {
     status: 'Activo',
     apAccountId: '',
     expenseType606: '',
-    isPersonaFisica: false,
-    isServiceProvider: false,
-    isrRate: '',
-    itbisRate: '',
     taxRegime: '',
     defaultInvoiceType: '',
     supplierTypeId: '',
@@ -65,23 +102,56 @@ export default function SuppliersPage() {
   });
 
   const categories = ['Materiales', 'Distribución', 'Servicios', 'Construcción', 'Tecnología'];
-  const paymentTermsOptions = ['15 días', '21 días', '30 días', '45 días', '60 días'];
   const documentTypes = ['RNC', 'Cédula', 'Pasaporte', 'Otro'];
   const expenseTypes606 = [
-    '01 - Gastos de personal',
-    '02 - Gastos por trabajo, suministros y servicios',
+    '01 - Gastos de Personal',
+    '02 - Gastos por Trabajos, Suministros y Servicios',
     '03 - Arrendamientos',
-    '04 - Gastos de activos fijos',
-    '05 - Gastos de representación',
-    '06 - Otras deducciones admitidas',
-    '07 - Gastos financieros',
-    '08 - Gastos extraordinarios',
-    '09 - Compras y gastos que forman parte del costo',
-    '10 - Adquisiciones de activos',
-    '11 - Gastos no admitidos',
+    '04 - Gastos de Activos Fijos',
+    '05 - Gastos de Representación',
+    '06 - Gastos Financieros',
+    '07 - Gastos de Seguros',
+    '08 - Gastos por Provisión de Bienes y Servicios',
+    '09 - Gastos por Otros Conceptos',
+    '10 - Compras de Bienes',
+    '11 - Gastos por Servicios Profesionales',
   ];
   const taxRegimes = ['Régimen Normal', 'RST', 'ONG', 'Fundación', 'Sin fines de lucro', 'Otro'];
   const invoiceTypes = ['CREDITO_FISCAL', 'INFORMAL', 'INTERNACIONAL'];
+
+  const normalizeSupplierTypeName = (value: any) => String(value || '').trim().toLowerCase();
+  const getSupplierTypeKey = (typeRow: any | null) => {
+    const name = normalizeSupplierTypeName(typeRow?.name);
+    if (name === 'sin especificar') return 'unspecified';
+    if (name === 'persona física' || name === 'persona fisica') return 'persona_fisica';
+    if (name === 'persona jurídica' || name === 'persona juridica') return 'persona_juridica';
+    if (name === 'prestador de servicios') return 'prestador_servicios';
+    if (name === 'proveedor informal') return 'proveedor_informal';
+    return null;
+  };
+
+  const defaultSupplierTypes = [
+    { name: 'Sin especificar', affects_itbis: false, affects_isr: false, is_non_taxpayer: false },
+    { name: 'Persona Jurídica', affects_itbis: true, affects_isr: false, is_non_taxpayer: false, itbis_withholding_rate: 0 },
+    { name: 'Persona Física', affects_itbis: true, affects_isr: true, is_non_taxpayer: false, isr_withholding_rate: 10, itbis_withholding_rate: 30 },
+    { name: 'Prestador de Servicios', affects_itbis: true, affects_isr: true, is_non_taxpayer: false, itbis_withholding_rate: 30 },
+    { name: 'Proveedor informal', affects_itbis: false, affects_isr: true, is_non_taxpayer: true, itbis_withholding_rate: 100 },
+  ];
+
+  const normalizeExpenseType606 = (value: any) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const needle = raw.toLowerCase();
+    const match = expenseTypes606.find((opt) => opt.toLowerCase() === needle);
+    if (match) return match;
+    const codeMatch = needle.match(/^\s*(\d{2})\s*-/);
+    if (codeMatch) {
+      const code = codeMatch[1];
+      const byCode = expenseTypes606.find((opt) => opt.startsWith(`${code} -`));
+      if (byCode) return byCode;
+    }
+    return raw;
+  };
 
   const loadSuppliers = async () => {
     if (!user?.id) {
@@ -93,7 +163,7 @@ export default function SuppliersPage() {
       const mapped = (rows || []).map((s: any) => ({
         id: s.id,
         name: s.name,
-        rnc: s.tax_id || '',
+        rnc: formatTaxId(s.document_type || 'RNC', String(s.tax_id || '')),
         phone: s.phone || '',
         email: s.email || '',
         address: s.address || '',
@@ -117,11 +187,7 @@ export default function SuppliersPage() {
         defaultBankAccountId: s.default_bank_account_id || '',
         document_type: s.document_type || 'RNC',
         legal_name: s.legal_name || s.name,
-        expense_type_606: s.expense_type_606 || '',
-        is_persona_fisica: s.is_persona_fisica,
-        is_service_provider: s.is_service_provider,
-        isr_withholding_rate: s.isr_withholding_rate,
-        itbis_withholding_rate: s.itbis_withholding_rate,
+        expense_type_606: normalizeExpenseType606(s.expense_type_606) || '',
         tax_regime: s.tax_regime,
         default_invoice_type: s.default_invoice_type,
       }));
@@ -132,7 +198,16 @@ export default function SuppliersPage() {
       setAccounts(accs || []);
 
       // Cargar tipos de suplidor
-      const types = await supplierTypesService.getAll(user.id);
+      let types = await supplierTypesService.getAll(user.id);
+      const existingNames = new Set((types || []).map((t: any) => normalizeSupplierTypeName(t?.name)));
+      for (const row of defaultSupplierTypes) {
+        const key = normalizeSupplierTypeName((row as any).name);
+        if (!existingNames.has(key)) {
+          await supplierTypesService.create(user.id, row as any);
+          existingNames.add(key);
+        }
+      }
+      types = await supplierTypesService.getAll(user.id);
       setSupplierTypes(types || []);
 
       // Cargar términos de pago reales
@@ -165,7 +240,7 @@ export default function SuppliersPage() {
   const filteredSuppliers = suppliers.filter((supplier) => {
     const matchesCategory = filterCategory === 'all' || supplier.category === filterCategory;
     const matchesStatus = filterStatus === 'all' || supplier.status === filterStatus;
-    const matchesSearch = searchTerm === '' || 
+    const matchesSearch = searchTerm === '' ||
       supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       supplier.rnc.toLowerCase().includes(searchTerm.toLowerCase()) ||
       supplier.email.toLowerCase().includes(searchTerm.toLowerCase());
@@ -179,12 +254,54 @@ export default function SuppliersPage() {
       return;
     }
 
+    const selectedType =
+      supplierTypes.find((t: any) => String(t.id) === String(formData.supplierTypeId)) || null;
+    const supplierTypeKey = getSupplierTypeKey(selectedType);
+
+    const taxIdDigits = onlyDigits(formData.rnc);
+    if (supplierTypeKey === 'persona_juridica') {
+      if (taxIdDigits.length !== 9) {
+        alert('Para Persona Jurídica el RNC debe tener 9 dígitos');
+        return;
+      }
+    } else if (supplierTypeKey === 'persona_fisica') {
+      if (taxIdDigits.length !== 11) {
+        alert('Para Persona Física la Cédula debe tener 11 dígitos');
+        return;
+      }
+    } else if (supplierTypeKey === 'prestador_servicios') {
+      if (!(taxIdDigits.length === 9 || taxIdDigits.length === 11)) {
+        alert('Para Prestador de Servicios el RNC debe tener 9 dígitos o la Cédula 11 dígitos');
+        return;
+      }
+    } else if (supplierTypeKey === 'proveedor_informal') {
+      if (taxIdDigits.length > 0) {
+        alert('Para Proveedor informal no debe registrarse RNC/Cédula');
+        return;
+      }
+    } else if (formData.documentType === 'RNC' && taxIdDigits.length !== 9) {
+      alert('El RNC debe tener 9 dígitos');
+      return;
+    } else if (formData.documentType === 'Cédula' && taxIdDigits.length !== 11) {
+      alert('La Cédula debe tener 11 dígitos');
+      return;
+    }
+
+    const resolvedDocumentType =
+      supplierTypeKey === 'persona_juridica'
+        ? 'RNC'
+        : supplierTypeKey === 'persona_fisica'
+          ? 'Cédula'
+          : supplierTypeKey === 'proveedor_informal'
+            ? 'Otro'
+            : formData.documentType;
+
     const payload: any = {
       // Columnas reales de la tabla suppliers
       name: formData.name,
       legal_name: formData.legalName || formData.name,
-      document_type: formData.documentType,
-      tax_id: formData.rnc,
+      document_type: resolvedDocumentType,
+      tax_id: taxIdDigits || null,
       email: formData.email,
       phone: formData.phone,
       address: formData.address,
@@ -203,11 +320,7 @@ export default function SuppliersPage() {
         ? parseFloat(formData.creditLimit)
         : 0,
       is_active: formData.status === 'Activo',
-      expense_type_606: formData.expenseType606 || null,
-      is_persona_fisica: formData.isPersonaFisica,
-      is_service_provider: formData.isServiceProvider,
-      isr_withholding_rate: formData.isrRate ? Number(formData.isrRate) : null,
-      itbis_withholding_rate: formData.itbisRate ? Number(formData.itbisRate) : null,
+      expense_type_606: normalizeExpenseType606(formData.expenseType606) || null,
       tax_regime: formData.taxRegime || null,
       default_invoice_type: formData.defaultInvoiceType || null,
       supplier_type_id: formData.supplierTypeId || null,
@@ -259,10 +372,6 @@ export default function SuppliersPage() {
       status: 'Activo',
       apAccountId: '',
       expenseType606: '',
-      isPersonaFisica: false,
-      isServiceProvider: false,
-      isrRate: '',
-      itbisRate: '',
       taxRegime: '',
       defaultInvoiceType: '',
       supplierTypeId: '',
@@ -294,11 +403,7 @@ export default function SuppliersPage() {
       website: supplier.website || '',
       status: supplier.status || 'Activo',
       apAccountId: supplier.apAccountId || '',
-      expenseType606: supplier.expense_type_606 || '',
-      isPersonaFisica: Boolean(supplier.is_persona_fisica),
-      isServiceProvider: Boolean(supplier.is_service_provider),
-      isrRate: supplier.isr_withholding_rate ? String(supplier.isr_withholding_rate) : '',
-      itbisRate: supplier.itbis_withholding_rate ? String(supplier.itbis_withholding_rate) : '',
+      expenseType606: normalizeExpenseType606(supplier.expense_type_606) || '',
       taxRegime: supplier.tax_regime || '',
       defaultInvoiceType: supplier.default_invoice_type || '',
       supplierTypeId: supplier.supplierTypeId || '',
@@ -847,7 +952,16 @@ export default function SuppliersPage() {
                       type="text"
                       required
                       value={formData.rnc}
-                      onChange={(e) => setFormData({...formData, rnc: e.target.value})}
+                      onChange={(e) => {
+                        const limit = getTaxIdDigitsLimit(formData.documentType);
+                        if (limit === null) {
+                          setFormData({ ...formData, rnc: e.target.value });
+                          return;
+                        }
+                        const digits = onlyDigits(e.target.value).slice(0, limit);
+                        const formatted = formatTaxId(formData.documentType, digits);
+                        setFormData({ ...formData, rnc: formatted });
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
                   </div>
@@ -973,46 +1087,6 @@ export default function SuppliersPage() {
                         <option key={opt} value={opt}>{opt}</option>
                       ))}
                     </select>
-                  </div>
-                  <div className="flex items-center space-x-4">
-                    <label className="inline-flex items-center text-sm text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={formData.isPersonaFisica}
-                        onChange={(e) => setFormData({ ...formData, isPersonaFisica: e.target.checked })}
-                        className="mr-2"
-                      />
-                      Persona física
-                    </label>
-                    <label className="inline-flex items-center text-sm text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={formData.isServiceProvider}
-                        onChange={(e) => setFormData({ ...formData, isServiceProvider: e.target.checked })}
-                        className="mr-2"
-                      />
-                      Proveedor de servicios
-                    </label>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Retención ISR (%)</label>
-                    <input
-                      type="number" min="0"
-                      value={formData.isrRate}
-                      onChange={(e) => setFormData({ ...formData, isrRate: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="Ej: 10"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Retención ITBIS (%)</label>
-                    <input
-                      type="number" min="0"
-                      value={formData.itbisRate}
-                      onChange={(e) => setFormData({ ...formData, itbisRate: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="Ej: 30"
-                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Régimen Tributario</label>

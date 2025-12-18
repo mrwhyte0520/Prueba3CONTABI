@@ -459,7 +459,7 @@ const GeneralJournalPage = () => {
           Cuenta: `${line.chart_accounts.code} - ${line.chart_accounts.name}`,
           Débito: line.debit_amount || '',
           Crédito: line.credit_amount || '',
-          Estado: entry.status === 'posted' ? 'Publicado' : 'Borrador',
+          Estado: entry.status === 'posted' ? 'Publicado' : entry.status === 'draft' ? 'Borrador' : 'Anulado',
         }));
       });
 
@@ -648,7 +648,7 @@ const GeneralJournalPage = () => {
             </div>
             <div>
               <div class="label">Estado</div>
-              <div class="value">${entry.status === 'posted' ? 'Contabilizado' : entry.status === 'draft' ? 'Borrador' : 'Reversado'}</div>
+              <div class="value">${entry.status === 'posted' ? 'Contabilizado' : entry.status === 'draft' ? 'Borrador' : 'Anulado'}</div>
             </div>
           </div>
 
@@ -904,7 +904,7 @@ const GeneralJournalPage = () => {
                 <option value="all">Todos los estados</option>
                 <option value="draft">Borrador</option>
                 <option value="posted">Contabilizado</option>
-                <option value="reversed">Reversado</option>
+                <option value="reversed">Anulado</option>
               </select>
             </div>
           </div>
@@ -977,7 +977,7 @@ const GeneralJournalPage = () => {
                         : 'bg-red-100 text-red-800'
                     }`}>
                       {entry.status === 'posted' ? 'Contabilizado' : 
-                       entry.status === 'draft' ? 'Borrador' : 'Reversado'}
+                       entry.status === 'draft' ? 'Borrador' : 'Anulado'}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium print:hidden">
@@ -1274,15 +1274,15 @@ const GeneralJournalPage = () => {
                     </div>
                     <div>
                       <span className="text-sm font-medium text-gray-500">Estado:</span>
-                      <span className={`ml-2 inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        selectedEntry.status === 'posted' 
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        selectedEntry.status === 'posted'
                           ? 'bg-green-100 text-green-800'
                           : selectedEntry.status === 'draft'
-                          ? 'bg-yellow-100 text-yellow-800'
-                          : 'bg-red-100 text-red-800'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
                       }`}>
                         {selectedEntry.status === 'posted' ? 'Contabilizado' : 
-                         selectedEntry.status === 'draft' ? 'Borrador' : 'Reversado'}
+                         selectedEntry.status === 'draft' ? 'Borrador' : 'Anulado'}
                       </span>
                     </div>
                   </div>

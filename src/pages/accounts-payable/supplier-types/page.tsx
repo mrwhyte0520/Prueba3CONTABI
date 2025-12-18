@@ -8,6 +8,26 @@ export default function SupplierTypesPage() {
   const [types, setTypes] = useState<any[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingType, setEditingType] = useState<any>(null);
+  const normalizeName = (value: any) => String(value || '').trim().toLowerCase();
+  const isPersonaFisicaType = (name: any) => {
+    const n = normalizeName(name);
+    return n === 'persona física' || n === 'persona fisica';
+  };
+
+  const isrWithholdingRateOptions = [
+    0, 1, 2, 5, 8, 10, 15, 18, 20, 25, 27, 29, 30, 35, 40, 50, 60, 75, 100,
+  ];
+
+  const itbisWithholdingRateOptions = [0, 30, 100];
+
+  const getDefaultItbisWithholdingRate = (name: any) => {
+    const n = normalizeName(name);
+    if (n === 'prestador de servicios') return 30;
+    if (n === 'persona física' || n === 'persona fisica') return 30;
+    if (n === 'proveedor informal') return 100;
+    return 0;
+  };
+
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -16,6 +36,8 @@ export default function SupplierTypesPage() {
     is_rst: false,
     is_ong: false,
     is_non_taxpayer: false,
+    isr_withholding_rate: null as number | null,
+    itbis_withholding_rate: null as number | null,
   });
 
   const loadTypes = async () => {
@@ -47,6 +69,8 @@ export default function SupplierTypesPage() {
       is_rst: false,
       is_ong: false,
       is_non_taxpayer: false,
+      isr_withholding_rate: null,
+      itbis_withholding_rate: null,
     });
     setEditingType(null);
     setShowModal(false);
@@ -59,11 +83,26 @@ export default function SupplierTypesPage() {
       return;
     }
 
+    const resolvedItbisWithholdingRate =
+      formData.itbis_withholding_rate == null
+        ? getDefaultItbisWithholdingRate(formData.name)
+        : Number(formData.itbis_withholding_rate);
+
+    const safeItbisWithholdingRate = [0, 30, 100].includes(resolvedItbisWithholdingRate)
+      ? resolvedItbisWithholdingRate
+      : 0;
+
+    const payload = {
+      ...formData,
+      isr_withholding_rate: isPersonaFisicaType(formData.name) ? formData.isr_withholding_rate : null,
+      itbis_withholding_rate: safeItbisWithholdingRate,
+    };
+
     try {
       if (editingType?.id) {
-        await supplierTypesService.update(editingType.id, formData);
+        await supplierTypesService.update(editingType.id, payload);
       } else {
-        await supplierTypesService.create(user.id, formData);
+        await supplierTypesService.create(user.id, payload);
       }
       await loadTypes();
       resetForm();
@@ -77,6 +116,7 @@ export default function SupplierTypesPage() {
 
   const handleEdit = (row: any) => {
     setEditingType(row);
+    const defaultItbis = getDefaultItbisWithholdingRate(row?.name);
     setFormData({
       name: row.name || '',
       description: row.description || '',
@@ -85,6 +125,8 @@ export default function SupplierTypesPage() {
       is_rst: !!row.is_rst,
       is_ong: !!row.is_ong,
       is_non_taxpayer: !!row.is_non_taxpayer,
+      isr_withholding_rate: typeof row.isr_withholding_rate === 'number' ? row.isr_withholding_rate : null,
+      itbis_withholding_rate: typeof row.itbis_withholding_rate === 'number' ? row.itbis_withholding_rate : defaultItbis,
     });
     setShowModal(true);
   };
@@ -207,7 +249,16 @@ export default function SupplierTypesPage() {
                     type="text"
                     required
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    onChange={(e) => {
+                      const nextName = e.target.value;
+                      setFormData((prev) => ({
+                        ...prev,
+                        name: nextName,
+                        isr_withholding_rate: isPersonaFisicaType(nextName) ? prev.isr_withholding_rate : null,
+                        itbis_withholding_rate:
+                          prev.itbis_withholding_rate == null ? getDefaultItbisWithholdingRate(nextName) : prev.itbis_withholding_rate,
+                      }));
+                    }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
@@ -219,6 +270,50 @@ export default function SupplierTypesPage() {
                     rows={3}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Retención ISR (Persona Física)</label>
+                  <select
+                    value={formData.isr_withholding_rate == null ? '' : String(formData.isr_withholding_rate)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setFormData({
+                        ...formData,
+                        isr_withholding_rate: raw === '' ? null : Number(raw),
+                      });
+                    }}
+                    disabled={!isPersonaFisicaType(formData.name)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+                  >
+                    <option value="">Sin especificar</option>
+                    {isrWithholdingRateOptions.map((rate) => (
+                      <option key={rate} value={rate}>{rate} %</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Esta tasa se aplica automáticamente solo para suplidores clasificados como Persona Física.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Retención ITBIS</label>
+                  <select
+                    value={formData.itbis_withholding_rate == null ? '' : String(formData.itbis_withholding_rate)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setFormData({
+                        ...formData,
+                        itbis_withholding_rate: raw === '' ? null : Number(raw),
+                      });
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="">Sin especificar</option>
+                    {itbisWithholdingRateOptions.map((rate) => (
+                      <option key={rate} value={rate}>{rate} %</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label className="inline-flex items-center text-sm text-gray-700">

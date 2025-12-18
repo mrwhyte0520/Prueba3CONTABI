@@ -7,12 +7,19 @@ import 'jspdf-autotable';
 import { useAuth } from '../../../hooks/useAuth';
 import { invoicesService, receiptsService } from '../../../services/database';
 import { formatDateEsDO } from '../../../utils/date';
+import DocumentPreviewModal from '../../../components/common/DocumentPreviewModal';
 
 export default function SalesReportsPage() {
   const { user } = useAuth();
   const [selectedPeriod, setSelectedPeriod] = useState('today');
   const [selectedReport, setSelectedReport] = useState('sales-summary');
   const [showFilters, setShowFilters] = useState(false);
+
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [previewTitle, setPreviewTitle] = useState('');
+  const [previewFilename, setPreviewFilename] = useState('');
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [downloadBlob, setDownloadBlob] = useState<Blob | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [hasData, setHasData] = useState(false);
@@ -55,6 +62,47 @@ export default function SalesReportsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, selectedPeriod]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  const closePreview = () => {
+    setShowPreviewModal(false);
+    setPreviewTitle('');
+    setPreviewFilename('');
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl('');
+    setDownloadBlob(null);
+  };
+
+  const handleDownloadFromPreview = () => {
+    if (!downloadBlob || !previewFilename) return;
+    saveAs(downloadBlob, previewFilename);
+  };
+
+  const openHtmlPreview = (html: string, title: string, filename: string, blobToDownload: Blob) => {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    setPreviewTitle(title);
+    setPreviewFilename(filename);
+    setDownloadBlob(blobToDownload);
+    setPreviewUrl(url);
+    setShowPreviewModal(true);
+  };
+
+  const openPdfPreview = (pdfBlob: Blob, title: string, filename: string) => {
+    const url = URL.createObjectURL(pdfBlob);
+    setPreviewTitle(title);
+    setPreviewFilename(filename);
+    setDownloadBlob(pdfBlob);
+    setPreviewUrl(url);
+    setShowPreviewModal(true);
+  };
 
   const reportTypes = [
     { id: 'sales-summary', name: 'Resumen de Ventas', icon: 'ri-bar-chart-line' },
@@ -322,7 +370,7 @@ export default function SalesReportsPage() {
     // Título del reporte
     const reportTitle = reportTypes.find(r => r.id === selectedReport)?.name || 'Reporte de Ventas';
     const periodTitle = periods.find(p => p.id === selectedPeriod)?.name || 'Período';
-    
+
     // Encabezados
     worksheet.addRow([reportTitle]);
     worksheet.addRow([`Período: ${periodTitle}`]);
@@ -335,7 +383,7 @@ export default function SalesReportsPage() {
       const headerRow = worksheet.addRow([
         'Total de Ventas', 'Facturas', 'Ticket Promedio', 'Impuestos', 'Ventas Netas', 'Ganancia Bruta', 'Margen de Ganancia'
       ]);
-      
+
       // Datos del resumen
       worksheet.addRow([
         salesSummary.totalSales,
@@ -346,7 +394,7 @@ export default function SalesReportsPage() {
         salesSummary.grossProfit,
         salesSummary.profitMargin
       ]);
-      
+
       // Estilo para los encabezados
       headerRow.font = { bold: true };
       headerRow.fill = {
@@ -354,7 +402,7 @@ export default function SalesReportsPage() {
         pattern: 'solid',
         fgColor: { argb: 'FFD9EAD3' }
       };
-      
+
       // Ajustar anchos de columna
       worksheet.columns = [
         { key: 'totalSales', width: 20 },
@@ -365,13 +413,13 @@ export default function SalesReportsPage() {
         { key: 'grossProfit', width: 20 },
         { key: 'profitMargin', width: 20 }
       ];
-      
+
     } else if (selectedReport === 'product-sales') {
       // Encabezados de productos más vendidos
       const headerRow = worksheet.addRow([
         'Producto', 'Cantidad', 'Ingresos', 'Margen'
       ]);
-      
+
       // Datos de productos
       topProducts.forEach(product => {
         worksheet.addRow([
@@ -381,7 +429,7 @@ export default function SalesReportsPage() {
           product.margin
         ]);
       });
-      
+
       // Estilo para los encabezados
       headerRow.font = { bold: true };
       headerRow.fill = {
@@ -389,7 +437,7 @@ export default function SalesReportsPage() {
         pattern: 'solid',
         fgColor: { argb: 'FFD9EAD3' }
       };
-      
+
       // Ajustar anchos de columna
       worksheet.columns = [
         { key: 'name', width: 40 },
@@ -398,32 +446,121 @@ export default function SalesReportsPage() {
         { key: 'margin', width: 15 }
       ];
     }
-    
+
     // Generar archivo
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { 
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
     });
-    
+
     const fileName = `reporte_ventas_${selectedReport}_${new Date().toISOString().split('T')[0]}.xlsx`;
-    saveAs(blob, fileName);
+
+    const tableHtml = (() => {
+      const escape = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      if (selectedReport === 'sales-summary') {
+        const rows = [
+          ['Total de Ventas', salesSummary.totalSales],
+          ['Número de Facturas', salesSummary.totalInvoices],
+          ['Ticket Promedio', salesSummary.averageTicket],
+          ['Total de Impuestos', salesSummary.totalTax],
+          ['Ventas Netas', salesSummary.netSales],
+          ['Ganancia Bruta', salesSummary.grossProfit],
+          ['Margen de Ganancia', salesSummary.profitMargin],
+        ];
+        return `
+          <table>
+            <thead><tr><th>Concepto</th><th>Valor</th></tr></thead>
+            <tbody>
+              ${rows.map(r => `<tr><td>${escape(r[0])}</td><td>${escape(r[1])}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        `;
+      }
+
+      if (selectedReport === 'product-sales') {
+        return `
+          <table>
+            <thead><tr><th>Producto</th><th>Cantidad</th><th>Ingresos</th><th>Margen</th></tr></thead>
+            <tbody>
+              ${topProducts
+                .map(p => `<tr><td>${escape(p.name)}</td><td>${escape(p.quantity)}</td><td>${escape(p.revenue)}</td><td>${escape(p.margin)}</td></tr>`)
+                .join('')}
+            </tbody>
+          </table>
+        `;
+      }
+
+      if (selectedReport === 'customer-sales') {
+        return `
+          <table>
+            <thead><tr><th>Cliente</th><th>Facturas</th><th>Ingresos</th><th>Última compra</th></tr></thead>
+            <tbody>
+              ${topCustomers
+                .map(c => `<tr><td>${escape(c.name)}</td><td>${escape(c.invoices)}</td><td>${escape(c.revenue)}</td><td>${escape(c.lastPurchase)}</td></tr>`)
+                .join('')}
+            </tbody>
+          </table>
+        `;
+      }
+
+      if (selectedReport === 'payment-methods') {
+        return `
+          <table>
+            <thead><tr><th>Método</th><th>Monto</th><th>%</th><th>Transacciones</th></tr></thead>
+            <tbody>
+              ${paymentMethods
+                .map(m => `<tr><td>${escape(m.method)}</td><td>${escape(m.amount)}</td><td>${escape(m.percentage)}</td><td>${escape(m.transactions)}</td></tr>`)
+                .join('')}
+            </tbody>
+          </table>
+        `;
+      }
+
+      return `<div>No hay vista previa HTML para este reporte.</div>`;
+    })();
+
+    const html = `
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <title>${reportTitle}</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 16px; }
+            h1 { font-size: 18px; margin: 0 0 6px 0; }
+            .meta { color: #555; font-size: 12px; margin-bottom: 12px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 12px; }
+            th { background: #f3f4f6; }
+          </style>
+        </head>
+        <body>
+          <h1>${reportTitle}</h1>
+          <div class="meta">Generado el: ${escape(formatDateEsDO(new Date()))}</div>
+          ${tableHtml}
+        </body>
+      </html>
+    `;
+
+    openHtmlPreview(html, reportTitle, fileName, blob);
   };
 
   const exportToPdf = () => {
     const doc = new jsPDF();
     const reportTitle = reportTypes.find(r => r.id === selectedReport)?.name || 'Reporte de Ventas';
     const periodTitle = periods.find(p => p.id === selectedPeriod)?.name || 'Período';
-    
+
     // Título
     doc.setFontSize(18);
     doc.text(reportTitle, 14, 22);
-    
+
     // Subtítulo
     doc.setFontSize(12);
     doc.setTextColor(100);
     doc.text(`Período: ${periodTitle}`, 14, 30);
     doc.text(`Generado el: ${formatDateEsDO(new Date())}`, 14, 36);
-    
+
     // Datos según el tipo de reporte
     if (selectedReport === 'sales-summary') {
       // Datos del resumen de ventas
@@ -434,9 +571,9 @@ export default function SalesReportsPage() {
         ['Total de Impuestos', salesSummary.totalTax],
         ['Ventas Netas', salesSummary.netSales],
         ['Ganancia Bruta', salesSummary.grossProfit],
-        ['Margen de Ganancia', salesSummary.profitMargin]
+        ['Margen de Ganancia', salesSummary.profitMargin],
       ];
-      
+
       // Añadir tabla
       (doc as any).autoTable({
         startY: 45,
@@ -453,7 +590,7 @@ export default function SalesReportsPage() {
           1: { cellWidth: 40 }
         }
       });
-      
+
     } else if (selectedReport === 'product-sales') {
       // Datos de productos más vendidos
       const headers = ['Producto', 'Cantidad', 'Ingresos', 'Margen'];
@@ -463,7 +600,7 @@ export default function SalesReportsPage() {
         product.revenue,
         product.margin
       ]);
-      
+
       // Añadir tabla
       (doc as any).autoTable({
         startY: 45,
@@ -483,9 +620,10 @@ export default function SalesReportsPage() {
         }
       });
     }
-    
-    // Guardar el PDF
-    doc.save(`reporte_ventas_${selectedReport}_${new Date().toISOString().split('T')[0]}.pdf`);
+
+    const fileName = `reporte_ventas_${selectedReport}_${new Date().toISOString().split('T')[0]}.pdf`;
+    const pdfBlob = doc.output('blob');
+    openPdfPreview(pdfBlob, reportTitle, fileName);
   };
 
   const handlePrintReport = () => {
@@ -495,6 +633,7 @@ export default function SalesReportsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -729,6 +868,16 @@ export default function SalesReportsPage() {
             </div>
           </div>
         </div>
+
+        <DocumentPreviewModal
+          open={showPreviewModal}
+          title={previewTitle}
+          filename={previewFilename}
+          url={previewUrl}
+          onClose={closePreview}
+          onDownload={handleDownloadFromPreview}
+          onPrint={previewFilename.endsWith('.pdf') ? () => {} : undefined}
+        />
       </div>
     </DashboardLayout>
   );

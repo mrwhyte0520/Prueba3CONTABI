@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type ChangeEvent, type FormEvent } from 'r
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { auxiliariesReconciliationService, settingsService, chartAccountsService } from '../../../services/database';
 import { useAuth } from '../../../hooks/useAuth';
+import { useAccountingFormat } from '../../../providers/AccountingFormatProvider';
 
 interface AccountingSettings {
   id?: string;
@@ -30,6 +31,7 @@ interface AccountOption {
 
 export default function AccountingSettingsPage() {
   const { user } = useAuth();
+  const { refresh: refreshAccountingFormat } = useAccountingFormat();
   const [settings, setSettings] = useState<AccountingSettings>({
     fiscal_year_start: '2024-01-01',
     fiscal_year_end: '2024-12-31',
@@ -107,6 +109,7 @@ export default function AccountingSettingsPage() {
 
     try {
       await settingsService.saveAccountingSettings(settings, user.id);
+      await refreshAccountingFormat();
       setMessage({ type: 'success', text: 'Configuración contable guardada exitosamente' });
     } catch (error) {
       setMessage({ type: 'error', text: 'Error al guardar la configuración' });
@@ -362,7 +365,7 @@ export default function AccountingSettingsPage() {
             {loadingAccounts ? (
               <p className="text-gray-500 text-sm">Cargando plan de cuentas...</p>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Cuenta de Cuentas por Cobrar (Clientes)
@@ -476,22 +479,8 @@ export default function AccountingSettingsPage() {
 
           {/* Currency and Format Settings */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Moneda y Formatos</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Moneda Principal *
-                </label>
-                <select
-                  value={settings.default_currency || 'DOP'}
-                  onChange={(e) => handleInputChange('default_currency', e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value="DOP">Peso Dominicano (DOP)</option>
-                  <option value="USD">Dólar Americano (USD)</option>
-                  <option value="EUR">Euro (EUR)</option>
-                </select>
-              </div>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Formatos</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Decimales *

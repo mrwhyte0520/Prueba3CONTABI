@@ -8314,6 +8314,8 @@ export const supplierTypesService = {
     is_rst?: boolean;
     is_ong?: boolean;
     is_non_taxpayer?: boolean;
+    isr_withholding_rate?: number | null;
+    itbis_withholding_rate?: number | null;
   }) {
     try {
       if (!userId) throw new Error('userId required');
@@ -8327,6 +8329,10 @@ export const supplierTypesService = {
         is_rst: !!payload.is_rst,
         is_ong: !!payload.is_ong,
         is_non_taxpayer: !!payload.is_non_taxpayer,
+        isr_withholding_rate:
+          typeof payload.isr_withholding_rate === 'number' ? payload.isr_withholding_rate : null,
+        itbis_withholding_rate:
+          typeof payload.itbis_withholding_rate === 'number' ? payload.itbis_withholding_rate : null,
         created_at: now,
         updated_at: now,
       };
@@ -8351,6 +8357,8 @@ export const supplierTypesService = {
     is_rst?: boolean;
     is_ong?: boolean;
     is_non_taxpayer?: boolean;
+    isr_withholding_rate?: number | null;
+    itbis_withholding_rate?: number | null;
   }) {
     try {
       const body: any = {
@@ -8363,6 +8371,14 @@ export const supplierTypesService = {
       if (typeof payload.is_rst === 'boolean') body.is_rst = payload.is_rst;
       if (typeof payload.is_ong === 'boolean') body.is_ong = payload.is_ong;
       if (typeof payload.is_non_taxpayer === 'boolean') body.is_non_taxpayer = payload.is_non_taxpayer;
+      if (payload.isr_withholding_rate !== undefined) {
+        body.isr_withholding_rate =
+          typeof payload.isr_withholding_rate === 'number' ? payload.isr_withholding_rate : null;
+      }
+      if (payload.itbis_withholding_rate !== undefined) {
+        body.itbis_withholding_rate =
+          typeof payload.itbis_withholding_rate === 'number' ? payload.itbis_withholding_rate : null;
+      }
 
       const { data, error } = await supabase
         .from('supplier_types')
@@ -10846,7 +10862,7 @@ export const taxService = {
           fecha_comprobante: fecha,
           tipo_comprobante: (inv.document_type as string) || 'B01',
           ncf: (inv.invoice_number as string) || String(inv.id),
-          tipo_gasto: (inv.expense_type_606 as string) || 'Compras',
+          tipo_gasto: (inv.expense_type_606 as string) || '',
           rnc_cedula_proveedor: supplierRnc,
           nombre_proveedor: supplierName,
           monto_facturado: baseAmount,
@@ -10881,7 +10897,7 @@ export const taxService = {
             fecha_comprobante: fecha,
             tipo_comprobante: 'B01',
             ncf: exp.ncf,
-            tipo_gasto: 'Gasto Caja Chica',
+            tipo_gasto: (exp as any).expense_type_606 || '',
             rnc_cedula_proveedor: exp.supplier_tax_id || '',
             nombre_proveedor: exp.supplier_name || 'Proveedor Caja Chica',
             monto_facturado: monto,

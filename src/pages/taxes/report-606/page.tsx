@@ -94,6 +94,21 @@ export default function Report606Page() {
       const data = await taxService.generateReport606(period);
       const summaryData = await taxService.getReport606Summary(period) as any;
 
+      const missingExpenseTypeCount = Array.isArray(data)
+        ? data.filter((row: any) => !row?.tipo_bienes_servicios || String(row.tipo_bienes_servicios).trim() === '').length
+        : 0;
+
+      if (missingExpenseTypeCount > 0) {
+        const proceed = confirm(
+          `Hay ${missingExpenseTypeCount} registro(s) sin "Tipo de gasto (606)". ` +
+          'Esto puede afectar el archivo oficial para la DGII. ¿Deseas continuar de todos modos?'
+        );
+        if (!proceed) {
+          setLoading(false);
+          return;
+        }
+      }
+
       const totalRecords = Array.isArray(data) ? data.length : 0;
       const totalAmount = Number(summaryData?.totalMonto ?? 0);
       const totalItbis = Number(summaryData?.totalItbis ?? 0);
