@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { exportToExcel } from '../../../lib/excel';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { useAuth } from '../../../hooks/useAuth';
 import { financialReportsService, chartAccountsService, financialStatementsService, accountingSettingsService, inventoryService, settingsService } from '../../../services/database';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { formatAmount, formatMoney } from '../../../utils/numberFormat';
+import { formatDate } from '../../../utils/dateFormat';
+import DateInput from '../../../components/common/DateInput';
 
 // Estilos CSS para impresión
 const printStyles = `
@@ -261,7 +262,7 @@ export default function FinancialStatementsPage() {
         };
 
         // Función helper para identificar cuentas de efecto contrario
-        const isContraAccount = (code: string, name: string, type: string): boolean => {
+        const isContraAccount = (_code: string, name: string, type: string): boolean => {
           const nameLower = name.toLowerCase();
           
           // Depreciación acumulada (activo - efecto contrario)
@@ -377,14 +378,6 @@ export default function FinancialStatementsPage() {
             : prevToObj.toISOString().slice(0, 10);
 
         // Fecha de inicio del mes ANTERIOR al del reporte
-        let prevFromDate: string | null = null;
-        if (prevToDate) {
-          const prevFromObj = new Date(fromDateObj);
-          prevFromObj.setMonth(prevFromObj.getMonth() - 1);
-          prevFromObj.setDate(1);
-          prevFromDate = prevFromObj.toISOString().slice(0, 10);
-        }
-
         const [prevTrial, finalTrial] = await Promise.all([
           prevToDate
             ? financialReportsService.getTrialBalance(user.id, '1900-01-01', prevToDate)
@@ -855,7 +848,7 @@ export default function FinancialStatementsPage() {
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
 
-    const formatDate = (date: Date) => {
+    const formatLongDate = (date: Date) => {
       return date.toLocaleDateString('es-DO', {
         year: 'numeric',
         month: 'long',
@@ -864,10 +857,10 @@ export default function FinancialStatementsPage() {
     };
 
     return {
-      startDateFormatted: formatDate(startDate),
-      endDateFormatted: formatDate(endDate),
-      periodLabel: `Del ${formatDate(startDate)} al ${formatDate(endDate)}`,
-      asOfDateLabel: `Al ${formatDate(endDate)}`,
+      startDateFormatted: formatLongDate(startDate),
+      endDateFormatted: formatLongDate(endDate),
+      periodLabel: `Del ${formatLongDate(startDate)} al ${formatLongDate(endDate)}`,
+      asOfDateLabel: `Al ${formatLongDate(endDate)}`,
     };
   };
 
@@ -885,11 +878,6 @@ export default function FinancialStatementsPage() {
       !Number.isNaN(baseYear) && !Number.isNaN(baseMonth)
         ? new Date(baseYear, baseMonth - 1, 1)
         : now;
-    const defaultEnd =
-      !Number.isNaN(baseYear) && !Number.isNaN(baseMonth)
-        ? new Date(baseYear, baseMonth, 0)
-        : now;
-
     let from = incomeFromDate ? new Date(incomeFromDate) : defaultStart;
     let to = incomeToDate ? new Date(incomeToDate) : from;
 
@@ -903,7 +891,7 @@ export default function FinancialStatementsPage() {
       to = from;
     }
 
-    const formatDate = (date: Date) => {
+    const formatLongDate = (date: Date) => {
       return date.toLocaleDateString('es-DO', {
         year: 'numeric',
         month: 'long',
@@ -912,10 +900,10 @@ export default function FinancialStatementsPage() {
     };
 
     return {
-      startDateFormatted: formatDate(from),
-      endDateFormatted: formatDate(to),
-      periodLabel: `Del ${formatDate(from)} al ${formatDate(to)}`,
-      asOfDateLabel: `Al ${formatDate(to)}`,
+      startDateFormatted: formatLongDate(from),
+      endDateFormatted: formatLongDate(to),
+      periodLabel: `Del ${formatLongDate(from)} al ${formatLongDate(to)}`,
+      asOfDateLabel: `Al ${formatLongDate(to)}`,
     };
   };
 
@@ -938,7 +926,7 @@ export default function FinancialStatementsPage() {
       endDate = startDate;
     }
 
-    const formatDate = (date: Date) => {
+    const formatLongDate = (date: Date) => {
       return date.toLocaleDateString('es-DO', {
         year: 'numeric',
         month: 'long',
@@ -946,7 +934,7 @@ export default function FinancialStatementsPage() {
       });
     };
 
-    return `Del ${formatDate(startDate)} al ${formatDate(endDate)}`;
+    return `Del ${formatLongDate(startDate)} al ${formatLongDate(endDate)}`;
   };
 
   const comparisonPeriodLabel = getComparisonPeriodLabel();
@@ -1076,7 +1064,7 @@ export default function FinancialStatementsPage() {
         expenses: [],
       };
 
-      const isContraAccountLocal = (code: string, name: string, type: string): boolean => {
+      const isContraAccountLocal = (_code: string, name: string, type: string): boolean => {
         const nameLower = name.toLowerCase();
 
         if (type === 'asset' || type === 'activo') {
@@ -1384,32 +1372,6 @@ export default function FinancialStatementsPage() {
     (Number(costOfSalesData.availableForSale) || 0) - (Number(costOfSalesData.closingInventory) || 0);
   const costsTotalsImbalance = costOfSalesForStatement - (totals.totalCosts || 0);
   const areCostsTotalsConsistent = Math.abs(costsTotalsImbalance) < 0.01;
-
-  const downloadExcel = () => {
-    try {
-      exportToExcel({
-        sheetName: 'Estados',
-        fileName: `estados_financieros_${new Date().toISOString().split('T')[0]}`,
-        columns: [
-          { header: 'Nombre', width: 30, key: 'name' },
-          { header: 'Tipo', width: 22 },
-          { header: 'Período', width: 14, key: 'period' },
-          { header: 'Estado', width: 12 },
-          { header: 'Fecha Creación', width: 16 }
-        ],
-        rows: statements.map(s => ([
-          s.name,
-          getTypeLabel(s.type),
-          s.period,
-          s.status === 'draft' ? 'Borrador' : s.status === 'final' ? 'Final' : 'Aprobado',
-          new Date(s.created_at).toLocaleDateString('es-DO')
-        ]))
-      });
-    } catch (error) {
-      console.error('Error downloading Excel:', error);
-      alert('Error al descargar el archivo');
-    }
-  };
 
   const downloadBalanceSheetExcel = async () => {
     try {
@@ -1853,7 +1815,7 @@ export default function FinancialStatementsPage() {
         let content = `${getTypeLabel(statement.type)} - ${statement.name}\n`;
         content += `Período: ${statement.period}\n`;
         content += `Estado: ${statement.status === 'draft' ? 'Borrador' : statement.status === 'final' ? 'Final' : 'Aprobado'}\n`;
-        content += `Fecha de Creación: ${new Date(statement.created_at).toLocaleDateString('es-DO')}\n\n`;
+        content += `Fecha de Creación: ${formatDate(statement.created_at)}\n\n`;
         content += 'Este estado financiero está en desarrollo.\n';
         content += 'Próximamente estará disponible la descarga completa.';
 
@@ -1987,7 +1949,7 @@ export default function FinancialStatementsPage() {
                           </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {new Date(statement.created_at).toLocaleDateString('es-DO')}
+                          {formatDate(statement.created_at)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex space-x-2">
@@ -2030,8 +1992,7 @@ export default function FinancialStatementsPage() {
               <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-700">Desde:</label>
-                  <input
-                    type="date"
+                  <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeFromDate}
                     onChange={(e) => {
@@ -2040,8 +2001,7 @@ export default function FinancialStatementsPage() {
                     }}
                   />
                   <span className="text-sm text-gray-700">Hasta:</span>
-                  <input
-                    type="date"
+                  <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeToDate || ''}
                     onChange={(e) => {
@@ -2089,15 +2049,13 @@ export default function FinancialStatementsPage() {
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-700">Comparativo desde:</label>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonFromDate || ''}
                       onChange={(e) => handleComparisonFromChange(e.target.value)}
                     />
                     <span className="text-xs text-gray-700">Hasta:</span>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonToDate || ''}
                       onChange={(e) => handleComparisonToChange(e.target.value)}
@@ -2284,8 +2242,7 @@ export default function FinancialStatementsPage() {
               <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-700">Desde:</label>
-                  <input
-                    type="date"
+                  <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeFromDate}
                     onChange={(e) => {
@@ -2294,8 +2251,7 @@ export default function FinancialStatementsPage() {
                     }}
                   />
                   <span className="text-sm text-gray-700">Hasta:</span>
-                  <input
-                    type="date"
+                  <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeToDate || ''}
                     onChange={(e) => {
@@ -2343,15 +2299,13 @@ export default function FinancialStatementsPage() {
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-700">Comparativo desde:</label>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonFromDate || ''}
                       onChange={(e) => handleComparisonFromChange(e.target.value)}
                     />
                     <span className="text-xs text-gray-700">Hasta:</span>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonToDate || ''}
                       onChange={(e) => handleComparisonToChange(e.target.value)}
@@ -2505,15 +2459,13 @@ export default function FinancialStatementsPage() {
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-700">Comparativo desde:</label>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonFromDate || ''}
                       onChange={(e) => handleComparisonFromChange(e.target.value)}
                     />
                     <span className="text-xs text-gray-700">Hasta:</span>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonToDate || ''}
                       onChange={(e) => handleComparisonToChange(e.target.value)}
@@ -2758,8 +2710,7 @@ export default function FinancialStatementsPage() {
               <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-700">Desde:</label>
-                  <input
-                    type="date"
+                  <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeFromDate}
                     onChange={(e) => {
@@ -2768,8 +2719,7 @@ export default function FinancialStatementsPage() {
                     }}
                   />
                   <span className="text-sm text-gray-700">Hasta:</span>
-                  <input
-                    type="date"
+                  <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeToDate || ''}
                     onChange={(e) => {
@@ -2808,15 +2758,13 @@ export default function FinancialStatementsPage() {
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-700">Comparativo desde:</label>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonFromDate || ''}
                       onChange={(e) => handleComparisonFromChange(e.target.value)}
                     />
                     <span className="text-xs text-gray-700">Hasta:</span>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonToDate || ''}
                       onChange={(e) => handleComparisonToChange(e.target.value)}
@@ -3093,8 +3041,7 @@ export default function FinancialStatementsPage() {
               <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
                 <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-700">Desde:</label>
-                  <input
-                    type="date"
+                  <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeFromDate}
                     onChange={(e) => {
@@ -3103,8 +3050,7 @@ export default function FinancialStatementsPage() {
                     }}
                   />
                   <span className="text-sm text-gray-700">Hasta:</span>
-                  <input
-                    type="date"
+                  <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
                     value={incomeToDate || ''}
                     onChange={(e) => {
@@ -3155,15 +3101,13 @@ export default function FinancialStatementsPage() {
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-700">Comparativo desde:</label>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonFromDate || ''}
                       onChange={(e) => handleComparisonFromChange(e.target.value)}
                     />
                     <span className="text-xs text-gray-700">Hasta:</span>
-                    <input
-                      type="date"
+                    <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
                       value={comparisonToDate || ''}
                       onChange={(e) => handleComparisonToChange(e.target.value)}
@@ -3499,7 +3443,7 @@ export default function FinancialStatementsPage() {
                   <div>
                     <span className="text-sm font-medium text-gray-500">Fecha Creación:</span>
                     <span className="ml-2 text-sm text-gray-900">
-                      {new Date(selectedStatement.created_at).toLocaleDateString('es-DO')}
+                      {formatDate(selectedStatement.created_at)}
                     </span>
                   </div>
                 </div>

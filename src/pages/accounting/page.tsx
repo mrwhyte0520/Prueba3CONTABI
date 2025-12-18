@@ -25,11 +25,39 @@ interface ChartAccount {
   name: string;
   type: string;
   balance: number;
-  is_active: boolean;
-  normal_balance: string;
-  allow_posting: boolean;
-  level: number;
+  is_active?: boolean;
+  normal_balance?: string;
+  allow_posting?: boolean;
+  level?: number;
+  isBankAccount?: boolean;
+  allowPosting?: boolean;
+  normalBalance?: string;
+  debit?: number;
+  credit?: number;
 }
+
+type BreakdownType = 'asset' | 'liability' | 'equity' | 'income';
+
+type RecentLine = {
+  id: string;
+  account_id: string;
+  description: string | null;
+  debit_amount: number | null;
+  credit_amount: number | null;
+  created_at: string;
+  journal_entries?: {
+    id: string;
+    entry_number: string;
+    entry_date: string;
+    description: string;
+    status: string;
+    user_id: string;
+  };
+  chart_accounts?: {
+    code: string;
+    name: string;
+  };
+};
 
 export default function AccountingPage() {
   const navigate = useNavigate();
@@ -38,6 +66,10 @@ export default function AccountingPage() {
   const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState<ChartAccount[]>([]);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
+  const [breakdownType, setBreakdownType] = useState<BreakdownType | null>(null);
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
+  const [breakdownLines, setBreakdownLines] = useState<RecentLine[]>([]);
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [selectedReport, setSelectedReport] = useState('');
@@ -70,7 +102,7 @@ export default function AccountingPage() {
         return;
       }
       const [accountsData, entriesData] = await Promise.all([
-        chartAccountsService.getAll(user.id),
+        chartAccountsService.getBalances(user.id),
         journalEntriesService.getAll(user.id)
       ]);
       
@@ -557,7 +589,12 @@ export default function AccountingPage() {
   };
 
   const getAccountsByType = (type: string) => {
-    return accounts.filter(account => account.type === type);
+    // Para evitar doble conteo, usar solo cuentas imputables (allow_posting = true)
+    // Las cuentas padre (allow_posting = false) suelen ser solo de agrupación.
+    return accounts.filter((account: any) => {
+      const allowPosting = account.allowPosting ?? account.allow_posting;
+      return account.type === type && allowPosting !== false;
+    });
   };
 
   const calculateAccountTypeTotal = (type: string) => {
@@ -565,6 +602,36 @@ export default function AccountingPage() {
     if (accounts.length === 0) return null;
     const total = accounts.reduce((sum, account) => sum + (account.balance || 0), 0);
     return total === 0 ? null : total;
+  };
+
+  const getBreakdownLabel = (type: BreakdownType) => {
+    if (type === 'asset') return 'Activos';
+    if (type === 'liability') return 'Pasivos';
+    if (type === 'equity') return 'Patrimonio';
+    return 'Ingresos';
+  };
+
+  const openBreakdown = async (type: BreakdownType) => {
+    setBreakdownType(type);
+    setBreakdownOpen(true);
+    setBreakdownLoading(true);
+    setBreakdownLines([]);
+    try {
+      const uid = user?.id || '';
+      if (!uid) {
+        setBreakdownLines([]);
+        return;
+      }
+      const accs = getAccountsByType(type);
+      const accountIds = accs.map((a) => a.id).filter(Boolean);
+      const lines = await journalEntriesService.getRecentLinesByAccountIds(uid, accountIds, 50);
+      setBreakdownLines((lines || []) as any);
+    } catch (err) {
+      console.error('Error loading breakdown:', err);
+      setBreakdownLines([]);
+    } finally {
+      setBreakdownLoading(false);
+    }
   };
 
   const { totalDebit, totalCredit } = calculateTotals();
@@ -661,7 +728,11 @@ export default function AccountingPage() {
           <div className="space-y-6">
             {/* Summary Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+              <button
+                type="button"
+                onClick={() => openBreakdown('asset')}
+                className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors"
+              >
                 <div className="flex items-start">
                   <div className="p-2 bg-blue-100 rounded-lg flex-shrink-0">
                     <i className="ri-money-dollar-circle-line text-xl text-blue-600"></i>
@@ -677,9 +748,13 @@ export default function AccountingPage() {
                     )}
                   </div>
                 </div>
-              </div>
+              </button>
 
-              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+              <button
+                type="button"
+                onClick={() => openBreakdown('liability')}
+                className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors"
+              >
                 <div className="flex items-start">
                   <div className="p-2 bg-red-100 rounded-lg flex-shrink-0">
                     <i className="ri-bank-card-line text-xl text-red-600"></i>
@@ -695,9 +770,13 @@ export default function AccountingPage() {
                     )}
                   </div>
                 </div>
-              </div>
+              </button>
 
-              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+              <button
+                type="button"
+                onClick={() => openBreakdown('equity')}
+                className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors"
+              >
                 <div className="flex items-start">
                   <div className="p-2 bg-green-100 rounded-lg flex-shrink-0">
                     <i className="ri-pie-chart-line text-xl text-green-600"></i>
@@ -713,9 +792,13 @@ export default function AccountingPage() {
                     )}
                   </div>
                 </div>
-              </div>
+              </button>
 
-              <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+              <button
+                type="button"
+                onClick={() => openBreakdown('income')}
+                className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors"
+              >
                 <div className="flex items-start">
                   <div className="p-2 bg-purple-100 rounded-lg flex-shrink-0">
                     <i className="ri-line-chart-line text-xl text-purple-600"></i>
@@ -731,8 +814,107 @@ export default function AccountingPage() {
                     )}
                   </div>
                 </div>
-              </div>
+              </button>
             </div>
+
+            {breakdownOpen && breakdownType && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center">
+                <div
+                  className="absolute inset-0 bg-black/40"
+                  onClick={() => setBreakdownOpen(false)}
+                />
+                <div className="relative bg-white w-full max-w-4xl mx-4 rounded-lg shadow-lg border border-gray-200 max-h-[85vh] overflow-hidden">
+                  <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-lg font-medium text-gray-900">Origen del valor: {getBreakdownLabel(breakdownType)}</h3>
+                      <p className="text-sm text-gray-600">
+                        Este total se calcula como la suma de <span className="font-medium">balance</span> de las cuentas tipo <span className="font-medium">{breakdownType}</span> que permiten imputación (<span className="font-medium">allow_posting</span>).
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setBreakdownOpen(false)}
+                      className="text-gray-500 hover:text-gray-800"
+                      aria-label="Cerrar"
+                    >
+                      <i className="ri-close-line text-xl"></i>
+                    </button>
+                  </div>
+
+                  <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(85vh-64px)]">
+                    <div>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-semibold text-gray-900">Cuentas incluidas</h4>
+                        <div className="text-sm text-gray-700">
+                          Total: <span className="font-semibold">RD${formatAmount(calculateAccountTypeTotal(breakdownType) || 0)}</span>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código</th>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cuenta</th>
+                              <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Balance</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {getAccountsByType(breakdownType)
+                              .slice()
+                              .sort((a, b) => String(a.code).localeCompare(String(b.code)))
+                              .map((acc) => (
+                                <tr key={acc.id}>
+                                  <td className="px-4 py-2 text-sm text-gray-900">{acc.code}</td>
+                                  <td className="px-4 py-2 text-sm text-gray-900">{acc.name}</td>
+                                  <td className="px-4 py-2 text-sm text-gray-900 text-right">RD${formatAmount(acc.balance || 0)}</td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                        {getAccountsByType(breakdownType).length === 0 && (
+                          <div className="p-4 text-sm text-gray-500">No hay cuentas para este tipo.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900 mb-3">Movimientos recientes (asientos posteados)</h4>
+                      {breakdownLoading ? (
+                        <div className="text-sm text-gray-600">Cargando movimientos...</div>
+                      ) : (
+                        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                          <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asiento</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cuenta</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Débito</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Crédito</th>
+                              </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                              {breakdownLines.map((l) => (
+                                <tr key={l.id}>
+                                  <td className="px-4 py-2 text-sm text-gray-900">{l.journal_entries?.entry_number || ''}</td>
+                                  <td className="px-4 py-2 text-sm text-gray-500">{l.journal_entries?.entry_date ? new Date(l.journal_entries.entry_date).toLocaleDateString('es-DO') : ''}</td>
+                                  <td className="px-4 py-2 text-sm text-gray-900">{l.chart_accounts ? `${l.chart_accounts.code} - ${l.chart_accounts.name}` : ''}</td>
+                                  <td className="px-4 py-2 text-sm text-gray-900 text-right">RD${formatAmount(Number(l.debit_amount || 0))}</td>
+                                  <td className="px-4 py-2 text-sm text-gray-900 text-right">RD${formatAmount(Number(l.credit_amount || 0))}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {breakdownLines.length === 0 && (
+                            <div className="p-4 text-sm text-gray-500">No hay movimientos recientes para estas cuentas.</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Recent Journal Entries */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">

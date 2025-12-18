@@ -5,6 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { resolveTenantId, settingsService } from '../../../services/database';
 import { formatAmount } from '../../../utils/numberFormat';
+import { formatDate } from '../../../utils/dateFormat';
+import DateInput from '../../../components/common/DateInput';
 
 // Estilos CSS para mejorar la impresión
 const printStyles = `
@@ -365,24 +367,31 @@ const GeneralJournalPage = () => {
   };
 
   const handleDeleteEntry = async (entryId: string) => {
-    if (!confirm('¿Está seguro de que desea eliminar este asiento? Esta acción no se puede deshacer.')) {
+    if (!confirm('¿Está seguro de que desea anular este asiento? Esta acción no se puede deshacer.')) {
       return;
     }
 
     try {
+      if (!user) return;
+
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        alert('Error: No se pudo resolver el tenant');
+        return;
+      }
+
       const { error } = await supabase
         .from('journal_entries')
-        .delete()
-        .eq('id', entryId);
+        .update({ status: 'reversed' })
+        .eq('id', entryId)
+        .eq('user_id', tenantId);
 
       if (error) throw error;
-      setEntries((prev) => prev.filter((entry) => entry.id !== entryId));
-      alert('Asiento eliminado exitosamente');
+      setEntries((prev) => prev.map((entry) => (entry.id === entryId ? { ...entry, status: 'reversed' } : entry)));
+      alert('Asiento anulado exitosamente');
     } catch (error) {
       console.error('Error deleting entry:', error);
-      // Eliminar localmente si Supabase falla
-      setEntries((prev) => prev.filter((entry) => entry.id !== entryId));
-      alert('Asiento eliminado exitosamente');
+      alert('Error al anular el asiento');
     }
   };
 
@@ -443,7 +452,7 @@ const GeneralJournalPage = () => {
       // Preparar los datos para la exportación
       const dataToExport = entries.flatMap((entry) => {
         return entry.journal_entry_lines.map((line) => ({
-          Fecha: new Date(entry.entry_date).toLocaleDateString('es-DO'),
+          Fecha: formatDate(entry.entry_date),
           'Número Asiento': entry.entry_number,
           Descripción: entry.description,
           Referencia: entry.reference,
@@ -479,7 +488,7 @@ const GeneralJournalPage = () => {
       headerRows.push(row2);
 
       const row3 = new Array(totalColumns).fill('');
-      row3[centerIndex] = `Generado: ${new Date().toLocaleDateString('es-DO')}`;
+      row3[centerIndex] = `Generado: ${formatDate(new Date())}`;
       headerRows.push(row3);
 
       headerRows.push(new Array(totalColumns).fill(''));
@@ -584,7 +593,7 @@ const GeneralJournalPage = () => {
 
     const doc = printWindow.document;
     const companyName = companyInfo?.name || 'Diario General';
-    const entryDate = new Date(entry.entry_date).toLocaleDateString('es-DO');
+    const entryDate = formatDate(entry.entry_date);
 
     const linesHtml = (entry.journal_entry_lines || [])
       .map((line) => {
@@ -693,6 +702,8 @@ const GeneralJournalPage = () => {
     (companyInfo as any)?.company_name ||
     '';
 
+  const nonReversedEntries = entries.filter((e) => e.status !== 'reversed');
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Estilos de impresión */}
@@ -704,7 +715,7 @@ const GeneralJournalPage = () => {
       )}
       <div className="hidden print:block print-title">DIARIO GENERAL</div>
       <div className="hidden print:block print-date">
-        Generado el {new Date().toLocaleDateString('es-DO')} {(dateFrom || dateTo) && ` - Período: ${dateFrom ? new Date(dateFrom).toLocaleDateString('es-DO') : 'Inicio'} a ${dateTo ? new Date(dateTo).toLocaleDateString('es-DO') : 'Fin'}`}
+        Generado el {formatDate(new Date())} {(dateFrom || dateTo) && ` - Período: ${dateFrom ? formatDate(dateFrom) : 'Inicio'} a ${dateTo ? formatDate(dateTo) : 'Fin'}`}
       </div>
 
       {/* Header con botón de regreso */}
@@ -758,7 +769,7 @@ const GeneralJournalPage = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Asientos</p>
-              <p className="text-2xl font-bold text-gray-900">{entries.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{nonReversedEntries.length}</p>
             </div>
           </div>
         </div>
@@ -771,7 +782,7 @@ const GeneralJournalPage = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Débitos</p>
               <p className="text-2xl font-bold text-gray-900">
-                RD${formatAmount(entries.reduce((sum, entry) => sum + entry.total_debit, 0))}
+                RD${formatAmount(nonReversedEntries.reduce((sum, entry) => sum + entry.total_debit, 0))}
               </p>
             </div>
           </div>
@@ -785,7 +796,7 @@ const GeneralJournalPage = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Créditos</p>
               <p className="text-2xl font-bold text-gray-900">
-                RD${formatAmount(entries.reduce((sum, entry) => sum + entry.total_credit, 0))}
+                RD${formatAmount(nonReversedEntries.reduce((sum, entry) => sum + entry.total_credit, 0))}
               </p>
             </div>
           </div>
@@ -799,7 +810,7 @@ const GeneralJournalPage = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Este Mes</p>
               <p className="text-2xl font-bold text-gray-900">
-                {entries.filter(entry => 
+                {nonReversedEntries.filter(entry => 
                   entry.entry_date.startsWith(new Date().toISOString().slice(0, 7))
                 ).length}
               </p>
@@ -846,20 +857,18 @@ const GeneralJournalPage = () => {
                 <option value="">Período contable (todos)</option>
                 {visiblePeriods.map((period) => (
                   <option key={period.id} value={period.id}>
-                    {period.name} ({new Date(period.start_date).toLocaleDateString('es-DO')} - {new Date(period.end_date).toLocaleDateString('es-DO')})
+                    {period.name} ({formatDate(period.start_date)} - {formatDate(period.end_date)})
                   </option>
                 ))}
               </select>
-              <input
-                type="date"
+              <DateInput
                 value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
+                onValueChange={(v) => setDateFrom(v)}
                 className="w-full sm:w-40 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
-              <input
-                type="date"
+              <DateInput
                 value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
+                onValueChange={(v) => setDateTo(v)}
                 className="w-full sm:w-40 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <select
@@ -942,7 +951,7 @@ const GeneralJournalPage = () => {
                     {entry.entry_number}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(entry.entry_date).toLocaleDateString('es-DO')}
+                    {formatDate(entry.entry_date)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {getEntryDocumentType(entry)}
@@ -995,7 +1004,7 @@ const GeneralJournalPage = () => {
                     </button>
                     <button 
                       className="text-red-600 hover:text-red-900" 
-                      title="Eliminar"
+                      title="Anular"
                       onClick={() => handleDeleteEntry(entry.id)}
                     >
                       <i className="ri-delete-bin-line"></i>
@@ -1045,10 +1054,9 @@ const GeneralJournalPage = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Fecha
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={formData.entry_date}
-                    onChange={(e) => setFormData(prev => ({ ...prev, entry_date: e.target.value }))}
+                    onValueChange={(v) => setFormData(prev => ({ ...prev, entry_date: v }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
@@ -1257,7 +1265,7 @@ const GeneralJournalPage = () => {
                     <div>
                       <span className="text-sm font-medium text-gray-500">Fecha:</span>
                       <span className="ml-2 text-sm text-gray-900">
-                        {new Date(selectedEntry.entry_date).toLocaleDateString('es-DO')}
+                        {formatDate(selectedEntry.entry_date)}
                       </span>
                     </div>
                     <div>

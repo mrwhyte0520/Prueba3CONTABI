@@ -21,6 +21,8 @@ import {
   receiptApplicationsService,
 } from '../../../services/database';
 import { formatAmount } from '../../../utils/numberFormat';
+import { formatDate } from '../../../utils/dateFormat';
+import DateInput from '../../../components/common/DateInput';
 
 interface Invoice {
   id: string;
@@ -32,7 +34,7 @@ interface Invoice {
   amount: number;
   paidAmount: number;
   balance: number;
-  status: 'pending' | 'partial' | 'paid' | 'overdue';
+  status: 'pending' | 'partial' | 'paid' | 'overdue' | 'cancelled';
   daysOverdue: number;
   subtotal: number;
   tax: number;
@@ -156,7 +158,8 @@ export default function InvoicesPage() {
         const paid = Number(inv.paid_amount) || 0;
         const subtotal = Number(inv.subtotal) || (total - (Number(inv.tax_amount) || 0));
         const tax = Number(inv.tax_amount) || (total - subtotal);
-        const balance = total - paid;
+        const rawStatus = String(inv.status || 'pending');
+        const balance = rawStatus === 'cancelled' ? 0 : total - paid;
         const today = new Date();
         const due = inv.due_date ? new Date(inv.due_date) : null;
         let daysOverdue = 0;
@@ -195,7 +198,7 @@ export default function InvoicesPage() {
           amount: total,
           paidAmount: paid,
           balance,
-          status: (inv.status as Invoice['status']) || 'pending',
+          status: (rawStatus as Invoice['status']) || 'pending',
           daysOverdue,
           subtotal,
           tax,
@@ -267,7 +270,7 @@ export default function InvoicesPage() {
 
   const getCustomerTotalBalance = (customerId: string) => {
     return invoices
-      .filter((inv) => inv.customerId === customerId && inv.status !== 'paid')
+      .filter((inv) => inv.customerId === customerId && inv.status !== 'paid' && inv.status !== 'cancelled')
       .reduce((sum, inv) => sum + inv.balance, 0);
   };
 
@@ -277,6 +280,7 @@ export default function InvoicesPage() {
       case 'partial': return 'bg-yellow-100 text-yellow-800';
       case 'pending': return 'bg-blue-100 text-blue-800';
       case 'overdue': return 'bg-red-100 text-red-800';
+      case 'cancelled': return 'bg-gray-100 text-gray-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
@@ -287,6 +291,7 @@ export default function InvoicesPage() {
       case 'partial': return 'Parcial';
       case 'pending': return 'Pendiente';
       case 'overdue': return 'Vencida';
+      case 'cancelled': return 'Anulada';
       default: return 'Desconocido';
     }
   };
@@ -349,7 +354,7 @@ export default function InvoicesPage() {
       'ContaBi';
 
     const title = 'Reporte de Facturas por Cobrar';
-    const dateStr = new Date().toLocaleDateString('es-DO');
+    const dateStr = formatDate(new Date());
     const statusText = statusFilter === 'all' ? 'Todos' : getStatusName(statusFilter);
 
     // Encabezado: nombre de empresa, título y filtros
@@ -396,8 +401,8 @@ export default function InvoicesPage() {
     const invoiceData = filteredInvoices.map(invoice => [
       invoice.invoiceNumber,
       invoice.customerName,
-      invoice.date,
-      invoice.dueDate,
+      formatDate(invoice.date),
+      formatDate(invoice.dueDate),
       `RD$ ${formatAmount(invoice.amount)}`,
       `RD$ ${formatAmount(invoice.paidAmount)}`,
       `RD$ ${formatAmount(invoice.balance)}`,
@@ -451,7 +456,7 @@ export default function InvoicesPage() {
     worksheet.getCell('A2').font = { bold: true, size: 12 };
     worksheet.getCell('A2').alignment = { horizontal: 'center' } as any;
 
-    worksheet.getCell('A3').value = `Fecha de generación: ${new Date().toLocaleDateString('es-DO')}`;
+    worksheet.getCell('A3').value = `Fecha de generación: ${formatDate(new Date())}`;
     worksheet.getCell('A4').value = `Estado: ${statusText}`;
 
     // Resumen financiero
@@ -511,8 +516,8 @@ export default function InvoicesPage() {
         customer?.phone || '',
         customer?.email || '',
         customer?.address || '',
-        invoice.date,
-        invoice.dueDate,
+        formatDate(invoice.date),
+        formatDate(invoice.dueDate),
         formatAmount(invoice.amount),
         formatAmount(invoice.paidAmount),
         formatAmount(invoice.balance),
@@ -620,11 +625,11 @@ export default function InvoicesPage() {
             <h1>${companyName}</h1>
             ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
             <h2>Factura #${invoice.invoiceNumber}</h2>
-            <p>Fecha: ${new Date(invoice.date).toLocaleDateString('es-DO')}</p>
+            <p>Fecha: ${formatDate(invoice.date)}</p>
           </div>
           <div class="details">
             ${customerDetailsHtml}
-            <p><strong>Vencimiento:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('es-DO') : ''}</p>
+            <p><strong>Vencimiento:</strong> ${invoice.dueDate ? formatDate(invoice.dueDate) : ''}</p>
           </div>
           <table>
             <thead>
@@ -732,11 +737,11 @@ export default function InvoicesPage() {
     if (customerPhone) worksheet.addRow(['Teléfono', customerPhone]);
     worksheet.addRow([
       'Fecha',
-      invoice.date ? new Date(invoice.date).toLocaleDateString('es-DO') : '',
+      invoice.date ? formatDate(invoice.date) : '',
     ]);
     worksheet.addRow([
       'Vencimiento',
-      invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('es-DO') : '',
+      invoice.dueDate ? formatDate(invoice.dueDate) : '',
     ]);
 
     worksheet.addRow([]);
@@ -1144,6 +1149,24 @@ export default function InvoicesPage() {
     setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
+  const handleCancelInvoice = async (invoice: Invoice) => {
+    if (!user?.id) return;
+    if (invoice.status === 'cancelled') return;
+
+    if (!confirm(`¿Desea anular la factura ${invoice.invoiceNumber}? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+
+    try {
+      await invoicesService.cancel(user.id, invoice.id);
+      await loadInvoices();
+      alert('Factura anulada exitosamente');
+    } catch (error: any) {
+      console.error('Error anulando factura:', error);
+      alert(error?.message || 'Error al anular la factura');
+    }
+  };
+
   return (
     <DashboardLayout>
       <div className="p-6">
@@ -1194,6 +1217,7 @@ export default function InvoicesPage() {
               <option value="partial">Parciales</option>
               <option value="paid">Pagadas</option>
               <option value="overdue">Vencidas</option>
+              <option value="cancelled">Anuladas</option>
             </select>
           </div>
           <div className="flex space-x-2">
@@ -1290,6 +1314,7 @@ export default function InvoicesPage() {
                           onClick={() => handleRegisterPayment(invoice)}
                           className="text-green-600 hover:text-green-900"
                           title="Registrar Pago"
+                          disabled={invoice.status === 'cancelled' || invoice.balance <= 0}
                         >
                           <i className="ri-money-dollar-circle-line"></i>
                         </button>
@@ -1313,6 +1338,14 @@ export default function InvoicesPage() {
                           title="Exportar a Excel"
                         >
                           <i className="ri-file-excel-2-line"></i>
+                        </button>
+                        <button
+                          onClick={() => handleCancelInvoice(invoice)}
+                          className="text-red-600 hover:text-red-900"
+                          title="Anular"
+                          disabled={invoice.status === 'cancelled' || invoice.paidAmount > 0}
+                        >
+                          <i className="ri-close-circle-line"></i>
                         </button>
                       </div>
                     </td>
@@ -1362,8 +1395,7 @@ export default function InvoicesPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Fecha de Vencimiento
                     </label>
-                    <input
-                      type="date"
+                    <DateInput
                       required
                       name="due_date"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"

@@ -968,26 +968,31 @@ export const auxiliariesReconciliationService = {
     if (apInvoicesError) throw apInvoicesError;
 
     const customerBalanceById = new Map<string, number>();
+    const existingCustomerIds = new Set<string>();
     (customers || []).forEach((c: any) => {
       const id = c?.id ? String(c.id) : '';
-      if (id) customerBalanceById.set(id, 0);
+      if (id) {
+        existingCustomerIds.add(id);
+        customerBalanceById.set(id, 0);
+      }
     });
 
     (invoices || []).forEach((inv: any) => {
       const customerId = inv?.customer_id ? String(inv.customer_id) : '';
       if (!customerId) return;
+      if (!existingCustomerIds.has(customerId)) return;
       const st = String(inv.status || '').toLowerCase();
       if (st === 'cancelled' || st === 'cancelada' || st === 'draft') return;
       const total = Number(inv.total_amount) || 0;
       const paid = Number(inv.paid_amount) || 0;
       const balance = Math.max(total - paid, 0);
-      if (!customerBalanceById.has(customerId)) customerBalanceById.set(customerId, 0);
       customerBalanceById.set(customerId, (customerBalanceById.get(customerId) || 0) + balance);
     });
 
     (notes || []).forEach((n: any) => {
       const customerId = n?.customer_id ? String(n.customer_id) : '';
       if (!customerId) return;
+      if (!existingCustomerIds.has(customerId)) return;
       const st = String(n.status || '').toLowerCase();
       if (st === 'cancelled' || st === 'cancelada') return;
       const amount = Number(n.total_amount) || 0;
@@ -995,7 +1000,6 @@ export const auxiliariesReconciliationService = {
       const balRaw = n.balance_amount;
       const balance = Number.isFinite(Number(balRaw)) ? Number(balRaw) : Math.max(amount - applied, 0);
       if (balance <= 0) return;
-      if (!customerBalanceById.has(customerId)) customerBalanceById.set(customerId, 0);
       const noteType = String(n.note_type || '').toLowerCase();
       const sign = noteType === 'credit' ? -1 : 1;
       customerBalanceById.set(customerId, (customerBalanceById.get(customerId) || 0) + sign * balance);
@@ -1004,6 +1008,7 @@ export const auxiliariesReconciliationService = {
     (advances || []).forEach((a: any) => {
       const customerId = a?.customer_id ? String(a.customer_id) : '';
       if (!customerId) return;
+      if (!existingCustomerIds.has(customerId)) return;
       const st = String(a.status || '').toLowerCase();
       if (st === 'cancelled' || st === 'cancelada') return;
       const amount = Number(a.amount) || 0;
@@ -1011,7 +1016,6 @@ export const auxiliariesReconciliationService = {
       const balRaw = a.balance_amount;
       const balance = Number.isFinite(Number(balRaw)) ? Number(balRaw) : Math.max(amount - applied, 0);
       if (balance <= 0) return;
-      if (!customerBalanceById.has(customerId)) customerBalanceById.set(customerId, 0);
       customerBalanceById.set(customerId, (customerBalanceById.get(customerId) || 0) - balance);
     });
 
@@ -1023,21 +1027,37 @@ export const auxiliariesReconciliationService = {
     }));
 
     if (customerUpdates.length > 0) {
-      const { error: upsertCustomersError } = await supabase
-        .from('customers')
-        .upsert(customerUpdates, { onConflict: 'id' });
-      if (upsertCustomersError) throw upsertCustomersError;
+      // Nota: No usar upsert aquí. En algunos esquemas multi-tenant el unique/PK
+      // puede no ser solo 'id', lo que provocaría intentos de INSERT y fallos por
+      // columnas NOT NULL (ej: name). Actualizamos solo filas existentes.
+      for (const row of customerUpdates) {
+        const { error: updateCustomerError } = await supabase
+          .from('customers')
+          .update({
+            current_balance: row.current_balance,
+            updated_at: row.updated_at,
+          })
+          .eq('user_id', tenantId)
+          .eq('id', row.id);
+
+        if (updateCustomerError) throw updateCustomerError;
+      }
     }
 
     const supplierBalanceById = new Map<string, number>();
+    const existingSupplierIds = new Set<string>();
     (suppliers || []).forEach((s: any) => {
       const id = s?.id ? String(s.id) : '';
-      if (id) supplierBalanceById.set(id, 0);
+      if (id) {
+        existingSupplierIds.add(id);
+        supplierBalanceById.set(id, 0);
+      }
     });
 
     (apInvoices || []).forEach((inv: any) => {
       const supplierId = inv?.supplier_id ? String(inv.supplier_id) : '';
       if (!supplierId) return;
+      if (!existingSupplierIds.has(supplierId)) return;
       const st = String(inv.status || '').toLowerCase();
       if (st === 'cancelled' || st === 'cancelada' || st === 'draft') return;
 
@@ -1046,7 +1066,6 @@ export const auxiliariesReconciliationService = {
       const paid = Number(inv.paid_amount) || 0;
       const balance = Number.isFinite(explicitBalance) && explicitBalance !== 0 ? explicitBalance : Math.max(total - paid, 0);
       if (balance <= 0) return;
-      if (!supplierBalanceById.has(supplierId)) supplierBalanceById.set(supplierId, 0);
       supplierBalanceById.set(supplierId, (supplierBalanceById.get(supplierId) || 0) + balance);
     });
 
@@ -1058,10 +1077,18 @@ export const auxiliariesReconciliationService = {
     }));
 
     if (supplierUpdates.length > 0) {
-      const { error: upsertSuppliersError } = await supabase
-        .from('suppliers')
-        .upsert(supplierUpdates, { onConflict: 'id' });
-      if (upsertSuppliersError) throw upsertSuppliersError;
+      for (const row of supplierUpdates) {
+        const { error: updateSupplierError } = await supabase
+          .from('suppliers')
+          .update({
+            current_balance: row.current_balance,
+            updated_at: row.updated_at,
+          })
+          .eq('user_id', tenantId)
+          .eq('id', row.id);
+
+        if (updateSupplierError) throw updateSupplierError;
+      }
     }
 
     return {
@@ -1463,6 +1490,32 @@ export const journalEntriesService = {
         .eq('user_id', tenantId)
         .order('entry_date', { ascending: false })
         .order('created_at', { ascending: false });
+
+      if (error) return handleDatabaseError(error, []);
+      return data ?? [];
+    } catch (error) {
+      return handleDatabaseError(error, []);
+    }
+  },
+
+  async getRecentLinesByAccountIds(userId: string, accountIds: string[], limit = 50) {
+    try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) return [];
+      if (!accountIds || accountIds.length === 0) return [];
+
+      const { data, error } = await supabase
+        .from('journal_entry_lines')
+        .select(
+          `id, account_id, description, debit_amount, credit_amount, created_at,
+           journal_entries!inner(id, entry_number, entry_date, description, status, user_id),
+           chart_accounts(code, name)`
+        )
+        .in('account_id', accountIds)
+        .eq('journal_entries.user_id', tenantId)
+        .eq('journal_entries.status', 'posted')
+        .order('created_at', { ascending: false })
+        .limit(limit);
 
       if (error) return handleDatabaseError(error, []);
       return data ?? [];
@@ -2727,10 +2780,6 @@ export const chartAccountsService = {
       const sums: Record<string, { debit: number; credit: number }> = {};
 
       (lines || []).forEach((line: any) => {
-        const account = line.chart_accounts;
-        // Multi-tenant fuerte: ignorar líneas cuya cuenta no pertenezca al mismo user_id
-        if (!account || account.user_id !== tenantId) return;
-
         const accountId = line.account_id as string;
         const debit = Number(line.debit_amount) || 0;
         const credit = Number(line.credit_amount) || 0;
@@ -7567,6 +7616,56 @@ export const invoicesService = {
       return data;
     } catch (error) {
       console.error('invoicesService.updateTotals error', error);
+      throw error;
+    }
+  },
+
+  async cancel(userId: string, invoiceId: string) {
+    try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+      if (!invoiceId) throw new Error('invoiceId required');
+
+      const { data: invoice, error: invoiceError } = await supabase
+        .from('invoices')
+        .select('id, invoice_number, status, paid_amount')
+        .eq('user_id', tenantId)
+        .eq('id', invoiceId)
+        .maybeSingle();
+
+      if (invoiceError) throw invoiceError;
+      if (!invoice) throw new Error('Factura no encontrada');
+
+      const paidAmount = Number((invoice as any).paid_amount) || 0;
+      if (paidAmount > 0) {
+        throw new Error('No se puede anular una factura con pagos registrados');
+      }
+
+      const now = new Date().toISOString();
+
+      const { data: updatedInvoice, error: updateError } = await supabase
+        .from('invoices')
+        .update({ status: 'cancelled', updated_at: now })
+        .eq('user_id', tenantId)
+        .eq('id', invoiceId)
+        .select('*')
+        .single();
+
+      if (updateError) throw updateError;
+
+      // Anular los asientos relacionados (Factura y COGS) vinculados por reference = invoiceId
+      const { error: reverseError } = await supabase
+        .from('journal_entries')
+        .update({ status: 'reversed', updated_at: now })
+        .eq('user_id', tenantId)
+        .eq('reference', invoiceId)
+        .neq('status', 'reversed');
+
+      if (reverseError) throw reverseError;
+
+      return updatedInvoice;
+    } catch (error) {
+      console.error('invoicesService.cancel error', error);
       throw error;
     }
   },

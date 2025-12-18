@@ -9,7 +9,8 @@ import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
 import { customersService, receiptsService, invoicesService, receiptApplicationsService, settingsService } from '../../../services/database';
 import { exportToExcelWithHeaders } from '../../../utils/exportImportUtils';
-import { formatDateEsDO } from '../../../utils/date';
+import { formatDate } from '../../../utils/dateFormat';
+import DateInput from '../../../components/common/DateInput';
 
 interface Receipt {
   id: string;
@@ -200,7 +201,7 @@ export default function ReceiptsPage() {
     doc.text('Reporte de Recibos de Cobro', 20, 30);
     
     doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${formatDateEsDO(new Date())}`, 20, 45);
+    doc.text(`Fecha de generación: ${formatDate(new Date())}`, 20, 45);
     doc.text(`Estado: ${statusFilter === 'all' ? 'Todos' : statusFilter}`, 20, 55);
     doc.text(`Método de pago: ${paymentMethodFilter === 'all' ? 'Todos' : getPaymentMethodName(paymentMethodFilter)}`, 20, 65);
     
@@ -245,7 +246,7 @@ export default function ReceiptsPage() {
         customerPhone,
         customerEmail,
         customerAddress,
-        receipt.date,
+        formatDate(receipt.date),
         `RD$ ${receipt.amount.toLocaleString()}`,
         getPaymentMethodName(receipt.paymentMethod),
         receipt.reference,
@@ -290,7 +291,7 @@ export default function ReceiptsPage() {
     const cancelledReceipts = filteredReceipts.filter((r) => r.status === 'cancelled').length;
 
     const todayIso = new Date().toISOString().split('T')[0];
-    const todayLocal = new Date().toLocaleDateString('es-DO');
+    const todayLocal = formatDate(new Date());
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Recibos de Cobro');
@@ -368,7 +369,7 @@ export default function ReceiptsPage() {
         customerPhone,
         customerEmail,
         customerAddress,
-        receipt.date,
+        formatDate(receipt.date),
         receipt.amount,
         getPaymentMethodName(receipt.paymentMethod),
         receipt.reference,
@@ -626,7 +627,7 @@ export default function ReceiptsPage() {
             <h1>${companyName}</h1>
             ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
             <h2>Recibo de Cobro #${enriched.receiptNumber}</h2>
-            <p>Fecha: ${new Date(enriched.date).toLocaleDateString('es-DO')}</p>
+            <p>Fecha: ${formatDate(enriched.date)}</p>
           </div>
 
           <div class="details">
@@ -638,7 +639,7 @@ export default function ReceiptsPage() {
             ${enriched.concept ? `<p><strong>Concepto:</strong> ${enriched.concept}</p>` : ''}
             <p><strong>Método de pago:</strong> ${getPaymentMethodName(enriched.paymentMethod)}</p>
             ${enriched.reference ? `<p><strong>Referencia:</strong> ${enriched.reference}</p>` : ''}
-            <p class="amount">Monto: RD$ ${enriched.amount.toLocaleString('es-DO')}</p>
+            <p class="amount">Monto: RD$ ${enriched.amount.toLocaleString()}</p>
             ${appliedInvoicesHtml}
           </div>
 
@@ -712,7 +713,7 @@ export default function ReceiptsPage() {
     if (customerAddress) worksheet.addRow(['Dirección', customerAddress]);
     worksheet.addRow([
       'Fecha',
-      receipt.date ? new Date(receipt.date).toLocaleDateString('es-DO') : '',
+      receipt.date ? formatDate(receipt.date) : '',
     ]);
     worksheet.addRow(['Método de pago', getPaymentMethodName(receipt.paymentMethod)]);
     if (receipt.reference) worksheet.addRow(['Referencia', receipt.reference]);
@@ -779,7 +780,7 @@ export default function ReceiptsPage() {
       return;
     }
 
-    const todayStr = date || new Date().toISOString().slice(0, 10);
+    const todayStr = date || new Date().toISOString().split('T')[0];
 
     const receiptNumber = `RC-${Date.now()}`;
 
@@ -992,7 +993,7 @@ export default function ReceiptsPage() {
                       {receipt.customerName}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {receipt.date}
+                      {formatDate(receipt.date)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       RD${receipt.amount.toLocaleString()}
@@ -1237,8 +1238,7 @@ export default function ReceiptsPage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Fecha
                     </label>
-                    <input
-                      type="date"
+                    <DateInput
                       required
                       name="date"
                       defaultValue={new Date().toISOString().split('T')[0]}
@@ -1383,7 +1383,7 @@ export default function ReceiptsPage() {
                   
                   <div>
                     <label className="block text-sm font-medium text-gray-500">Fecha</label>
-                    <p className="text-gray-900">{selectedReceipt.date}</p>
+                    <p className="text-gray-900">{formatDate(selectedReceipt.date)}</p>
                   </div>
                   
                   <div>

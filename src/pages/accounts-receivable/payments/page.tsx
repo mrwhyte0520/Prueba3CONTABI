@@ -6,6 +6,7 @@ import { useAuth } from '../../../hooks/useAuth';
 import { customerPaymentsService, invoicesService, bankAccountsService, accountingSettingsService, journalEntriesService, customersService, receiptsService, receiptApplicationsService, chartAccountsService, settingsService } from '../../../services/database';
 import ExcelJS from 'exceljs';
 import { formatAmount, formatMoney } from '../../../utils/numberFormat';
+import { formatDate } from '../../../utils/dateFormat';
 
 interface Payment {
   id: string;
@@ -88,11 +89,7 @@ export default function PaymentsPage() {
     }
   };
 
-  const formatLocalDate = (dateStr: string) => {
-    const date = new Date(`${dateStr}T00:00:00`);
-    if (Number.isNaN(date.getTime())) return dateStr;
-    return date.toLocaleDateString('es-DO');
-  };
+  const formatLocalDate = (dateStr: string) => formatDate(dateStr);
 
   useEffect(() => {
     const loadData = async () => {
@@ -301,7 +298,7 @@ export default function PaymentsPage() {
     doc.text('Reporte de Pagos Recibidos', 20, 30);
     
     doc.setFontSize(12);
-    doc.text(`Fecha de generación: ${new Date().toLocaleDateString()}`, 20, 45);
+    doc.text(`Fecha de generación: ${formatDate(new Date())}`, 20, 45);
 
     const totalPayments = filteredPayments.reduce((sum, p) => sum + p.amount, 0);
     const paymentsByMethod = filteredPayments.reduce((acc, payment) => {
@@ -334,7 +331,7 @@ export default function PaymentsPage() {
     doc.text('Detalle de Pagos', 20, (doc as any).lastAutoTable.finalY + 20);
 
     const paymentData = filteredPayments.map(payment => [
-      payment.date,
+      formatDate(payment.date),
       payment.customerName,
       payment.invoiceNumber,
       formatMoney(payment.amount),
@@ -357,7 +354,7 @@ export default function PaymentsPage() {
 
   const exportToExcel = async () => {
     const rows = filteredPayments.map((payment) => ({
-      date: payment.date,
+      date: formatDate(payment.date),
       customer: payment.customerName,
       invoice: payment.invoiceNumber,
       amount: payment.amount,
@@ -371,7 +368,7 @@ export default function PaymentsPage() {
     }
 
     const todayIso = new Date().toISOString().split('T')[0];
-    const todayLocal = new Date().toLocaleDateString();
+    const todayLocal = formatDate(new Date());
 
     const headers = [
       { key: 'date', title: 'Fecha' },
@@ -726,7 +723,7 @@ export default function PaymentsPage() {
                     </div>
                     <div class="title">
                       <h2>Recibo de Cobro #${receiptNo}</h2>
-                      <p>Fecha: ${new Date(receiptDate).toLocaleDateString('es-DO')}</p>
+                      <p>Fecha: ${formatDate(receiptDate)}</p>
                     </div>
                   </div>
 
@@ -921,7 +918,7 @@ export default function PaymentsPage() {
                 {filteredPayments.map((payment) => (
                   <tr key={payment.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {payment.date}
+                      {formatLocalDate(payment.date)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {payment.customerName}
