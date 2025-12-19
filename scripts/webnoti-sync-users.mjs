@@ -8,6 +8,19 @@ function requireEnv(name) {
   return v;
 }
 
+function getWebnotiApiKeys() {
+  const raw = process.env.WEBNOTI_API_KEYS;
+  if (raw && String(raw).trim()) {
+    return String(raw)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  const single = process.env.WEBNOTI_API_KEY;
+  return single ? [String(single).trim()] : [];
+}
+
 function parseArgs(argv) {
   const args = new Map();
   for (let i = 0; i < argv.length; i++) {
@@ -82,7 +95,10 @@ async function main() {
   if (perPage > 1000) perPage = 1000;
 
   const webnotiBaseUrl = requireEnv("WEBNOTI_BASE_URL");
-  const webnotiApiKey = requireEnv("WEBNOTI_API_KEY");
+  const webnotiApiKeys = getWebnotiApiKeys();
+  if (webnotiApiKeys.length === 0) {
+    throw new Error("Missing WEBNOTI_API_KEYS or WEBNOTI_API_KEY");
+  }
   const supabaseUrl = requireEnv("SUPABASE_URL");
   const supabaseServiceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 
@@ -99,15 +115,20 @@ async function main() {
     return;
   }
 
-  const result = await postBulkUsers(webnotiBaseUrl, webnotiApiKey, { users: appUsers });
+  const results = [];
+  for (const apiKey of webnotiApiKeys) {
+    const result = await postBulkUsers(webnotiBaseUrl, apiKey, { users: appUsers });
+    results.push({ ok: result.ok, status: result.status, response: result.data });
+  }
 
-  if (!result.ok) {
-    console.error(JSON.stringify({ ok: false, error: "WebNotiCenter error", status: result.status, details: result.data }, null, 2));
+  const anyOk = results.some((r) => r.ok);
+  if (!anyOk) {
+    console.error(JSON.stringify({ ok: false, error: "WebNotiCenter error", details: results }, null, 2));
     process.exitCode = 1;
     return;
   }
 
-  console.log(JSON.stringify({ ok: true, sent: { count: appUsers.length }, response: result.data }, null, 2));
+  console.log(JSON.stringify({ ok: true, sent: { count: appUsers.length }, results }, null, 2));
 }
 
 main().catch((err) => {

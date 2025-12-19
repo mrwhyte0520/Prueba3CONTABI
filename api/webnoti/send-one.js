@@ -22,6 +22,19 @@ async function readJsonBody(req) {
   }
 }
 
+function getWebnotiApiKeys() {
+  const raw = process.env.WEBNOTI_API_KEYS;
+  if (raw && String(raw).trim()) {
+    return String(raw)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  const single = process.env.WEBNOTI_API_KEY;
+  return single ? [String(single).trim()] : [];
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -29,10 +42,10 @@ export default async function handler(req, res) {
   }
 
   const baseUrl = process.env.WEBNOTI_BASE_URL;
-  const apiKey = process.env.WEBNOTI_API_KEY;
+  const apiKeys = getWebnotiApiKeys();
 
-  if (!baseUrl || !apiKey) {
-    return res.status(500).json({ ok: false, error: 'Missing WEBNOTI_BASE_URL or WEBNOTI_API_KEY' });
+  if (!baseUrl || apiKeys.length === 0) {
+    return res.status(500).json({ ok: false, error: 'Missing WEBNOTI_BASE_URL or WEBNOTI_API_KEYS/WEBNOTI_API_KEY' });
   }
 
   const body = await readJsonBody(req);
@@ -48,27 +61,33 @@ export default async function handler(req, res) {
     return res.status(400).json({ ok: false, error: 'Missing user_id, title or message' });
   }
 
-  const url = `${baseUrl.replace(/\/$/, '')}/api/ingest?api_key=${encodeURIComponent(apiKey)}`;
+  const results = [];
+  for (const apiKey of apiKeys) {
+    const url = `${baseUrl.replace(/\/$/, '')}/api/ingest?api_key=${encodeURIComponent(apiKey)}`;
+    const upstream = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ user_id, title, message }),
+    });
 
-  const upstream = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ user_id, title, message }),
-  });
+    const text = await upstream.text();
+    let data = text;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
 
-  const text = await upstream.text();
-  let data = text;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = text;
+    results.push({ ok: upstream.ok, status: upstream.status, data });
   }
 
-  if (!upstream.ok) {
-    return res.status(upstream.status).json({ ok: false, error: 'WebNotiCenter error', details: data });
+  const anyOk = results.some((r) => r.ok);
+  if (!anyOk) {
+    const first = results[0] || { status: 500, data: null };
+    return res.status(first.status || 500).json({ ok: false, error: 'WebNotiCenter error', details: results });
   }
 
-  return res.status(200).json({ ok: true, data });
+  return res.status(200).json({ ok: true, results });
 }
