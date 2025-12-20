@@ -7228,10 +7228,134 @@ export const deliveryNotesService = {
    Invoices Service
 ========================================================== */
 export const invoicesService = {
+  async upsertFiscalDocumentRow(tenantId: string, payload: any) {
+    try {
+      const ncfNumber = String(payload?.ncf_number || '');
+      if (!ncfNumber) return;
+
+      // Detect if row exists
+      const { data: existing, error: findErr } = await supabase
+        .from('fiscal_documents')
+        .select('id')
+        .eq('user_id', tenantId)
+        .eq('ncf_number', ncfNumber)
+        .maybeSingle();
+
+      if (findErr) throw findErr;
+
+      if (existing?.id) {
+        const { error: updErr } = await supabase
+          .from('fiscal_documents')
+          .update({ ...payload })
+          .eq('id', existing.id)
+          .eq('user_id', tenantId);
+        if (updErr) throw updErr;
+      } else {
+        const { error: insErr } = await supabase
+          .from('fiscal_documents')
+          .insert(payload as any);
+        if (insErr) throw insErr;
+      }
+    } catch (error) {
+      console.error('invoicesService.upsertFiscalDocumentRow error', describeSupabaseError(error));
+    }
+  },
+
+  async upsertFiscalDocumentForInvoice(tenantId: string, invoiceData: any) {
+    try {
+      const invoiceNumber = String(invoiceData?.invoice_number || '');
+      if (!invoiceNumber) return;
+
+      // Only consider NCF-like numbers (skip internal FAC- numbers)
+      if (invoiceNumber.toUpperCase().startsWith('FAC-')) return;
+
+      const issueDate = String(invoiceData?.invoice_date || new Date().toISOString().slice(0, 10));
+      const amount = Number(invoiceData?.total_amount ?? 0) || 0;
+      const taxAmount = Number(invoiceData?.tax_amount ?? 0) || 0;
+
+      // Try infer document_type by matching series_prefix
+      let inferredDocumentType: string | null = null;
+      const prefixMatch = invoiceNumber.match(/^(\D+)/);
+      const seriesPrefix = prefixMatch?.[1] ? String(prefixMatch[1]) : '';
+      if (seriesPrefix) {
+        try {
+          const { data: series, error: seriesErr } = await supabase
+            .from('ncf_series')
+            .select('document_type, series_prefix')
+            .eq('user_id', tenantId)
+            .ilike('series_prefix', seriesPrefix)
+            .order('created_at', { ascending: true });
+          if (!seriesErr && series && series.length > 0) {
+            inferredDocumentType = (series[0] as any)?.document_type ? String((series[0] as any).document_type) : null;
+          }
+        } catch {
+          inferredDocumentType = null;
+        }
+      }
+
+      const payload: any = {
+        user_id: tenantId,
+        status: 'active',
+        issue_date: issueDate,
+        ncf_number: invoiceNumber,
+        document_type: inferredDocumentType,
+        amount,
+        tax_amount: taxAmount,
+      };
+
+      await this.upsertFiscalDocumentRow(tenantId, payload);
+    } catch (error) {
+      console.error('invoicesService.upsertFiscalDocumentForInvoice error', describeSupabaseError(error));
+    }
+  },
+
+  async markFiscalDocumentCancelledByInvoiceNumber(tenantId: string, invoiceNumber: string, cancelledDate: string) {
+    try {
+      const ncfNumber = String(invoiceNumber || '');
+      if (!ncfNumber) return;
+      if (ncfNumber.toUpperCase().startsWith('FAC-')) return;
+
+      // Try infer document_type by matching series_prefix
+      let inferredDocumentType: string | null = null;
+      const prefixMatch = ncfNumber.match(/^(\D+)/);
+      const seriesPrefix = prefixMatch?.[1] ? String(prefixMatch[1]) : '';
+      if (seriesPrefix) {
+        try {
+          const { data: series, error: seriesErr } = await supabase
+            .from('ncf_series')
+            .select('document_type, series_prefix')
+            .eq('user_id', tenantId)
+            .ilike('series_prefix', seriesPrefix)
+            .order('created_at', { ascending: true });
+          if (!seriesErr && series && series.length > 0) {
+            inferredDocumentType = (series[0] as any)?.document_type ? String((series[0] as any).document_type) : null;
+          }
+        } catch {
+          inferredDocumentType = null;
+        }
+      }
+
+      // Best-effort update
+      const { error } = await supabase
+        .from('fiscal_documents')
+        .update({
+          status: 'cancelled',
+          cancelled_date: cancelledDate,
+          cancellation_reason: 'Cancelado',
+          document_type: inferredDocumentType,
+        })
+        .eq('user_id', tenantId)
+        .eq('ncf_number', ncfNumber);
+      if (error) throw error;
+    } catch (error) {
+      console.error('invoicesService.markFiscalDocumentCancelledByInvoiceNumber error', describeSupabaseError(error));
+    }
+  },
+
   async getAll(userId: string) {
     try {
       const tenantId = await resolveTenantId(userId);
-      if (!tenantId) return [];
+      if (!tenantId) throw new Error('userId required');
       const { data, error} = await supabase
         .from('invoices')
         .select(`
@@ -7256,6 +7380,66 @@ export const invoicesService = {
       return data ?? [];
     } catch (error) {
       return handleDatabaseError(error, []);
+    }
+  },
+
+  async getLinesWithItemType(userId: string, invoiceId: string) {
+    try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+      if (!invoiceId) return [];
+
+      const { data, error } = await supabase
+        .from('invoice_lines')
+        .select(
+          `
+            id,
+            invoice_id,
+            item_id,
+            description,
+            quantity,
+            unit_price,
+            line_total
+          `,
+        )
+        .eq('invoice_id', invoiceId);
+
+      if (error) throw error;
+
+      const lines = ((data as any[]) || []).map((ln) => ({
+        ...ln,
+        inventory_items: null as any,
+      }));
+
+      const itemIds = Array.from(
+        new Set(lines.map((ln: any) => ln.item_id).filter(Boolean).map((v: any) => String(v))),
+      );
+
+      if (itemIds.length === 0) return lines;
+
+      const { data: items, error: itemsErr } = await supabase
+        .from('inventory_items')
+        .select('id, item_type')
+        .eq('user_id', tenantId)
+        .in('id', itemIds);
+
+      if (itemsErr) throw itemsErr;
+
+      const itemTypeById = new Map<string, string>();
+      (items || []).forEach((it: any) => {
+        if (it?.id) itemTypeById.set(String(it.id), String(it.item_type || ''));
+      });
+
+      return lines.map((ln: any) => {
+        const itemType = ln.item_id ? itemTypeById.get(String(ln.item_id)) : undefined;
+        return {
+          ...ln,
+          inventory_items: itemType ? { item_type: itemType } : null,
+        };
+      });
+    } catch (error) {
+      console.error('invoicesService.getLinesWithItemType error', describeSupabaseError(error));
+      return [];
     }
   },
 
@@ -7290,6 +7474,9 @@ export const invoicesService = {
         .single();
 
       if (invoiceError) throw invoiceError;
+
+      // Best-effort: registrar documento fiscal para Reporte 608 cuando aplique
+      await this.upsertFiscalDocumentForInvoice(tenantId, invoiceData);
 
       const linesWithInvoice = lines.map((line) => ({
         ...line,
@@ -7653,7 +7840,7 @@ export const invoicesService = {
 
       const { data: updatedInvoice, error: updateError } = await supabase
         .from('invoices')
-        .update({ status: 'cancelled' })
+        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
         .eq('user_id', tenantId)
         .eq('id', invoiceId)
         .select('*')
@@ -7670,6 +7857,18 @@ export const invoicesService = {
         .neq('status', 'reversed');
 
       if (reverseError) throw reverseError;
+
+      // Best-effort: reflejar anulación en fiscal_documents (Reporte 608)
+      try {
+        const cancelledDate = new Date().toISOString().slice(0, 10);
+        await this.markFiscalDocumentCancelledByInvoiceNumber(
+          tenantId,
+          String((updatedInvoice as any)?.invoice_number || (invoice as any)?.invoice_number || ''),
+          cancelledDate,
+        );
+      } catch (fdCancelError) {
+        console.error('Error updating fiscal_documents on invoice cancel:', describeSupabaseError(fdCancelError));
+      }
 
       return updatedInvoice;
     } catch (error) {
@@ -11083,12 +11282,50 @@ export const taxService = {
 
       if (invErr) throw invErr;
 
+	  const invoiceIds = Array.from(
+	    new Set((invoices || []).map((inv: any) => String(inv?.id || '')).filter(Boolean)),
+	  );
+
+	  const itbisWithheldByInvoiceId = new Map<string, number>();
+	  const isrWithheldByInvoiceId = new Map<string, number>();
+	  if (invoiceIds.length > 0) {
+	    try {
+	      const { data: payments, error: payErr } = await supabase
+	        .from('customer_payments')
+	        .select('invoice_id, itbis_withheld, isr_withheld')
+	        .eq('user_id', tenantId)
+	        .in('invoice_id', invoiceIds);
+
+	      if (!payErr && payments) {
+	        (payments as any[]).forEach((p: any) => {
+	          const key = String(p?.invoice_id || '');
+	          if (!key) return;
+	          const itbisVal = Number(p?.itbis_withheld) || 0;
+	          if (itbisVal > 0) {
+	            itbisWithheldByInvoiceId.set(key, (itbisWithheldByInvoiceId.get(key) || 0) + itbisVal);
+	          }
+	          const isrVal = Number(p?.isr_withheld) || 0;
+	          if (isrVal > 0) {
+	            isrWithheldByInvoiceId.set(key, (isrWithheldByInvoiceId.get(key) || 0) + isrVal);
+	          }
+	        });
+	      }
+	    } catch (payReadError) {
+	      // eslint-disable-next-line no-console
+	      console.error('Error loading customer_payments for Report 607 withheld taxes:', payReadError);
+	    }
+	  }
+
       const rows = (invoices || []).map((inv: any) => {
         const customerName = inv.customers?.name || inv.customer_name || 'Cliente';
         const customerRnc = inv.customers?.tax_id || inv.tax_id || '';
         const fecha = inv.invoice_date;
         const monto = Number(inv.total_amount ?? inv.subtotal ?? 0);
         const itbis = Number(inv.tax_amount ?? 0);
+		const invoiceNumber = String(inv.invoice_number || '');
+		const isFiscal = invoiceNumber !== '' && !invoiceNumber.toUpperCase().startsWith('FAC-');
+		const itbisRetenido = isFiscal ? Number(itbisWithheldByInvoiceId.get(String(inv.id)) || 0) : 0;
+		const isrRetenido = isFiscal ? Number(isrWithheldByInvoiceId.get(String(inv.id)) || 0) : 0;
 
         return {
           user_id: tenantId,
@@ -11103,6 +11340,8 @@ export const taxService = {
           nombre_cliente: customerName,
           monto_facturado: monto,
           itbis_facturado: itbis,
+		  itbis_retenido: itbisRetenido,
+		  retencion_renta_terceros: isrRetenido,
           tipo_pago: 'Otros',
           itbis_cobrado: itbis,
           monto_facturado_servicios: 0,
@@ -11340,6 +11579,80 @@ export const taxService = {
       const lastDay = new Date(year, month, 0).getDate();
       const endDate = `${period}-${String(lastDay).padStart(2, '0')}`;
 
+      // Backfill: garantizar que facturas anuladas con NCF existan en fiscal_documents
+      try {
+        const { data: cancelledInvoices, error: invErr } = await supabase
+          .from('invoices')
+          .select('invoice_number, invoice_date, updated_at, total_amount, tax_amount, status')
+          .eq('user_id', tenantId)
+          .eq('status', 'cancelled');
+
+        if (!invErr && cancelledInvoices && cancelledInvoices.length > 0) {
+          const toUpsert: any[] = [];
+          for (const inv of cancelledInvoices as any[]) {
+            const invoiceNumber = String(inv.invoice_number || '');
+            if (!invoiceNumber) continue;
+            if (invoiceNumber.toUpperCase().startsWith('FAC-')) continue;
+
+            const updatedAtDate = String(inv.updated_at || '').slice(0, 10);
+            const invoiceDate = String(inv.invoice_date || '').slice(0, 10);
+
+            // Solo incluir si la fecha de emisión o la fecha de anulación (aprox: updated_at) cae dentro del período
+            const inPeriod =
+              (invoiceDate && invoiceDate >= startDate && invoiceDate <= endDate) ||
+              (updatedAtDate && updatedAtDate >= startDate && updatedAtDate <= endDate);
+
+            if (!inPeriod) continue;
+
+            const cancelledDate = updatedAtDate || invoiceDate || endDate;
+            const issueDate = invoiceDate || cancelledDate;
+            const amount = Number(inv.total_amount ?? 0) || 0;
+            const taxAmount = Number(inv.tax_amount ?? 0) || 0;
+
+            let inferredDocumentType: string | null = null;
+            const prefixMatch = invoiceNumber.match(/^(\D+)/);
+            const seriesPrefix = prefixMatch?.[1] ? String(prefixMatch[1]) : '';
+            if (seriesPrefix) {
+              try {
+                const { data: series, error: seriesErr } = await supabase
+                  .from('ncf_series')
+                  .select('document_type, series_prefix')
+                  .eq('user_id', tenantId)
+                  .ilike('series_prefix', seriesPrefix)
+                  .order('created_at', { ascending: true });
+                if (!seriesErr && series && series.length > 0) {
+                  inferredDocumentType = (series[0] as any)?.document_type
+                    ? String((series[0] as any).document_type)
+                    : null;
+                }
+              } catch {
+                inferredDocumentType = null;
+              }
+            }
+
+            toUpsert.push({
+              user_id: tenantId,
+              status: 'cancelled',
+              issue_date: issueDate,
+              cancelled_date: cancelledDate,
+              cancellation_reason: 'Cancelado',
+              ncf_number: invoiceNumber,
+              document_type: inferredDocumentType,
+              amount,
+              tax_amount: taxAmount,
+            });
+          }
+
+          if (toUpsert.length > 0) {
+            for (const row of toUpsert) {
+              await invoicesService.upsertFiscalDocumentRow(tenantId, row);
+            }
+          }
+        }
+      } catch (backfillError) {
+        console.error('Error backfilling fiscal_documents for Report 608:', backfillError);
+      }
+
       const { data: docs, error: fdErr } = await supabase
         .from('fiscal_documents')
         .select('*')
@@ -11350,31 +11663,46 @@ export const taxService = {
 
       if (fdErr) throw fdErr;
 
-      const rows = (docs || []).map((doc: any) => ({
-        user_id: tenantId,
-        period,
-        cancellation_date: doc.cancelled_date || doc.issue_date,
-        tipo_comprobante: doc.document_type || 'NCF',
-        ncf: doc.ncf_number,
-        ncf_modificado: doc.ncf_modificado || null,
-        motivo: doc.cancellation_reason || 'Cancelado',
-        amount: Number(doc.amount || 0),
-        tax_amount: Number(doc.tax_amount || 0),
-      }));
+      const ncfNumbers = Array.from(
+        new Set((docs || []).map((d: any) => String(d?.ncf_number || '')).filter(Boolean)),
+      );
 
-      const { error: delErr } = await supabase
-        .from('report_608_data')
-        .delete()
-        .eq('period', period)
-        .eq('user_id', tenantId);
-      if (delErr) throw delErr;
-
-      if (rows.length > 0) {
-        const { error: insErr } = await supabase
-          .from('report_608_data')
-          .insert(rows);
-        if (insErr) throw insErr;
+      // Traer RNC del cliente desde invoices/customers cuando sea posible
+      const invoiceByNcf = new Map<string, any>();
+      if (ncfNumbers.length > 0) {
+        const { data: invRows, error: invErr } = await supabase
+          .from('invoices')
+          .select(
+            `invoice_number, customers (document, tax_id)`
+          )
+          .eq('user_id', tenantId)
+          .in('invoice_number', ncfNumbers);
+        if (!invErr && invRows) {
+          (invRows as any[]).forEach((r: any) => {
+            const key = String(r?.invoice_number || '');
+            if (key) invoiceByNcf.set(key, r);
+          });
+        }
       }
+
+      // Devolver estructura que consume el UI del Reporte 608
+      return (docs || []).map((doc: any) => {
+        const ncf = String(doc?.ncf_number || '');
+        const inv = ncf ? invoiceByNcf.get(ncf) : null;
+        const cust = inv?.customers as any;
+        const customerRnc = String(cust?.document || cust?.tax_id || '');
+
+        return {
+          ncf,
+          document_type: String(doc?.document_type || 'NCF'),
+          issue_date: String(doc?.issue_date || ''),
+          cancellation_date: String(doc?.cancelled_date || doc?.issue_date || ''),
+          customer_rnc: customerRnc,
+          reason: String(doc?.cancellation_reason || 'Cancelado'),
+          amount: Number(doc?.amount || 0),
+          tax_amount: Number(doc?.tax_amount || 0),
+        };
+      });
     } catch (error) {
       console.error('Error building Report 608 data:', error);
       throw error;
@@ -11388,19 +11716,10 @@ export const taxService = {
       } = await supabase.auth.getUser();
       if (!user?.id) return [];
 
-      const tenantId = await resolveTenantId(user.id);
-      if (!tenantId) return [];
-
-      await this.buildReport608(period);
-      const { data, error } = await supabase
-        .from('report_608_data')
-        .select('*')
-        .eq('period', period)
-        .eq('user_id', tenantId)
-        .order('cancellation_date');
-
-      if (error) throw error;
-      return data || [];
+      const computed = await this.buildReport608(period);
+      return (computed || []).sort((a: any, b: any) =>
+        String(a?.cancellation_date || '').localeCompare(String(b?.cancellation_date || '')),
+      );
     } catch (error) {
       console.error('Error generating Report 608:', error);
       throw error;
@@ -11409,33 +11728,14 @@ export const taxService = {
 
   async getReport608Summary(period: string) {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user?.id) {
-        return { totalAmount: 0, totalTax: 0 };
-      }
-
-      const tenantId = await resolveTenantId(user.id);
-      if (!tenantId) {
-        return { totalAmount: 0, totalTax: 0 };
-      }
-
-      const { data, error } = await supabase
-        .from('report_608_data')
-        .select('amount, tax_amount')
-        .eq('period', period)
-        .eq('user_id', tenantId);
-
-      if (error) throw error;
-
-      const summary = data?.reduce(
-        (acc, item) => ({
-          totalAmount: acc.totalAmount + (item.amount || 0),
-          totalTax: acc.totalTax + (item.tax_amount || 0),
-          count: acc.count + 1
+      const rows = await this.generateReport608(period);
+      const summary = (rows || []).reduce(
+        (acc: any, item: any) => ({
+          totalAmount: acc.totalAmount + (Number(item.amount) || 0),
+          totalTax: acc.totalTax + (Number(item.tax_amount) || 0),
+          count: acc.count + 1,
         }),
-        { totalAmount: 0, totalTax: 0, count: 0 }
+        { totalAmount: 0, totalTax: 0, count: 0 },
       );
 
       return summary || { totalAmount: 0, totalTax: 0, count: 0 };
@@ -11707,8 +12007,20 @@ export const taxService = {
         .eq('user_id', tenantId)
         .maybeSingle();
 
-      if (!existingError && existing) {
-        return existing;
+      const existingId = !existingError && existing?.id ? String((existing as any).id) : '';
+
+      // Mantener IT-1 conectado a los reportes base (607 ventas / 606 compras).
+      // Best-effort: si falla, igual intentamos con lo que exista en BD.
+      try {
+        await this.buildReport607(period);
+      } catch (build607Error) {
+        console.error('Error building Report 607 before IT-1:', build607Error);
+      }
+
+      try {
+        await this.buildReport606(period);
+      } catch (build606Error) {
+        console.error('Error building Report 606 before IT-1:', build606Error);
       }
 
       // Obtener datos de ventas y compras para el período del usuario actual
@@ -11762,13 +12074,24 @@ export const taxService = {
         generated_date: new Date().toISOString()
       };
 
-      // Guardar la declaración en la base de datos
+      // Guardar la declaración en la base de datos (update si existe, insert si no)
+      if (existingId) {
+        const { data, error } = await supabase
+          .from('report_it1_data')
+          .update(reportData)
+          .eq('user_id', tenantId)
+          .eq('id', existingId)
+          .select()
+          .single();
+        if (error) throw error;
+        return data;
+      }
+
       const { data, error } = await supabase
         .from('report_it1_data')
         .insert(reportData)
         .select()
         .single();
-
       if (error) throw error;
       return data;
     } catch (error) {

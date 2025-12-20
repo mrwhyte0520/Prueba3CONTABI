@@ -25,6 +25,14 @@ interface Report607Data {
   monto_propina_legal_2: number;
 }
 
+const periodToLocalDate = (period: string) => {
+  const parts = String(period || '').split('-');
+  const year = Number(parts[0]) || 0;
+  const month = Number(parts[1]) || 0;
+  if (!year || !month) return new Date();
+  return new Date(year, month - 1, 1);
+};
+
 export default function Report607Page() {
   const navigate = useNavigate();
   const [reportData, setReportData] = useState<Report607Data[]>([]);
@@ -455,7 +463,7 @@ export default function Report607Page() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200">
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">
-              Detalle del Reporte 607 - {selectedPeriod && new Date(selectedPeriod + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}
+              Detalle del Reporte 607 - {selectedPeriod && periodToLocalDate(selectedPeriod).toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}
             </h3>
           </div>
           <div className="overflow-x-auto">

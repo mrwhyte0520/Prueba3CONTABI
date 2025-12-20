@@ -28,6 +28,14 @@ interface IT1Summary {
   ultimaDeclaracion: string | null;
 }
 
+const periodToLocalDate = (period: string) => {
+  const parts = String(period || '').split('-');
+  const year = Number(parts[0]) || 0;
+  const month = Number(parts[1]) || 0;
+  if (!year || !month) return new Date();
+  return new Date(year, month - 1, 1);
+};
+
 export default function ReportIT1Page() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -106,7 +114,7 @@ export default function ReportIT1Page() {
     if (!reportData) return;
 
     const excelData = [
-      { 'Campo': 'Período', 'Valor': new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }) },
+      { 'Campo': 'Período', 'Valor': periodToLocalDate(reportData.period).toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }) },
       { 'Campo': '', 'Valor': '' },
       { 'Campo': 'I. VENTAS Y SERVICIOS GRAVADOS', 'Valor': '' },
       { 'Campo': 'Total de Ventas y Servicios Gravados', 'Valor': formatMoney(reportData.total_sales) },
@@ -142,7 +150,7 @@ export default function ReportIT1Page() {
     }
     headerRows.push(['Declaración Jurada del ITBIS (IT-1)']);
     headerRows.push([
-      `Período: ${new Date(reportData.period + '-01').toLocaleDateString('es-DO', {
+      `Período: ${periodToLocalDate(reportData.period).toLocaleDateString('es-DO', {
         year: 'numeric',
         month: 'long',
       })}`,
@@ -191,14 +199,14 @@ export default function ReportIT1Page() {
     headerLines.push(['Reporte', 'Declaración Jurada del ITBIS (IT-1)'].join(separator));
     headerLines.push([
       'Período',
-      new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }),
+      periodToLocalDate(reportData.period).toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }),
     ].join(separator));
     headerLines.push('');
 
     const csvContent = [
       ...headerLines,
       ['Campo', 'Valor'].join(separator),
-      ['Período', new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })].join(separator),
+      ['Período', periodToLocalDate(reportData.period).toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })].join(separator),
       ['Total Ventas Gravadas', formatMoney(reportData.total_sales)].join(separator),
       ['ITBIS Cobrado', formatMoney(reportData.itbis_collected)].join(separator),
       ['Total Compras Gravadas', formatMoney(reportData.total_purchases)].join(separator),
@@ -238,7 +246,7 @@ export default function ReportIT1Page() {
 
     doc.setFontSize(12);
     doc.text(
-      `Período: ${new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}`,
+      `Período: ${periodToLocalDate(reportData.period).toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}`,
       14,
       36,
     );
@@ -309,7 +317,7 @@ export default function ReportIT1Page() {
 DECLARACIÓN JURADA DEL ITBIS (IT-1)
 ===================================
 
-Período: ${new Date(reportData.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}
+Período: ${periodToLocalDate(reportData.period).toLocaleDateString('es-DO', { year: 'numeric', month: 'long' })}
 
 I. VENTAS Y SERVICIOS GRAVADOS
 ------------------------------
@@ -402,7 +410,7 @@ Cumple con las normativas de la DGII
   const filteredHistoricalData = historicalData.filter(record => {
     const matchesSearch = !searchTerm || 
       record.period.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      new Date(record.period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }).toLowerCase().includes(searchTerm.toLowerCase());
+      periodToLocalDate(record.period).toLocaleDateString('es-DO', { year: 'numeric', month: 'long' }).toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesYear = !selectedYear || record.period.startsWith(selectedYear);
     
@@ -410,7 +418,7 @@ Cumple con las normativas de la DGII
   });
 
   const getMonthName = (period: string) => {
-    return new Date(period + '-01').toLocaleDateString('es-DO', { year: 'numeric', month: 'long' });
+    return periodToLocalDate(period).toLocaleDateString('es-DO', { year: 'numeric', month: 'long' });
   };
 
   const formatCurrency = (amount: number) => {

@@ -93,6 +93,9 @@ export default function InvoicesPage() {
   const [newInvoiceNoTax, setNewInvoiceNoTax] = useState(false);
   const [taxConfig, setTaxConfig] = useState<{ itbis_rate: number } | null>(null);
 
+  const [newInvoiceDocumentType, setNewInvoiceDocumentType] = useState<string>('');
+  const [ncfSeries, setNcfSeries] = useState<any[]>([]);
+
   const currentItbisRate = taxConfig?.itbis_rate ?? 18;
 
   const recalcNewInvoiceTotals = (
@@ -258,6 +261,24 @@ export default function InvoicesPage() {
       }
     };
     loadTaxConfig();
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadNcfSeries = async () => {
+      if (!user?.id) {
+        setNcfSeries([]);
+        return;
+      }
+      try {
+        const series = await taxService.getNcfSeries(user.id);
+        setNcfSeries((series || []).filter((s: any) => s.status === 'active'));
+      } catch (error) {
+        console.error('Error cargando series NCF:', error);
+        setNcfSeries([]);
+      }
+    };
+
+    loadNcfSeries();
   }, [user?.id]);
 
   useEffect(() => {
@@ -565,6 +586,7 @@ export default function InvoicesPage() {
     setNewInvoiceDiscountType('percentage');
     setNewInvoiceDiscountPercent(0);
     setNewInvoiceNoTax(false);
+    setNewInvoiceDocumentType('');
     setShowInvoiceModal(true);
   };
 
@@ -808,7 +830,33 @@ export default function InvoicesPage() {
     console.log('[Invoices] handleSaveInvoice payload', { customerId, dueDate, description, amount });
 
     const todayStr = new Date().toISOString().slice(0, 10);
-    const invoiceNumber = `FAC-${Date.now()}`;
+    let invoiceNumber = `FAC-${Date.now()}`;
+
+    const selectedDocType = String(newInvoiceDocumentType || '');
+    if (selectedDocType) {
+      const availableDocTypes = Array.from(
+        new Set(
+          (ncfSeries || [])
+            .filter((s: any) => s.status === 'active')
+            .map((s: any) => String(s.document_type)),
+        ),
+      );
+
+      if (!availableDocTypes.includes(selectedDocType)) {
+        alert('No hay serie NCF activa disponible para el tipo seleccionado.');
+        return;
+      }
+
+      try {
+        const nextNcf = await taxService.getNextNcf(user.id, selectedDocType);
+        if (nextNcf?.ncf) {
+          invoiceNumber = nextNcf.ncf;
+        }
+      } catch (ncfError) {
+        // eslint-disable-next-line no-console
+        console.error('[Invoices] No se pudo obtener NCF, usando número interno FAC-*', ncfError);
+      }
+    }
 
     const invoicePayload = {
       customer_id: customerId,
@@ -1401,6 +1449,27 @@ export default function InvoicesPage() {
                       name="due_date"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de documento (NCF)</label>
+                    <select
+                      value={newInvoiceDocumentType}
+                      onChange={(e) => setNewInvoiceDocumentType(e.target.value)}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Sin seleccionar...</option>
+                      {Array.from(
+                        new Set(
+                          (ncfSeries || [])
+                            .filter((s: any) => s.status === 'active')
+                            .map((s: any) => String(s.document_type)),
+                        ),
+                      ).map((dt) => (
+                        <option key={dt} value={dt}>
+                          {dt}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 

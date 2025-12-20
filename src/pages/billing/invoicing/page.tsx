@@ -116,6 +116,8 @@ export default function InvoicingPage() {
   const [newInvoiceNotes, setNewInvoiceNotes] = useState('');
   const [newInvoiceStoreName, setNewInvoiceStoreName] = useState('Tienda principal');
   const [newInvoiceSaleType, setNewInvoiceSaleType] = useState<'credit' | 'cash'>('credit');
+  const [newInvoiceDocumentType, setNewInvoiceDocumentType] = useState<string>('');
+  const [ncfSeries, setNcfSeries] = useState<any[]>([]);
   const [newInvoicePaymentMethod, setNewInvoicePaymentMethod] = useState<string>('');
   const [newInvoiceBankAccountId, setNewInvoiceBankAccountId] = useState<string>('');
   const [newInvoicePaymentReference, setNewInvoicePaymentReference] = useState<string>('');
@@ -296,6 +298,7 @@ export default function InvoicingPage() {
           salesRepsService.getAll(user.id),
           storesService.getAll(user.id),
         ]);
+
         const mappedTerms = (terms || []).map((t: any) => ({
           id: t.id as string,
           name: t.name as string,
@@ -309,6 +312,23 @@ export default function InvoicingPage() {
       }
     };
     loadPaymentTerms();
+  }, [user?.id]);
+
+  useEffect(() => {
+    const loadNcfSeries = async () => {
+      if (!user?.id) {
+        setNcfSeries([]);
+        return;
+      }
+      try {
+        const series = await taxService.getNcfSeries(user.id);
+        setNcfSeries((series || []).filter((s: any) => s.status === 'active'));
+      } catch (error) {
+        console.error('Error cargando series NCF:', error);
+        setNcfSeries([]);
+      }
+    };
+    loadNcfSeries();
   }, [user?.id]);
 
   useEffect(() => {
@@ -344,6 +364,7 @@ export default function InvoicingPage() {
           customerTypesService.getAll(user.id),
           inventoryService.getItems(user.id),
         ]);
+
         const mappedCustomers = (rows || []).map((c: any) => ({
           id: c.id as string,
           name: c.name || c.customer_name || 'Cliente',
@@ -431,6 +452,9 @@ export default function InvoicingPage() {
     setNewInvoicePaymentMethod('');
     setNewInvoiceBankAccountId('');
     setNewInvoicePaymentReference('');
+
+    const activeSeries = (ncfSeries || []).find((s: any) => s.status === 'active');
+    setNewInvoiceDocumentType(activeSeries?.document_type || 'B02');
 
     const defaultStore = stores.find((s) => s.is_active !== false) || stores[0];
     setNewInvoiceStoreName(defaultStore?.name || 'Tienda principal');
@@ -969,9 +993,37 @@ export default function InvoicingPage() {
     const tax = newInvoiceTax;
     const total = newInvoiceTotal;
 
+    let invoiceNumber = `FAC-${Date.now()}`;
+    // Si el usuario NO selecciona tipo de documento, entonces la factura se crea SIN NCF.
+    // Solo se genera NCF cuando el usuario selecciona explícitamente un tipo.
+    const selectedDocType = String(newInvoiceDocumentType || '');
+    if (selectedDocType) {
+      const availableDocTypes = Array.from(
+        new Set(
+          (ncfSeries || [])
+            .filter((s: any) => s.status === 'active')
+            .map((s: any) => String(s.document_type)),
+        ),
+      );
+
+      if (!availableDocTypes.includes(selectedDocType)) {
+        alert('No hay serie NCF activa disponible para el tipo seleccionado.');
+        return;
+      }
+
+      try {
+        const nextNcf = await taxService.getNextNcf(user.id, selectedDocType);
+        if (nextNcf?.ncf) {
+          invoiceNumber = nextNcf.ncf;
+        }
+      } catch (ncfError) {
+        console.error('[Billing] No se pudo obtener NCF, usando número interno FAC-*', ncfError);
+      }
+    }
+
     const invoicePayload = {
       customer_id: newInvoiceCustomerId,
-      invoice_number: `FAC-${Date.now()}`,
+      invoice_number: invoiceNumber,
       invoice_date: newInvoiceDate,
       due_date: newInvoiceDueDate,
       currency: newInvoiceCurrency || baseCurrencyCode,
@@ -1162,9 +1214,14 @@ export default function InvoicingPage() {
       await loadInvoices();
       setShowNewInvoiceModal(false);
       alert(mode === 'draft' ? 'Factura guardada como borrador' : 'Factura creada correctamente');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creando factura:', error);
-      alert('Error al crear la factura');
+      const msg =
+        (error?.message as string) ||
+        (error?.details as string) ||
+        (error?.hint as string) ||
+        'Error al crear la factura';
+      alert(msg);
     }
   };
 
@@ -1837,6 +1894,27 @@ export default function InvoicingPage() {
                     >
                       <option value="credit">Crédito</option>
                       <option value="cash">Contado</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de documento (NCF)</label>
+                    <select
+                      value={newInvoiceDocumentType}
+                      onChange={(e) => setNewInvoiceDocumentType(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Sin seleccionar...</option>
+                      {Array.from(
+                        new Set(
+                          (ncfSeries || [])
+                            .filter((s: any) => s.status === 'active')
+                            .map((s: any) => String(s.document_type)),
+                        ),
+                      ).map((dt) => (
+                        <option key={dt} value={dt}>
+                          {dt}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
