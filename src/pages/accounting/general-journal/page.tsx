@@ -31,6 +31,10 @@ interface JournalEntry {
   total_credit: number;
   status: string;
   created_at: string;
+  supplier_name?: string | null;
+  vendor_name?: string | null;
+  payee_name?: string | null;
+  counterparty?: string | null;
   journal_entry_lines: Array<{
     id: string;
     account_id: string;
@@ -103,8 +107,7 @@ const GeneralJournalPage = () => {
   const [selectedFiscalYear, setSelectedFiscalYear] = useState('');
   const [selectedPeriodId, setSelectedPeriodId] = useState('');
   const [companyInfo, setCompanyInfo] = useState<any | null>(null);
-
-  // Formulario para nuevo asiento
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [formData, setFormData] = useState({
     entry_date: new Date().toISOString().split('T')[0],
     description: '',
@@ -141,42 +144,95 @@ const GeneralJournalPage = () => {
       const tenantId = await resolveTenantId(user.id);
       if (!tenantId) return;
       
-      // Intentar cargar desde Supabase
-      const { data: entriesData, error: entriesError } = await supabase
-        .from('journal_entries')
-        .select(`
-          *,
-          journal_entry_lines (
+      const results = await Promise.allSettled([
+        supabase
+          .from('journal_entries')
+          .select(`
             *,
-            chart_accounts (
-              code,
-              name
+            journal_entry_lines (
+              *,
+              chart_accounts (
+                code,
+                name
+              )
             )
-          )
-        `)
-        .eq('user_id', tenantId)
-        .order('entry_date', { ascending: false });
+          `)
+          .eq('user_id', tenantId)
+          .order('entry_date', { ascending: false }),
+        supabase
+          .from('chart_accounts')
+          .select('*')
+          .eq('user_id', tenantId)
+          .eq('is_active', true)
+          .order('code'),
+        supabase
+          .from('accounting_periods')
+          .select('*')
+          .eq('user_id', tenantId)
+          .order('start_date', { ascending: false }),
+        supabase
+          .from('ap_invoices')
+          .select('id, supplier_id, suppliers ( name )')
+          .eq('user_id', tenantId),
+        supabase
+          .from('supplier_payments')
+          .select('id, supplier_id, suppliers ( name )')
+          .eq('user_id', tenantId),
+      ]);
 
-      const { data: accountsData, error: accountsError } = await supabase
-        .from('chart_accounts')
-        .select('*')
-        .eq('user_id', tenantId)
-        .eq('is_active', true)
-        .order('code');
+      const [entriesRes, accountsRes, periodsRes, apInvRes, apPayRes] = results;
 
-      const { data: periodsData, error: periodsError } = await supabase
-        .from('accounting_periods')
-        .select('*')
-        .eq('user_id', tenantId)
-        .order('start_date', { ascending: false });
+      const getData = (res: PromiseSettledResult<any>) =>
+        res.status === 'fulfilled' ? res.value.data : [];
+      const getError = (res: PromiseSettledResult<any>) =>
+        res.status === 'fulfilled' ? res.value.error : res.reason;
 
-      if (!entriesError && !accountsError && !periodsError) {
-        setEntries(entriesData || []);
-        setAccounts(accountsData || []);
-        setPeriods(periodsData || []);
-      } else {
-        throw new Error('Error loading from Supabase');
+      const entriesData = getData(entriesRes);
+      const accountsData = getData(accountsRes);
+      const periodsData = getData(periodsRes);
+      const apInvoices = getData(apInvRes);
+      const apPayments = getData(apPayRes);
+
+      const errors = [entriesRes, accountsRes, periodsRes, apInvRes, apPayRes]
+        .map(getError)
+        .filter((e) => e);
+
+      if (errors.length > 0) {
+        console.error('GeneralJournal loadData errors', errors);
       }
+
+      const supplierMap = new Map<string, string>();
+      (apInvoices || []).forEach((inv: any) => {
+        if (inv?.id) {
+          const name = inv.suppliers?.name || '';
+          supplierMap.set(String(inv.id), name);
+          if (inv.supplier_id) supplierMap.set(`sup-${inv.supplier_id}`, name);
+        }
+      });
+      (apPayments || []).forEach((p: any) => {
+        if (p?.id) {
+          const name = p.suppliers?.name || '';
+          supplierMap.set(String(p.id), name);
+          if (p.supplier_id) supplierMap.set(`sup-${p.supplier_id}`, name);
+        }
+      });
+
+      const entriesWithSupplier = (entriesData || []).map((entry: any) => {
+        const ref = entry?.reference ? String(entry.reference) : '';
+        const supplier =
+          entry.supplier_name ||
+          entry.vendor_name ||
+          entry.payee_name ||
+          entry.counterparty ||
+          supplierMap.get(ref) ||
+          supplierMap.get(`sup-${entry.supplier_id || ''}`) ||
+          '';
+        return { ...entry, supplier_name: supplier };
+      });
+
+      setEntries(entriesWithSupplier || []);
+      setAccounts(accountsData || []);
+      setPeriods(periodsData || []);
     } catch (error) {
       console.error('Error loading data:', error);
       // Cargar datos de ejemplo si hay error
@@ -352,7 +408,7 @@ const GeneralJournalPage = () => {
         reference: '',
         lines: [
           { account_id: '', debit_amount: 0, credit_amount: 0, description: '' },
-          { account_id: '', debit_amount: 0, credit_amount: 0, description: '' },
+          { account_id: '', debit_amount: 0, credit_amount: 0, description: '' }
         ],
       });
       setIsEditing(false);
@@ -447,12 +503,13 @@ const GeneralJournalPage = () => {
     setShowCreateModal(true);
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = (data: JournalEntry[]) => {
     try {
       // Preparar los datos para la exportación
-      const dataToExport = entries.flatMap((entry) => {
+      const dataToExport = data.flatMap((entry) => {
         return entry.journal_entry_lines.map((line) => ({
           Fecha: formatDate(entry.entry_date),
+
           'Número Asiento': entry.entry_number,
           Descripción: entry.description,
           Referencia: entry.reference,
@@ -519,6 +576,87 @@ const GeneralJournalPage = () => {
     }
   };
 
+  const handleOpenPreview = () => setShowPreviewModal(true);
+  const handleClosePreview = () => setShowPreviewModal(false);
+
+
+  const handleDownloadPdf = () => {
+    const popup = window.open('', '_blank', 'width=1200,height=800');
+    if (!popup) return;
+
+    const rowsHtml = sortedEntries
+      .map(
+        (entry) => `
+        <tr>
+          <td>${entry.entry_number}</td>
+          <td>${formatDate(entry.entry_date)}</td>
+          <td>${getEntryDocumentType(entry)}</td>
+          <td>${entry.supplier_name || entry.vendor_name || entry.payee_name || entry.counterparty || ''}</td>
+          <td>${entry.description || ''}</td>
+          <td>${entry.reference || ''}</td>
+          <td style="text-align:right;">${formatAmount(entry.total_debit)}</td>
+          <td style="text-align:right;">${formatAmount(entry.total_credit)}</td>
+        </tr>
+      `,
+      )
+      .join('');
+
+    const html = `
+      <html>
+        <head>
+          <title>Diario General - Vista previa</title>
+          <style>
+            body { font-family: Arial, sans-serif; font-size: 12px; color: #111; padding: 16px; }
+            h1 { margin-bottom: 4px; }
+            h2 { margin: 8px 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+            th, td { border: 1px solid #ddd; padding: 6px; }
+            th { background: #f5f5f5; text-align: left; }
+            tfoot td { font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <h1>Diario General</h1>
+          <h2>Totales: Débito RD$${formatAmount(totalDebitsFiltered)} | Crédito RD$${formatAmount(totalCreditsFiltered)}</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Número</th>
+                <th>Fecha</th>
+                <th>Documento</th>
+                <th>Proveedor</th>
+                <th>Descripción</th>
+                <th>Referencia</th>
+                <th>Débito</th>
+                <th>Crédito</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="6" style="text-align:right;">Totales:</td>
+                <td style="text-align:right;">${formatAmount(totalDebitsFiltered)}</td>
+                <td style="text-align:right;">${formatAmount(totalCreditsFiltered)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </body>
+      </html>
+    `;
+
+    popup.document.open();
+    popup.document.write(html);
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  };
+
+  const handleDownloadExcel = () => {
+    exportToExcel(sortedEntries);
+  };
+
   const totalDebit = formData.lines.reduce((sum, line) => sum + (line.debit_amount || 0), 0);
   const totalCredit = formData.lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
   const isBalanced = Math.abs(totalDebit - totalCredit) <= 0.01;
@@ -573,6 +711,16 @@ const GeneralJournalPage = () => {
     }
 
     return true;
+  });
+
+  const sortedEntries = [...filteredEntries].sort((a, b) => {
+    const dateA = (a.entry_date || '').slice(0, 10);
+    const dateB = (b.entry_date || '').slice(0, 10);
+    if (dateA !== dateB) return dateB.localeCompare(dateA);
+    const createdA = a.created_at || '';
+    const createdB = b.created_at || '';
+    if (createdA !== createdB) return createdB.localeCompare(createdA);
+    return (b.entry_number || '').localeCompare(a.entry_number || '');
   });
 
   const totalDebitsFiltered = filteredEntries.reduce((sum, entry) => sum + (entry.total_debit || 0), 0);
@@ -733,21 +881,14 @@ const GeneralJournalPage = () => {
             <p className="text-gray-600">Gestión de asientos contables</p>
             <div className="flex items-center space-x-2">
               <button
-                onClick={exportToExcel}
+                onClick={handleOpenPreview}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center"
-                title="Exportar a Excel"
+                title="Vista previa / Exportar"
               >
-                <i className="ri-file-excel-2-line mr-2"></i>
-                Excel
+                <i className="ri-eye-line mr-2"></i>
+                Vista previa
               </button>
-              <button
-                onClick={() => window.print()}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center"
-                title="Imprimir / Exportar a PDF"
-              >
-                <i className="ri-file-pdf-line mr-2"></i>
-                PDF
-              </button>
+
               <button
                 onClick={() => setShowCreateModal(true)}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center"
@@ -822,92 +963,95 @@ const GeneralJournalPage = () => {
       {/* Filters and Actions */}
       <div className="bg-white rounded-lg shadow mb-6">
         <div className="p-6 border-b border-gray-200 print:hidden">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4">
-              <div className="relative">
-                <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
-                <input
-                  type="text"
-                  placeholder="Buscar asientos..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full sm:w-64 pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <select
-                value={selectedFiscalYear}
-                onChange={(e) => {
-                  setSelectedFiscalYear(e.target.value);
-                  setSelectedPeriodId('');
-                }}
-                className="w-full sm:w-40 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
-              >
-                <option value="">Año fiscal (todos)</option>
-                {fiscalYears.map((year) => (
-                  <option key={year} value={year}>
-                    {year}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={selectedPeriodId}
-                onChange={(e) => handlePeriodChange(e.target.value)}
-                className="w-full sm:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
-              >
-                <option value="">Período contable (todos)</option>
-                {visiblePeriods.map((period) => (
-                  <option key={period.id} value={period.id}>
-                    {period.name} ({formatDate(period.start_date)} - {formatDate(period.end_date)})
-                  </option>
-                ))}
-              </select>
-              <DateInput
-                value={dateFrom}
-                onValueChange={(v) => setDateFrom(v)}
-                className="w-full sm:w-40 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3">
+            <div className="relative lg:col-span-2">
+              <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+              <input
+                type="text"
+                placeholder="Buscar asientos..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
-              <DateInput
-                value={dateTo}
-                onValueChange={(v) => setDateTo(v)}
-                className="w-full sm:w-40 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              <select
-                value={selectedAccountId}
-                onChange={(e) => setSelectedAccountId(e.target.value)}
-                className="w-full sm:w-72 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
-              >
-                <option value="">Todas las cuentas</option>
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.code} - {account.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={documentTypeFilter}
-                onChange={(e) => setDocumentTypeFilter(e.target.value)}
-                className="w-full sm:w-60 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
-              >
-                <option value="all">Todos los documentos</option>
-                {documentTypes.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ))}
-              </select>
-              
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full sm:w-48 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
-              >
-                <option value="all">Todos los estados</option>
-                <option value="draft">Borrador</option>
-                <option value="posted">Contabilizado</option>
-                <option value="reversed">Anulado</option>
-              </select>
             </div>
+            <select
+              value={selectedFiscalYear}
+              onChange={(e) => {
+                setSelectedFiscalYear(e.target.value);
+                setSelectedPeriodId('');
+              }}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+              title="Año fiscal (todos)"
+            >
+              <option value="">Año fiscal (todos)</option>
+              {fiscalYears.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+            <select
+              value={selectedPeriodId}
+              onChange={(e) => handlePeriodChange(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+              title="Período contable (todos)"
+            >
+              <option value="">Período contable (todos)</option>
+              {visiblePeriods.map((period) => (
+                <option key={period.id} value={period.id}>
+                  {period.name} ({formatDate(period.start_date)} - {formatDate(period.end_date)})
+                </option>
+              ))}
+            </select>
+            <DateInput
+              value={dateFrom}
+              onValueChange={(v) => setDateFrom(v)}
+              placeholder="Fecha desde"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <DateInput
+              value={dateTo}
+              onValueChange={(v) => setDateTo(v)}
+              placeholder="Fecha hasta"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+
+            <select
+              value={selectedAccountId}
+              onChange={(e) => setSelectedAccountId(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+            >
+              <option value="">Todas las cuentas</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.code} - {account.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={documentTypeFilter}
+              onChange={(e) => setDocumentTypeFilter(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+            >
+              <option value="all">Todos los documentos</option>
+              {documentTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-8"
+            >
+              <option value="all">Todos los estados</option>
+              <option value="draft">Borrador</option>
+              <option value="posted">Contabilizado</option>
+              <option value="reversed">Anulado</option>
+            </select>
           </div>
+
         </div>
 
         {/* Journal Entries Table */}
@@ -923,6 +1067,9 @@ const GeneralJournalPage = () => {
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Documento
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Proveedor
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Descripción
@@ -945,7 +1092,7 @@ const GeneralJournalPage = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredEntries.map((entry) => (
+              {sortedEntries.map((entry) => (
                 <tr key={entry.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {entry.entry_number}
@@ -955,6 +1102,9 @@ const GeneralJournalPage = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {getEntryDocumentType(entry)}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {entry.supplier_name || entry.vendor_name || entry.payee_name || entry.counterparty || '-'}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-900">
                     {entry.description}
@@ -970,11 +1120,11 @@ const GeneralJournalPage = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                      entry.status === 'posted' 
+                      entry.status === 'posted'
                         ? 'bg-green-100 text-green-800'
                         : entry.status === 'draft'
-                        ? 'bg-yellow-100 text-yellow-800'
-                        : 'bg-red-100 text-red-800'
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-red-100 text-red-800'
                     }`}>
                       {entry.status === 'posted' ? 'Contabilizado' : 
                        entry.status === 'draft' ? 'Borrador' : 'Anulado'}
@@ -1358,6 +1508,19 @@ const GeneralJournalPage = () => {
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot className="bg-gray-50">
+                      <tr>
+                        <td colSpan={2} className="px-4 py-3 text-right font-semibold text-gray-900">
+                          Totales:
+                        </td>
+                        <td className="px-4 py-3 font-bold text-gray-900">
+                          RD${formatAmount(selectedEntry.total_debit)}
+                        </td>
+                        <td className="px-4 py-3 font-bold text-gray-900">
+                          RD${formatAmount(selectedEntry.total_credit)}
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>

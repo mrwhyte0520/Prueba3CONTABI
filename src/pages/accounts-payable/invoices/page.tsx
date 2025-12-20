@@ -81,6 +81,9 @@ export default function APInvoicesPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<APInvoice | null>(null);
 
+  const [showSelectExistingInvoicesModal, setShowSelectExistingInvoicesModal] = useState(false);
+  const [selectedInvoicesToConvert, setSelectedInvoicesToConvert] = useState<any[]>([]);
+
   const [showDocumentPreviewModal, setShowDocumentPreviewModal] = useState(false);
   const [documentPreviewType, setDocumentPreviewType] = useState<'pdf' | 'table' | 'html'>('html');
   const [documentPreviewTitle, setDocumentPreviewTitle] = useState('');
@@ -91,6 +94,21 @@ export default function APInvoicesPage() {
   const [documentPreviewRows, setDocumentPreviewRows] = useState<Array<Array<string | number>>>([]);
   const [documentPreviewSummary, setDocumentPreviewSummary] = useState<Array<{ label: string; value: string }>>([]);
   const documentPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const formatTaxId = (raw: string) => {
+    const digits = (raw || '').replace(/\D/g, '');
+    // RNC (9 dígitos): 000-00000-0   |   Cédula (11 dígitos): 000-0000000-0
+    if (digits.length <= 9) {
+      const d = digits.slice(0, 9);
+      if (d.length <= 3) return d;
+      if (d.length <= 8) return `${d.slice(0, 3)}-${d.slice(3)}`;
+      return `${d.slice(0, 3)}-${d.slice(3, 8)}-${d.slice(8)}`;
+    }
+    const d = digits.slice(0, 11);
+    if (d.length <= 3) return d;
+    if (d.length <= 10) return `${d.slice(0, 3)}-${d.slice(3)}`;
+    return `${d.slice(0, 3)}-${d.slice(3, 10)}-${d.slice(10)}`;
+  };
 
   const [headerForm, setHeaderForm] = useState({
     supplierId: '',
@@ -1521,8 +1539,12 @@ export default function APInvoicesPage() {
                     <input
                       type="text"
                       value={headerForm.taxId}
-                      onChange={(e) => setHeaderForm(prev => ({ ...prev, taxId: e.target.value }))}
+                      onChange={(e) => {
+                        const formatted = formatTaxId(e.target.value);
+                        setHeaderForm(prev => ({ ...prev, taxId: formatted }));
+                      }}
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="000-00000-0 / 000-0000000-0"
                     />
                   </div>
 

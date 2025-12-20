@@ -70,6 +70,9 @@ interface LedgerEntry {
   credit: number;
   balance: number;
   entryNumber: string;
+  accountId?: string;
+  accountCode?: string;
+  accountName?: string;
 }
 
 const getEntryDocumentType = (entry: LedgerEntry): string => {
@@ -186,29 +189,46 @@ const GeneralLedgerPage: FC = () => {
 
     try {
       setLoading(true);
+      const isAll = accountId === 'ALL';
+
       let query = supabase
         .from('journal_entry_lines')
         .select(`
           id,
+          account_id,
           description,
           debit_amount,
           credit_amount,
           journal_entries:journal_entries!inner(entry_date, entry_number, reference),
-          chart_accounts:chart_accounts!inner(id)
-        `)
-        .eq('account_id', accountId);
+          chart_accounts:chart_accounts!inner(id, code, name, normal_balance)
+        `);
 
-      // Orden por fecha de asiento ascendente para balance acumulado
+      if (!isAll) {
+        query = query.eq('account_id', accountId);
+      }
+
       const { data, error } = await query.order('entry_date', { ascending: true, foreignTable: 'journal_entries' });
 
       if (error) throw error;
 
-      const normal = selectedAccount?.normalBalance || 'debit';
-      let running = 0;
+      const runningByAccount = new Map<string, number>();
+
       const mapped: LedgerEntry[] = (data || []).map((line: any) => {
         const debit = Number(line.debit_amount || 0);
         const credit = Number(line.credit_amount || 0);
-        if (normal === 'debit') running += debit - credit; else running += credit - debit;
+        const accId = line.account_id as string;
+        const normal =
+          line.chart_accounts?.normal_balance === 'credit'
+            ? 'credit'
+            : 'debit';
+
+        const prev = runningByAccount.get(accId) || 0;
+        const next =
+          normal === 'debit'
+            ? prev + debit - credit
+            : prev + credit - debit;
+        runningByAccount.set(accId, next);
+
         return {
           id: line.id,
           date: line.journal_entries.entry_date,
@@ -216,8 +236,11 @@ const GeneralLedgerPage: FC = () => {
           reference: line.journal_entries.reference || '',
           debit,
           credit,
-          balance: running,
-          entryNumber: line.journal_entries.entry_number || ''
+          balance: next,
+          entryNumber: line.journal_entries.entry_number || '',
+          accountId: accId,
+          accountCode: line.chart_accounts?.code || '',
+          accountName: line.chart_accounts?.name || '',
         } as LedgerEntry;
       });
 
@@ -585,6 +608,28 @@ const GeneralLedgerPage: FC = () => {
               </div>
             </div>
 
+            <div className="border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Ver todas las cuentas</p>
+                <p className="text-xs text-gray-500">Muestra el mayor general combinado.</p>
+              </div>
+              <button
+                onClick={() =>
+                  setSelectedAccount({
+                    id: 'ALL',
+                    code: 'TODAS',
+                    name: 'Todas las cuentas',
+                    type: 'all',
+                    balance: 0,
+                    normalBalance: 'debit',
+                  } as Account)
+                }
+                className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors"
+              >
+                Ver todas
+              </button>
+            </div>
+
             <div className="max-h-96 overflow-y-auto">
               {filteredAccounts.map((account) => (
                 <div
@@ -628,19 +673,31 @@ const GeneralLedgerPage: FC = () => {
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h2 className="text-lg font-semibold text-gray-900">
-                      Mayor de la Cuenta: {selectedAccount.code} - {selectedAccount.name}
+                      {selectedAccount.id === 'ALL'
+                        ? 'Mayor General - Todas las cuentas'
+                        : `Mayor de la Cuenta: ${selectedAccount.code} - ${selectedAccount.name}`}
                     </h2>
                     <p className="text-sm text-gray-600 mt-1">
-                      Tipo: {getAccountTypeName(selectedAccount.type)} | 
-                      Balance Normal: {selectedAccount.normalBalance === 'debit' ? 'Débito' : 'Crédito'}
+                      {selectedAccount.id === 'ALL'
+                        ? 'Incluye todas las cuentas contables'
+                        : `Tipo: ${getAccountTypeName(selectedAccount.type)} | Balance Normal: ${
+                            selectedAccount.normalBalance === 'debit' ? 'Débito' : 'Crédito'
+                          }`}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <div className="text-sm text-gray-600">Balance Actual</div>
-                    <div className={`text-xl font-bold ${getBalanceColor(selectedAccount.balance, selectedAccount.normalBalance)}`}>
-                      RD${formatAmount(Math.abs(selectedAccount.balance))}
+                  {selectedAccount.id !== 'ALL' && (
+                    <div className="text-right">
+                      <div className="text-sm text-gray-600">Balance Actual</div>
+                      <div
+                        className={`text-xl font-bold ${getBalanceColor(
+                          selectedAccount.balance,
+                          selectedAccount.normalBalance,
+                        )}`}
+                      >
+                        RD${formatAmount(Math.abs(selectedAccount.balance))}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* Date Filters */}

@@ -971,8 +971,12 @@ export default function FinancialStatementsPage() {
   const nonCurrentLiabilities = financialData.liabilities.nonCurrent;
   const equityItems = financialData.equity;
 
-  // Efectivo en Caja y Bancos: solo cuentas de caja/bancos reales, no cuentas de grupo como '10 ACTIVOS CORRIENTES'
-  const efectivoCajaBancos = sumByPrefixes(currentAssets, ['1001', '1002', '1102']);
+  // Efectivo en Caja y Bancos: excluir la cuenta de ITBIS (110201) para evitar doble conteo en efectivo
+  const efectivoCajaBancos = currentAssets.reduce((sum, item) => {
+    const normalizedCode = (item.code || '').replace(/\./g, '');
+    if (itbisAccountCode && normalizedCode === itbisAccountCode) return sum;
+    return ['1001', '1002', '1102'].some((p) => normalizedCode.startsWith(p)) ? sum + item.amount : sum;
+  }, 0);
   const cxcClientes = sumByPrefixes(currentAssets, ['1101']); // CxC Clientes
   const otrasCxc = sumByPrefixes(currentAssets, ['1103', '1104', '1105', '1199']); // Otras CxC (excluye 1102 que es Bancos)
   const itbisCompras = itbisAccountCode

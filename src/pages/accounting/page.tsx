@@ -75,6 +75,7 @@ export default function AccountingPage() {
   const [selectedReport, setSelectedReport] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
   const [trialBalanceMode, setTrialBalanceMode] = useState<'detail' | 'summary'>('detail');
+  const [netIncome, setNetIncome] = useState(0);
 
   const [journalForm, setJournalForm] = useState({
     entry_number: '',
@@ -99,6 +100,7 @@ export default function AccountingPage() {
       if (!user?.id) {
         setAccounts([]);
         setJournalEntries([]);
+        setNetIncome(0);
         return;
       }
       const [accountsData, entriesData] = await Promise.all([
@@ -108,6 +110,13 @@ export default function AccountingPage() {
       
       setAccounts(accountsData);
       setJournalEntries(entriesData);
+
+      // Calcular utilidad del período actual (mes en curso) para reflejarla en Patrimonio
+      const now = new Date();
+      const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+      const today = now.toISOString().slice(0, 10);
+      const incomeStatement = await chartAccountsService.generateIncomeStatement(user.id, firstDayOfMonth, today);
+      setNetIncome(incomeStatement?.netIncome || 0);
     } catch (error) {
       console.error('Error loading data:', error);
       console.error('Error details:', {
@@ -600,7 +609,8 @@ export default function AccountingPage() {
   const calculateAccountTypeTotal = (type: string) => {
     const accounts = getAccountsByType(type);
     if (accounts.length === 0) return null;
-    const total = accounts.reduce((sum, account) => sum + (account.balance || 0), 0);
+    const baseTotal = accounts.reduce((sum, account) => sum + (account.balance || 0), 0);
+    const total = type === 'equity' ? baseTotal + netIncome : baseTotal;
     return total === 0 ? null : total;
   };
 
