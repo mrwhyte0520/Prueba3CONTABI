@@ -183,6 +183,33 @@ export default function PublicDocumentPage() {
     const htmlStr = buildHtml();
     if (!htmlStr) return;
 
+    try {
+      const win = window.open('', '_blank', 'noopener,noreferrer');
+      if (win) {
+        win.document.open();
+        win.document.write(htmlStr);
+        win.document.close();
+
+        const doPrint = () => {
+          try {
+            win.focus();
+            win.print();
+          } catch {
+            // ignore
+          }
+        };
+
+        win.onload = () => {
+          setTimeout(doPrint, 150);
+        };
+
+        setTimeout(doPrint, 600);
+        return;
+      }
+    } catch {
+      // ignore and fallback
+    }
+
     const blob = new Blob([htmlStr], { type: 'text/html;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
 
