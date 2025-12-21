@@ -183,35 +183,52 @@ export default function PublicDocumentPage() {
     const htmlStr = buildHtml();
     if (!htmlStr) return;
 
+    // First try printing the already rendered iframe (most reliable on Android/Chrome)
     try {
-      const win = window.open('', '_blank', 'noopener,noreferrer');
-      if (win) {
-        win.document.open();
-        win.document.write(htmlStr);
-        win.document.close();
-
-        const doPrint = () => {
-          try {
-            win.focus();
-            win.print();
-          } catch {
-            // ignore
-          }
-        };
-
-        win.onload = () => {
-          setTimeout(doPrint, 150);
-        };
-
-        setTimeout(doPrint, 600);
+      const existingFrame = iframeRef.current;
+      const existingWin = existingFrame?.contentWindow;
+      if (existingWin) {
+        existingWin.focus();
+        existingWin.print();
         return;
       }
     } catch {
       // ignore and fallback
     }
 
+    // Prefer Blob URL + new tab printing (more reliable on mobile Safari than document.write)
     const blob = new Blob([htmlStr], { type: 'text/html;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
+
+    try {
+      const win = window.open(url, '_blank', 'noopener,noreferrer');
+      if (win) {
+        const cleanup = () => {
+          try {
+            URL.revokeObjectURL(url);
+          } catch {
+            // ignore
+          }
+        };
+
+        const doPrint = () => {
+          try {
+            win.focus();
+            win.print();
+            setTimeout(cleanup, 2000);
+          } catch {
+            // ignore
+          }
+        };
+
+        // Some browsers don't reliably fire onload for blob windows; keep a delayed fallback
+        win.onload = () => setTimeout(doPrint, 150);
+        setTimeout(doPrint, 900);
+        return;
+      }
+    } catch {
+      // ignore and fallback
+    }
 
     const iframe = iframeRef.current;
     if (!iframe) return;
