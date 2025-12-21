@@ -1994,7 +1994,9 @@ export default function FinancialStatementsPage() {
             <div className="p-6">
               {/* Header con selector de fechas y botón de descarga */}
               <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
-                <div className="flex items-center gap-2">
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">Día / Mes / Año</div>
+                  <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-700">Desde:</label>
                   <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
@@ -2013,6 +2015,7 @@ export default function FinancialStatementsPage() {
                       setIncomeToDate(e.target.value || null);
                     }}
                   />
+                  </div>
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
@@ -2051,7 +2054,9 @@ export default function FinancialStatementsPage() {
 
               {showComparisonControls && (
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
-                  <div className="flex items-center gap-2">
+                  <div>
+                    <div className="text-[11px] text-gray-500 mb-1">Día / Mes / Año</div>
+                    <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-700">Comparativo desde:</label>
                     <DateInput
                       className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
@@ -2064,6 +2069,7 @@ export default function FinancialStatementsPage() {
                       value={comparisonToDate || ''}
                       onChange={(e) => handleComparisonToChange(e.target.value)}
                     />
+                    </div>
                   </div>
                   {comparisonFromDate && (
                     <button
@@ -2244,7 +2250,9 @@ export default function FinancialStatementsPage() {
             <div className="p-6">
               {/* Header con selector de fechas y botón de descarga */}
               <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
-                <div className="flex items-center gap-2">
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">Día / Mes / Año</div>
+                  <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-700">Desde:</label>
                   <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
@@ -2263,6 +2271,7 @@ export default function FinancialStatementsPage() {
                       setIncomeToDate(e.target.value || null);
                     }}
                   />
+                  </div>
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
@@ -2301,19 +2310,22 @@ export default function FinancialStatementsPage() {
 
               {showComparisonControls && (
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-700">Comparativo desde:</label>
-                    <DateInput
-                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
-                      value={comparisonFromDate || ''}
-                      onChange={(e) => handleComparisonFromChange(e.target.value)}
-                    />
-                    <span className="text-xs text-gray-700">Hasta:</span>
-                    <DateInput
-                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
-                      value={comparisonToDate || ''}
-                      onChange={(e) => handleComparisonToChange(e.target.value)}
-                    />
+                  <div>
+                    <div className="text-[11px] text-gray-500 mb-1">Día / Mes / Año</div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-700">Comparativo desde:</label>
+                      <DateInput
+                        className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                        value={comparisonFromDate || ''}
+                        onChange={(e) => handleComparisonFromChange(e.target.value)}
+                      />
+                      <span className="text-xs text-gray-700">Hasta:</span>
+                      <DateInput
+                        className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                        value={comparisonToDate || ''}
+                        onChange={(e) => handleComparisonToChange(e.target.value)}
+                      />
+                    </div>
                   </div>
                   {comparisonFromDate && (
                     <button
@@ -2461,19 +2473,22 @@ export default function FinancialStatementsPage() {
 
               {showComparisonControls && (
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-700">Comparativo desde:</label>
-                    <DateInput
-                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
-                      value={comparisonFromDate || ''}
-                      onChange={(e) => handleComparisonFromChange(e.target.value)}
-                    />
-                    <span className="text-xs text-gray-700">Hasta:</span>
-                    <DateInput
-                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
-                      value={comparisonToDate || ''}
-                      onChange={(e) => handleComparisonToChange(e.target.value)}
-                    />
+                  <div>
+                    <div className="text-[11px] text-gray-500 mb-1">Día / Mes / Año</div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-700">Comparativo desde:</label>
+                      <DateInput
+                        className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                        value={comparisonFromDate || ''}
+                        onChange={(e) => handleComparisonFromChange(e.target.value)}
+                      />
+                      <span className="text-xs text-gray-700">Hasta:</span>
+                      <DateInput
+                        className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                        value={comparisonToDate || ''}
+                        onChange={(e) => handleComparisonToChange(e.target.value)}
+                      />
+                    </div>
                   </div>
                   {comparisonFromDate && (
                     <button
@@ -2712,7 +2727,9 @@ export default function FinancialStatementsPage() {
             <div className="p-6">
               {/* Header con selector de período y botón de descarga */}
               <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
-                <div className="flex items-center gap-2">
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">Día / Mes / Año</div>
+                  <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-700">Desde:</label>
                   <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
@@ -2731,6 +2748,7 @@ export default function FinancialStatementsPage() {
                       setIncomeToDate(e.target.value || null);
                     }}
                   />
+                  </div>
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
@@ -2794,6 +2812,7 @@ export default function FinancialStatementsPage() {
               <div id="printable-statement">
               {/* Título centrado estilo profesional */}
               <div className="text-center mb-8">
+                <h1 className="text-base font-semibold text-gray-800 mb-1">NOTAS A LOS ESTADOS FINANCIEROS</h1>
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE RESULTADOS</h1>
                 <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
                 {comparisonPeriodLabel && (
@@ -3043,7 +3062,9 @@ export default function FinancialStatementsPage() {
             <div className="p-6">
               {/* Header con selector de fechas y botón de descarga */}
               <div className="flex items-center justify-between gap-2 mb-4 print-hidden">
-                <div className="flex items-center gap-2">
+                <div>
+                  <div className="text-xs text-gray-500 mb-1">Día / Mes / Año</div>
+                  <div className="flex items-center gap-2">
                   <label className="text-sm text-gray-700">Desde:</label>
                   <DateInput
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
@@ -3062,6 +3083,7 @@ export default function FinancialStatementsPage() {
                       setIncomeToDate(e.target.value || null);
                     }}
                   />
+                  </div>
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
@@ -3103,19 +3125,22 @@ export default function FinancialStatementsPage() {
 
               {showComparisonControls && (
                 <div className="flex items-center justify-end gap-2 mb-2 print-hidden">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-700">Comparativo desde:</label>
-                    <DateInput
-                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
-                      value={comparisonFromDate || ''}
-                      onChange={(e) => handleComparisonFromChange(e.target.value)}
-                    />
-                    <span className="text-xs text-gray-700">Hasta:</span>
-                    <DateInput
-                      className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
-                      value={comparisonToDate || ''}
-                      onChange={(e) => handleComparisonToChange(e.target.value)}
-                    />
+                  <div>
+                    <div className="text-[11px] text-gray-500 mb-1">Día / Mes / Año</div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-700">Comparativo desde:</label>
+                      <DateInput
+                        className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                        value={comparisonFromDate || ''}
+                        onChange={(e) => handleComparisonFromChange(e.target.value)}
+                      />
+                      <span className="text-xs text-gray-700">Hasta:</span>
+                      <DateInput
+                        className="border border-gray-300 rounded-lg px-3 py-1 text-xs"
+                        value={comparisonToDate || ''}
+                        onChange={(e) => handleComparisonToChange(e.target.value)}
+                      />
+                    </div>
                   </div>
                   {comparisonFromDate && (
                     <button
@@ -3139,6 +3164,7 @@ export default function FinancialStatementsPage() {
               <div id="printable-statement">
               {/* Título centrado estilo profesional */}
               <div className="text-center mb-8">
+                <h1 className="text-base font-semibold text-gray-800 mb-1">NOTAS A LOS ESTADOS FINANCIEROS</h1>
                 <h1 className="text-xl font-bold text-gray-900 mb-1">ESTADO DE FLUJOS DE EFECTIVO</h1>
                 <p className="text-sm text-gray-700 mb-0.5">{incomePeriodDates.periodLabel}</p>
                 {comparisonPeriodLabel && (

@@ -38,6 +38,8 @@ import PayrollAbsencesPage from '../pages/payroll/absences/page';
 import PayrollProcessPage from '../pages/payroll/payroll-process/page';
 import PayrollJournalEntryPage from '../pages/payroll/journal-entry/page';
 
+const PublicDocumentPage = lazy(() => import('../pages/public-document/page'));
+
 const HomePage = lazy(() => import('../pages/home/page'));
 const DashboardPage = lazy(() => import('../pages/dashboard/page'));
 const StatisticsPage = lazy(() => import('../pages/statistics/page'));
@@ -77,6 +79,7 @@ const LoginPage = lazy(() => import('../pages/auth/login'));
 const RegisterPage = lazy(() => import('../pages/auth/register'));
 const ResetPasswordPage = lazy(() => import('../pages/auth/reset-password'));
 const NotFoundPage = lazy(() => import('../pages/NotFound'));
+const DocumentPage = lazy(() => import('../pages/document/page'));
 
 // Settings Pages
 const SettingsPage = lazy(() => import('../pages/settings/page'));
@@ -160,6 +163,14 @@ const routes: RouteObject[] = [
   {
     path: '/',
     element: <HomePage />
+  },
+  {
+    path: '/public/document/:type/:token',
+    element: <PublicDocumentPage />,
+  },
+  {
+    path: '/document/:type/:id',
+    element: <DocumentPage />,
   },
   {
     path: '/referrals',

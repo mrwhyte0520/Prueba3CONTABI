@@ -4,6 +4,7 @@ import { exportToPdf } from '../../../utils/exportImportUtils';
 import { toast } from 'sonner';
 import { useAuth } from '../../../hooks/useAuth';
 import { formatAmount } from '../../../utils/numberFormat';
+import * as QRCode from 'qrcode';
 import {
   quotesService,
   customersService,
@@ -682,30 +683,46 @@ export default function QuotesPage() {
       setQuotes((prev) => prev.map((q) => q.id === quoteId ? { ...q, status: 'approved' } : q));
       toast.success(`Cotización ${quoteId} aprobada`);
     } catch (error) {
-      // eslint-disable-next-line no-console
       console.error('Error al aprobar cotización', error);
       toast.error('Error al aprobar la cotización');
     }
   };
 
-  const handlePrintQuote = (quoteId: string) => {
+  const handlePrintQuote = async (quoteId: string) => {
     const quote = quotes.find((q) => q.id === quoteId);
     if (!quote) return;
 
     const printWindow = window.open('', '_blank');
+
     if (!printWindow) {
       toast.error('No se pudo abrir la ventana de impresión');
       return;
     }
 
+    let qrDataUrl = '';
+    try {
+      const publicToken = (quote as any).public_token || (quote as any).publicToken;
+      const qrUrl = publicToken
+        ? `${window.location.origin}/public/document/quote/${encodeURIComponent(String(publicToken))}`
+        : `${window.location.origin}/document/quote/${encodeURIComponent(String(quote.id))}`;
+      qrDataUrl = await QRCode.toDataURL(qrUrl, {
+        errorCorrectionLevel: 'M',
+        margin: 1,
+        width: 160,
+      });
+    } catch {
+      qrDataUrl = '';
+    }
+
     const itemsHtml = (quote.items || [])
       .map(
-        (item) => `
+        (item, idx) => `
           <tr>
+            <td>${idx + 1}</td>
             <td>${item.description}</td>
-            <td>${item.quantity}</td>
-            <td>${quote.currency} ${formatAmount(item.price)}</td>
-            <td>${quote.currency} ${formatAmount(item.total)}</td>
+            <td class="num">${quote.currency} ${formatAmount(item.price)}</td>
+            <td class="num">${item.quantity}</td>
+            <td class="num">${quote.currency} ${formatAmount(item.total)}</td>
           </tr>`
       )
       .join('');
@@ -715,58 +732,133 @@ export default function QuotesPage() {
         <head>
           <title>Cotización ${quote.id}</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            .header { text-align: center; margin-bottom: 20px; }
-            .details { margin: 20px 0; }
+            :root {
+              --primary: #0b2a6f;
+              --accent: #19a34a;
+              --text: #111827;
+              --muted: #6b7280;
+              --border: #e5e7eb;
+              --bg: #ffffff;
+              --soft: #f3f4f6;
+            }
+            * { box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; padding: 28px; color: var(--text); background: var(--bg); }
+            .page { width: 100%; }
+            .top { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; align-items: start; }
+            .company { display: grid; grid-template-columns: 1fr; gap: 6px; }
+            .company-name { font-weight: 800; font-size: 18px; letter-spacing: 0.2px; color: var(--primary); }
+            .company-meta { font-size: 12px; color: var(--muted); line-height: 1.35; }
+            .doc { text-align: right; }
+            .doc-title { font-size: 44px; font-weight: 800; color: #9ca3af; letter-spacing: 1px; line-height: 1; }
+            .doc-number { margin-top: 6px; font-size: 22px; font-weight: 800; color: var(--accent); }
+            .doc-kv { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+            .qr { margin-top: 10px; width: 110px; height: 110px; }
+            .section-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; margin-top: 16px; }
+            .card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #fff; }
+            .card-head { background: var(--primary); padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+            .card-head-title { font-weight: 800; font-size: 14px; color: #fff; }
+            .badge { background: #fff; color: var(--primary); padding: 6px 10px; border-radius: 10px; font-weight: 800; font-size: 12px; }
+            .card-body { padding: 12px; }
+            .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 10px; font-size: 12px; }
+            .kv .k { color: var(--muted); }
+            .kv .v { color: var(--text); font-weight: 600; }
+            .table-wrap { margin-top: 18px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
             table { width: 100%; border-collapse: collapse; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            .total { font-weight: bold; text-align: right; }
+            thead th { background: var(--primary); color: #fff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; padding: 10px; text-align: left; }
+            tbody td { border-bottom: 1px solid var(--border); padding: 10px; font-size: 12px; vertical-align: top; }
+            tbody tr:last-child td { border-bottom: none; }
+            .num { text-align: right; font-variant-numeric: tabular-nums; }
+            .totals { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+            .totals-head { background: var(--primary); color: #fff; padding: 10px 12px; font-weight: 800; font-size: 13px; }
+            .totals-body { padding: 12px; }
+            .totals-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+            .totals-row:last-child { border-bottom: none; }
+            .totals-row .label { color: var(--muted); font-weight: 700; }
+            .totals-row .value { font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+            .totals-row.total .label, .totals-row.total .value { font-size: 14px; }
+            .totals-row.total .value { color: var(--primary); }
+            .footer-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; margin-top: 16px; }
+            .notes { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+            .notes-head { background: var(--primary); color: #fff; padding: 10px 12px; font-weight: 800; font-size: 13px; }
+            .notes-body { padding: 12px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+            @media print { body { padding: 0; } }
           </style>
         </head>
         <body>
-          <div class="header">
-            <h2>Cotización ${quote.id}</h2>
-            <p>Fecha: ${new Date(quote.date).toLocaleDateString('es-DO')}</p>
+          <div class="page">
+            <div class="top">
+              <div class="company">
+                <div class="company-name">ContaBi</div>
+              </div>
+              <div class="doc">
+                <div class="doc-title">COTIZACIÓN</div>
+                <div class="doc-number">#${quote.id}</div>
+                <div class="doc-kv">
+                  <div><strong>Fecha:</strong> ${new Date(quote.date).toLocaleDateString('es-DO')}</div>
+                  ${quote.validUntil ? `<div><strong>Válida hasta:</strong> ${new Date(quote.validUntil).toLocaleDateString('es-DO')}</div>` : ''}
+                </div>
+                ${qrDataUrl ? `<img class="qr" alt="QR" src="${qrDataUrl}" />` : ''}
+              </div>
+            </div>
+
+            <div class="section-grid">
+              <div class="card">
+                <div class="card-head">
+                  <div class="card-head-title">Cliente</div>
+                  <div class="badge">ID: ${quote.customerId || ''}</div>
+                </div>
+                <div class="card-body">
+                  <div class="kv">
+                    <div class="k">Nombre</div>
+                    <div class="v">${quote.customer}</div>
+                    ${quote.project ? `<div class="k">Proyecto</div><div class="v">${quote.project}</div>` : ''}
+                    <div class="k">Probabilidad</div>
+                    <div class="v">${quote.probability}%</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="totals">
+                <div class="totals-head">Resumen</div>
+                <div class="totals-body">
+                  <div class="totals-row"><div class="label">Subtotal</div><div class="value">${quote.currency} ${formatAmount(quote.amount)}</div></div>
+                  <div class="totals-row"><div class="label">Impuestos</div><div class="value">${quote.currency} ${formatAmount(quote.tax)}</div></div>
+                  <div class="totals-row total"><div class="label">Total</div><div class="value">${quote.currency} ${formatAmount(quote.total)}</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 54px;">No.</th>
+                    <th>Descripción</th>
+                    <th class="num" style="width: 110px;">Precio</th>
+                    <th class="num" style="width: 80px;">Cant.</th>
+                    <th class="num" style="width: 120px;">Importe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemsHtml}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="footer-grid">
+              <div class="notes">
+                <div class="notes-head">Notas</div>
+                <div class="notes-body">${quote.notes ? quote.notes : 'Gracias por su interés.'}</div>
+              </div>
+              <div></div>
+            </div>
           </div>
-          <div class="details">
-            <p><strong>Cliente:</strong> ${quote.customer}</p>
-            ${quote.project ? `<p><strong>Proyecto:</strong> ${quote.project}</p>` : ''}
-            <p><strong>Válida hasta:</strong> ${new Date(quote.validUntil).toLocaleDateString('es-DO')}</p>
-            <p><strong>Probabilidad:</strong> ${quote.probability}%</p>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Descripción</th>
-                <th>Cantidad</th>
-                <th>Precio</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsHtml}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="3" class="total">Subtotal:</td>
-                <td>${quote.currency} ${formatAmount(quote.amount)}</td>
-              </tr>
-              <tr>
-                <td colspan="3" class="total">Impuestos:</td>
-                <td>${quote.currency} ${formatAmount(quote.tax)}</td>
-              </tr>
-              <tr>
-                <td colspan="3" class="total">Total:</td>
-                <td>${quote.currency} ${formatAmount(quote.total)}</td>
-              </tr>
-            </tfoot>
-          </table>
           <script>
             window.onload = function() {
               window.print();
               setTimeout(() => window.close(), 1000);
             };
-          <\/script>
+          </script>
         </body>
       </html>
     `);
@@ -1224,7 +1316,7 @@ export default function QuotesPage() {
                           <i className="ri-edit-line"></i>
                         </button>
                         <button
-                          onClick={() => handlePrintQuote(quote.id)}
+                          onClick={() => { void handlePrintQuote(quote.id); }}
                           className="text-gray-600 hover:text-gray-900 p-1"
                           title="Imprimir cotización"
                         >

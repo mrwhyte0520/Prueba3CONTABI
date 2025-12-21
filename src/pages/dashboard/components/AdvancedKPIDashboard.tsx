@@ -325,6 +325,7 @@ export default function AdvancedKPIDashboard() {
     1,
     ...chartData.flatMap((d) => [
       Math.abs(d.revenue),
+      Math.abs(d.costs),
       Math.abs(d.expenses),
       Math.abs(d.profit),
     ]),
@@ -378,11 +379,15 @@ export default function AdvancedKPIDashboard() {
 
       {/* Segunda línea: Ingresos, Gastos y Utilidad */}
       <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold mb-4">Ingresos, Gastos y Utilidad</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <h3 className="text-lg font-semibold mb-4">Ingresos, Costos, Gastos y Utilidad</h3>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-purple-50 p-4 rounded">
             <p className="text-sm text-gray-600">Ingresos</p>
             <p className="text-xl font-bold text-purple-600">{formatCurrency(Math.abs(kpi.revenue))}</p>
+          </div>
+          <div className="bg-amber-50 p-4 rounded">
+            <p className="text-sm text-gray-600">Costos</p>
+            <p className="text-xl font-bold text-amber-700">{formatCurrency(kpi.costs)}</p>
           </div>
           <div className="bg-red-50 p-4 rounded">
             <p className="text-sm text-gray-600">Gastos</p>
@@ -410,6 +415,11 @@ export default function AdvancedKPIDashboard() {
                       title={`Ingresos: ${formatCurrency(d.revenue)}`}
                     />
                     <div
+                      className="bg-amber-500 rounded-t flex-1"
+                      style={{ height: `${Math.max((Math.abs(d.costs) / maxValue) * 100, 2)}%` }}
+                      title={`Costos: ${formatCurrency(d.costs)}`}
+                    />
+                    <div
                       className="bg-red-500 rounded-t flex-1"
                       style={{ height: `${Math.max((Math.abs(d.expenses) / maxValue) * 100, 2)}%` }}
                       title={`Gastos: ${formatCurrency(d.expenses)}`}
@@ -433,6 +443,10 @@ export default function AdvancedKPIDashboard() {
                   <div className="flex justify-between">
                     <span className="text-purple-600 font-medium">Ingresos</span>
                     <span className="font-semibold">100%</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-amber-700 font-medium">Costos</span>
+                    <span className="font-semibold">{formatPercentage(d.costs, d.revenue)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-red-600 font-medium">Gastos</span>

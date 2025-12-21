@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import DashboardLayout from '../../../components/layout/DashboardLayout';
 import * as ExcelJS from 'exceljs';
+import * as QRCode from 'qrcode';
 import { useAuth } from '../../../hooks/useAuth';
 import {
   apInvoicesService,
@@ -578,12 +579,14 @@ export default function APInvoicesPage() {
   };
 
   const handleEditInvoice = async (invoice: APInvoice) => {
+    const selectedSupplier = suppliers.find((s: any) => String(s.id) === String(invoice.supplierId));
+
     setEditingInvoice(invoice);
     setHeaderForm({
       supplierId: invoice.supplierId,
       documentType: invoice.documentType || 'B01',
-      taxId: invoice.taxId || '',
-      legalName: invoice.legalName || invoice.supplierName,
+      taxId: invoice.taxId || selectedSupplier?.tax_id || selectedSupplier?.rnc || '',
+      legalName: invoice.legalName || selectedSupplier?.legal_name || selectedSupplier?.name || invoice.supplierName,
       invoiceNumber: invoice.invoiceNumber,
       invoiceDate: invoice.invoiceDate || new Date().toISOString().slice(0, 10),
       dueDate: invoice.dueDate || '',
@@ -625,11 +628,11 @@ export default function APInvoicesPage() {
 
   const handleSupplierChange = (supplierId: string) => {
     setHeaderForm((prev) => {
-      const selected = suppliers.find((s: any) => String(s.id) === supplierId);
+      const selected = suppliers.find((s: any) => String(s.id) === String(supplierId));
       return {
         ...prev,
         supplierId,
-        taxId: selected?.tax_id || prev.taxId,
+        taxId: selected?.tax_id || selected?.rnc || prev.taxId,
         legalName: selected?.legal_name || selected?.name || prev.legalName,
         paymentTermsId: selected?.payment_terms_id ? String(selected.payment_terms_id) : prev.paymentTermsId,
         expenseType606: normalizeExpenseType606(selected?.expense_type_606) || '',
@@ -800,75 +803,168 @@ export default function APInvoicesPage() {
       }
 
       const supplierName = invoice.legalName || invoice.supplierName;
+      const supplier = suppliers.find((s: any) => String(s.id) === String(invoice.supplierId));
+      const supplierTaxId = String(invoice.taxId || (supplier as any)?.tax_id || (supplier as any)?.rnc || '').trim();
+      const supplierPhone = String((supplier as any)?.phone || '').trim();
+      const supplierEmail = String((supplier as any)?.email || '').trim();
+      const supplierAddress = String((supplier as any)?.address || '').trim();
       const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
       const companyRnc = (companyInfo as any)?.ruc || (companyInfo as any)?.tax_id || '';
 
       const safeNumber = invoice.invoiceNumber || invoice.id;
+
+      let qrDataUrl = '';
+      try {
+        const qrUrl = `${window.location.origin}/document/ap-invoice/${encodeURIComponent(String(invoice.id || safeNumber))}`;
+        qrDataUrl = await QRCode.toDataURL(qrUrl, {
+          errorCorrectionLevel: 'M',
+          margin: 1,
+          width: 160,
+        });
+      } catch {
+        qrDataUrl = '';
+      }
       const html = `
         <html>
           <head>
             <title>Factura de Suplidor ${safeNumber}</title>
             <style>
-              body { font-family: Arial, sans-serif; padding: 20px; }
-              .header { text-align: center; margin-bottom: 20px; }
-              .details { margin: 20px 0; }
+              :root {
+                --primary: #0b2a6f;
+                --accent: #19a34a;
+                --text: #111827;
+                --muted: #6b7280;
+                --border: #e5e7eb;
+                --bg: #ffffff;
+                --soft: #f3f4f6;
+              }
+              * { box-sizing: border-box; }
+              body { font-family: Arial, sans-serif; padding: 28px; color: var(--text); background: var(--bg); }
+              .page { width: 100%; }
+              .top { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; align-items: start; }
+              .company { display: grid; grid-template-columns: 1fr; gap: 6px; }
+              .company-name { font-weight: 800; font-size: 18px; letter-spacing: 0.2px; color: var(--primary); }
+              .company-meta { font-size: 12px; color: var(--muted); line-height: 1.35; }
+              .doc { text-align: right; }
+              .doc-title { font-size: 44px; font-weight: 800; color: #9ca3af; letter-spacing: 1px; line-height: 1; }
+              .doc-number { margin-top: 6px; font-size: 22px; font-weight: 800; color: var(--accent); }
+              .doc-kv { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+              .qr { margin-top: 10px; width: 110px; height: 110px; }
+              .section-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; align-items: start; margin-top: 16px; }
+              .card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #fff; }
+              .card-head { background: var(--primary); padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+              .card-head-title { font-weight: 800; font-size: 14px; color: #fff; }
+              .badge { background: #fff; color: var(--primary); padding: 6px 10px; border-radius: 10px; font-weight: 800; font-size: 12px; }
+              .card-body { padding: 12px; }
+              .kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 10px; font-size: 12px; }
+              .kv .k { color: var(--muted); }
+              .kv .v { color: var(--text); font-weight: 600; }
+              .table-wrap { margin-top: 18px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
               table { width: 100%; border-collapse: collapse; }
-              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-              .total { font-weight: bold; text-align: right; }
+              thead th { background: var(--primary); color: #fff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; padding: 10px; text-align: left; }
+              tbody td { border-bottom: 1px solid var(--border); padding: 10px; font-size: 12px; vertical-align: top; }
+              tbody tr:last-child td { border-bottom: none; }
+              .num { text-align: right; font-variant-numeric: tabular-nums; }
+              .totals { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+              .totals-head { background: var(--primary); color: #fff; padding: 10px 12px; font-weight: 800; font-size: 13px; }
+              .totals-body { padding: 12px; }
+              .totals-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+              .totals-row:last-child { border-bottom: none; }
+              .totals-row .label { color: var(--muted); font-weight: 700; }
+              .totals-row .value { font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+              .totals-row.total .label, .totals-row.total .value { font-size: 14px; }
+              .totals-row.total .value { color: var(--primary); }
+              .footer-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; margin-top: 16px; }
+              .notes { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+              .notes-head { background: var(--primary); color: #fff; padding: 10px 12px; font-weight: 800; font-size: 13px; }
+              .notes-body { padding: 12px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+              @media print { body { padding: 0; } }
             </style>
           </head>
           <body>
-            <div class="header">
-              <h1>${companyName}</h1>
-              ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
-              <h2>Factura de Suplidor #${safeNumber}</h2>
-              <p>Fecha: ${new Date(invoice.invoiceDate).toLocaleDateString('es-DO')}</p>
-            </div>
-            <div class="details">
-              <p><strong>Suplidor:</strong> ${supplierName}</p>
-              ${invoice.taxId ? `<p><strong>RNC / Tax ID:</strong> ${invoice.taxId}</p>` : ''}
-              ${invoice.storeName ? `<p><strong>Tienda:</strong> ${invoice.storeName}</p>` : ''}
-              <p><strong>Moneda:</strong> ${invoice.currency}</p>
-              <p><strong>Vencimiento:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('es-DO') : ''}</p>
-              ${invoice.notes ? `<p><strong>Notas:</strong> ${invoice.notes}</p>` : ''}
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Descripción</th>
-                  <th>Cantidad</th>
-                  <th>Precio</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${items
-                  .map(
-                    (item: any) => `
+            <div class="page">
+              <div class="top">
+                <div class="company">
+                  <div class="company-name">${companyName}</div>
+                  ${companyRnc ? `<div class="company-meta">RNC: ${companyRnc}</div>` : ''}
+                </div>
+                <div class="doc">
+                  <div class="doc-title">FACTURA</div>
+                  <div class="doc-number">#${safeNumber}</div>
+                  <div class="doc-kv">
+                    <div><strong>Fecha:</strong> ${new Date(invoice.invoiceDate).toLocaleDateString('es-DO')}</div>
+                    ${invoice.dueDate ? `<div><strong>Vence:</strong> ${new Date(invoice.dueDate).toLocaleDateString('es-DO')}</div>` : ''}
+                    ${invoice.currency ? `<div><strong>Moneda:</strong> ${invoice.currency}</div>` : ''}
+                  </div>
+                  ${qrDataUrl ? `<img class="qr" alt="QR" src="${qrDataUrl}" />` : ''}
+                </div>
+              </div>
+
+              <div class="section-grid">
+                <div class="card">
+                  <div class="card-head">
+                    <div class="card-head-title">Suplidor</div>
+                    <div class="badge">ID: ${invoice.supplierId || ''}</div>
+                  </div>
+                  <div class="card-body">
+                    <div class="kv">
+                      <div class="k">Nombre</div>
+                      <div class="v">${supplierName}</div>
+                      ${supplierTaxId ? `<div class="k">RNC / Tax ID</div><div class="v">${supplierTaxId}</div>` : ''}
+                      ${supplierPhone ? `<div class="k">Teléfono</div><div class="v">${supplierPhone}</div>` : ''}
+                      ${supplierEmail ? `<div class="k">Email</div><div class="v">${supplierEmail}</div>` : ''}
+                      ${supplierAddress ? `<div class="k">Dirección</div><div class="v">${supplierAddress}</div>` : ''}
+                      ${invoice.storeName ? `<div class="k">Tienda</div><div class="v">${invoice.storeName}</div>` : ''}
+                    </div>
+                  </div>
+                </div>
+
+                <div class="totals">
+                  <div class="totals-head">Resumen</div>
+                  <div class="totals-body">
+                    <div class="totals-row"><div class="label">Bruto</div><div class="value">${invoice.currency} ${formatAmount(invoice.totalGross)}</div></div>
+                    <div class="totals-row"><div class="label">ITBIS</div><div class="value">${invoice.currency} ${formatAmount(invoice.totalItbis)}</div></div>
+                    <div class="totals-row total"><div class="label">Total a pagar</div><div class="value">${invoice.currency} ${formatAmount(invoice.totalToPay)}</div></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
                     <tr>
-                      <td>${item.description}</td>
-                      <td>${item.quantity}</td>
-                      <td>${invoice.currency} ${formatAmount(item.unitPrice)}</td>
-                      <td>${invoice.currency} ${formatAmount(item.total)}</td>
-                    </tr>`
-                  )
-                  .join('')}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colspan="3" class="total">Bruto:</td>
-                  <td>${invoice.currency} ${formatAmount(invoice.totalGross)}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" class="total">ITBIS:</td>
-                  <td>${invoice.currency} ${formatAmount(invoice.totalItbis)}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" class="total">Total a pagar:</td>
-                  <td>${invoice.currency} ${formatAmount(invoice.totalToPay)}</td>
-                </tr>
-              </tfoot>
-            </table>
+                      <th style="width: 54px;">No.</th>
+                      <th>Descripción</th>
+                      <th class="num" style="width: 110px;">Precio</th>
+                      <th class="num" style="width: 80px;">Cant.</th>
+                      <th class="num" style="width: 120px;">Importe</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${items
+                      .map(
+                        (item: any, idx: number) => `
+                        <tr>
+                          <td>${idx + 1}</td>
+                          <td>${item.description}</td>
+                          <td class="num">${invoice.currency} ${formatAmount(item.unitPrice)}</td>
+                          <td class="num">${item.quantity}</td>
+                          <td class="num">${invoice.currency} ${formatAmount(item.total)}</td>
+                        </tr>`
+                      )
+                      .join('')}
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="footer-grid">
+                <div class="notes">
+                  <div class="notes-head">Notas</div>
+                  <div class="notes-body">${invoice.notes ? invoice.notes : 'Gracias por su compra.'}</div>
+                </div>
+                <div></div>
+              </div>
+            </div>
           </body>
         </html>
       `;
@@ -906,6 +1002,11 @@ export default function APInvoicesPage() {
       }
 
       const supplierName = invoice.legalName || invoice.supplierName;
+      const supplier = suppliers.find((s: any) => String(s.id) === String(invoice.supplierId));
+      const supplierTaxId = String(invoice.taxId || (supplier as any)?.tax_id || (supplier as any)?.rnc || '').trim();
+      const supplierPhone = String((supplier as any)?.phone || '').trim();
+      const supplierEmail = String((supplier as any)?.email || '').trim();
+      const supplierAddress = String((supplier as any)?.address || '').trim();
       const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
       const companyRnc = (companyInfo as any)?.rnc || (companyInfo as any)?.tax_id || (companyInfo as any)?.ruc || '';
 
@@ -932,7 +1033,10 @@ export default function APInvoicesPage() {
       worksheet.addRow([]);
 
       worksheet.addRow(['Suplidor', supplierName]);
-      if (invoice.taxId) worksheet.addRow(['RNC / Tax ID', invoice.taxId]);
+      if (supplierTaxId) worksheet.addRow(['RNC / Tax ID', supplierTaxId]);
+      if (supplierPhone) worksheet.addRow(['Teléfono', supplierPhone]);
+      if (supplierEmail) worksheet.addRow(['Email', supplierEmail]);
+      if (supplierAddress) worksheet.addRow(['Dirección', supplierAddress]);
       if (invoice.storeName) worksheet.addRow(['Tienda', invoice.storeName]);
       worksheet.addRow([
         'Moneda',
@@ -1480,6 +1584,30 @@ export default function APInvoicesPage() {
                       ))}
                     </select>
                   </div>
+
+                  {headerForm.supplierId ? (
+                    <div className="md:col-span-2 lg:col-span-3">
+                      {(() => {
+                        const s = suppliers.find((row: any) => String(row.id) === String(headerForm.supplierId));
+                        if (!s) return null;
+                        const name = String(s.legal_name || s.name || '').trim();
+                        const taxId = String(s.tax_id || s.rnc || '').trim();
+                        const phone = String(s.phone || '').trim();
+                        const email = String(s.email || '').trim();
+                        const address = String(s.address || '').trim();
+                        if (!name && !taxId && !phone && !email && !address) return null;
+                        return (
+                          <div className="p-3 bg-gray-50 rounded-lg text-xs md:text-sm text-gray-700">
+                            {name ? <p className="font-medium">{name}</p> : null}
+                            {taxId ? <p>RNC / Tax ID: {taxId}</p> : null}
+                            {phone ? <p>Teléfono: {phone}</p> : null}
+                            {email ? <p>Email: {email}</p> : null}
+                            {address ? <p>Dirección: {address}</p> : null}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : null}
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Orden de Compra <span className="text-red-500">*</span></label>

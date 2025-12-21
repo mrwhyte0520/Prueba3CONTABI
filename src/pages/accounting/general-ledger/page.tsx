@@ -98,6 +98,27 @@ const getEntryDocumentType = (entry: LedgerEntry): string => {
   return 'Otro';
 };
 
+const getEntryInfo = (entry: LedgerEntry): string => {
+  const docType = getEntryDocumentType(entry);
+  const ref = String(entry.reference || '').trim();
+  const desc = String(entry.description || '').trim();
+
+  if (docType === 'Otro') {
+    if (ref) return ref;
+    if (desc) return desc;
+    return '';
+  }
+
+  if (ref) return `${docType} ${ref}`;
+  if (desc) return `${docType} ${desc}`;
+  return docType;
+};
+
+const isUuidLike = (value: string): boolean => {
+  const v = String(value || '').trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+};
+
 const GeneralLedgerPage: FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -211,6 +232,42 @@ const GeneralLedgerPage: FC = () => {
 
       if (error) throw error;
 
+      // Resolver referencias UUID a números legibles (facturas de suplidor / facturas de venta)
+      const rawRefs = Array.from(
+        new Set(
+          (data || [])
+            .map((line: any) => String(line?.journal_entries?.reference || '').trim())
+            .filter((ref: string) => isUuidLike(ref)),
+        ),
+      );
+
+      const referenceLabelById = new Map<string, string>();
+      if (rawRefs.length > 0) {
+        try {
+          const [{ data: apInvs, error: apErr }, { data: arInvs, error: arErr }] = await Promise.all([
+            supabase.from('ap_invoices').select('id, invoice_number').in('id', rawRefs),
+            supabase.from('invoices').select('id, invoice_number').in('id', rawRefs),
+          ]);
+
+          if (!apErr && apInvs) {
+            (apInvs as any[]).forEach((row: any) => {
+              const id = String(row?.id || '').trim();
+              const num = String(row?.invoice_number || '').trim();
+              if (id && num) referenceLabelById.set(id, num);
+            });
+          }
+          if (!arErr && arInvs) {
+            (arInvs as any[]).forEach((row: any) => {
+              const id = String(row?.id || '').trim();
+              const num = String(row?.invoice_number || '').trim();
+              if (id && num) referenceLabelById.set(id, num);
+            });
+          }
+        } catch (lookupErr) {
+          console.error('Error resolviendo referencias de Mayor General:', lookupErr);
+        }
+      }
+
       const runningByAccount = new Map<string, number>();
 
       const mapped: LedgerEntry[] = (data || []).map((line: any) => {
@@ -229,11 +286,14 @@ const GeneralLedgerPage: FC = () => {
             : prev + credit - debit;
         runningByAccount.set(accId, next);
 
+        const rawReference = String(line.journal_entries?.reference || '').trim();
+        const resolvedReference = referenceLabelById.get(rawReference) || rawReference;
+
         return {
           id: line.id,
           date: line.journal_entries.entry_date,
           description: line.description || '',
-          reference: line.journal_entries.reference || '',
+          reference: resolvedReference,
           debit,
           credit,
           balance: next,
@@ -271,7 +331,7 @@ const GeneralLedgerPage: FC = () => {
           'Tipo Doc.': 'Balance inicial',
           Fecha: dateFrom ? formatDate(dateFrom) : 'Inicio',
           Descripción: `Balance inicial - ${selectedAccount.code} ${selectedAccount.name}`,
-          Referencia: '',
+          Información: '',
           Débito: '',
           Crédito: '',
           Balance: openingBalance,
@@ -281,7 +341,7 @@ const GeneralLedgerPage: FC = () => {
           'Tipo Doc.': getEntryDocumentType(e),
           Fecha: formatDate(e.date),
           Descripción: e.description || '',
-          Referencia: e.reference || '',
+          Información: getEntryInfo(e),
           Débito: e.debit > 0 ? e.debit : '',
           Crédito: e.credit > 0 ? e.credit : '',
           Balance: e.balance,
@@ -333,7 +393,7 @@ const GeneralLedgerPage: FC = () => {
         { wch: 20 }, // Tipo Doc
         { wch: 12 }, // Fecha  
         { wch: 40 }, // Descripción
-        { wch: 15 }, // Referencia
+        { wch: 32 }, // Información
         { wch: 15 }, // Débito
         { wch: 15 }, // Crédito
         { wch: 15 }, // Balance
@@ -840,7 +900,7 @@ const GeneralLedgerPage: FC = () => {
                           Descripción
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Referencia
+                          Información
                         </th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Débito
@@ -903,7 +963,7 @@ const GeneralLedgerPage: FC = () => {
                                   {entry.description}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                  {entry.reference}
+                                  {getEntryInfo(entry)}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                   {entry.debit > 0
