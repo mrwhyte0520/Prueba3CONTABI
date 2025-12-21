@@ -56,6 +56,7 @@ interface UiInvoice {
   salesRepId?: string | null;
   currency: string;
   baseTotal?: number | null;
+  publicToken?: string | null;
 }
 
 export default function InvoicingPage() {
@@ -271,6 +272,7 @@ export default function InvoicingPage() {
           salesRepId: (inv as any).sales_rep_id || null,
           currency: invCurrency,
           baseTotal,
+          publicToken: (inv as any).public_token || null,
         };
       }));
 
@@ -578,7 +580,7 @@ export default function InvoicingPage() {
 
     let qrDataUrl = '';
     try {
-      const publicToken = (invoice as any).public_token || (invoice as any).publicToken;
+      const publicToken = invoice.publicToken || (invoice as any).public_token || (invoice as any).publicToken;
       const qrUrl = publicToken
         ? `${window.location.origin}/public/document/invoice/${encodeURIComponent(String(publicToken))}`
         : `${window.location.origin}/document/invoice/${encodeURIComponent(String((invoice as any).internalId || invoice.id))}`;
