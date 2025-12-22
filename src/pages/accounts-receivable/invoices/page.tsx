@@ -3,6 +3,7 @@ import DashboardLayout from '../../../components/layout/DashboardLayout';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import * as ExcelJS from 'exceljs';
+import * as QRCode from 'qrcode';
 
 import { saveAs } from 'file-saver';
 import { useAuth } from '../../../hooks/useAuth';
@@ -26,6 +27,7 @@ import DateInput from '../../../components/common/DateInput';
 
 interface Invoice {
   id: string;
+  publicToken?: string | null;
   customerId: string;
   customerName: string;
   invoiceNumber: string;
@@ -92,6 +94,9 @@ export default function InvoicesPage() {
   const [newInvoiceDiscountPercent, setNewInvoiceDiscountPercent] = useState(0);
   const [newInvoiceNoTax, setNewInvoiceNoTax] = useState(false);
   const [taxConfig, setTaxConfig] = useState<{ itbis_rate: number } | null>(null);
+
+  const [newInvoiceDocumentType, setNewInvoiceDocumentType] = useState<string>('');
+  const [ncfSeries, setNcfSeries] = useState<any[]>([]);
 
   const currentItbisRate = taxConfig?.itbis_rate ?? 18;
 
@@ -190,6 +195,7 @@ export default function InvoicesPage() {
         }
         return {
           id: String(inv.id),
+          publicToken: (inv as any).public_token ?? (inv as any).publicToken ?? null,
           customerId: String(inv.customer_id),
           customerName: (inv.customers as any)?.name || 'Cliente',
           invoiceNumber: inv.invoice_number as string,
@@ -261,6 +267,24 @@ export default function InvoicesPage() {
   }, [user?.id]);
 
   useEffect(() => {
+    const loadNcfSeries = async () => {
+      if (!user?.id) {
+        setNcfSeries([]);
+        return;
+      }
+      try {
+        const series = await taxService.getNcfSeries(user.id);
+        setNcfSeries((series || []).filter((s: any) => s.status === 'active'));
+      } catch (error) {
+        console.error('Error cargando series NCF:', error);
+        setNcfSeries([]);
+      }
+    };
+
+    loadNcfSeries();
+  }, [user?.id]);
+
+  useEffect(() => {
     const loadCompanyInfo = async () => {
       const info = await settingsService.getCompanyInfo();
       setCompanyInfo(info);
@@ -296,28 +320,11 @@ export default function InvoicesPage() {
     }
   };
 
-  const getPaymentMethodName = (method: string) => {
-    switch (method) {
-      case 'cash': return 'Efectivo';
-      case 'check': return 'Cheque';
-      case 'transfer': return 'Transferencia';
-      case 'card': return 'Tarjeta';
-      default: return 'Otro';
-    }
-  };
-
-  const filteredInvoices = invoices.filter(invoice => {
-    const matchesSearch = invoice.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         invoice.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || invoice.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
-  });
-
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId);
 
   const handleNewInvoiceCustomerChange = (customerId: string) => {
     setSelectedCustomerId(customerId);
+
     const customer = customers.find((c) => c.id === customerId);
     if (!customer) {
       setNewInvoiceDiscountType('percentage');
@@ -328,7 +335,7 @@ export default function InvoicesPage() {
     }
 
     const type = customer.customerTypeId
-      ? customerTypes.find((t: any) => t.id === customer.customerTypeId)
+      ? customerTypes.find((t: any) => String(t.id) === String(customer.customerTypeId))
       : null;
 
     let discountPercent = 0;
@@ -343,6 +350,14 @@ export default function InvoicesPage() {
     setNewInvoiceNoTax(noTaxFlag);
     recalcNewInvoiceTotals([...newInvoiceItems], 'percentage', discountPercent, noTaxFlag);
   };
+
+  const filteredInvoices = invoices.filter(invoice => {
+    const matchesSearch = invoice.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         invoice.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || invoice.status === statusFilter;
+
+    return matchesSearch && matchesStatus;
+  });
 
   const exportToPDF = () => {
     const doc = new jsPDF();
@@ -492,37 +507,25 @@ export default function InvoicesPage() {
     const headerRow = worksheet.addRow([
       'Factura',
       'Cliente',
-      'Documento',
-      'Teléfono',
-      'Email',
-      'Dirección',
       'Fecha',
       'Vencimiento',
       'Monto',
       'Pagado',
       'Saldo',
       'Estado',
-      'Días Vencido',
     ]);
     headerRow.font = { bold: true };
 
     filteredInvoices.forEach((invoice) => {
-      const customer = customers.find((c) => c.id === invoice.customerId);
-
       worksheet.addRow([
         invoice.invoiceNumber,
         invoice.customerName,
-        customer?.document || '',
-        customer?.phone || '',
-        customer?.email || '',
-        customer?.address || '',
         formatDate(invoice.date),
         formatDate(invoice.dueDate),
         formatAmount(invoice.amount),
         formatAmount(invoice.paidAmount),
         formatAmount(invoice.balance),
         getStatusName(invoice.status),
-        invoice.daysOverdue,
       ]);
     });
 
@@ -530,21 +533,16 @@ export default function InvoicesPage() {
     worksheet.columns = [
       { width: 20 },  // Factura
       { width: 30 },  // Cliente
-      { width: 20 },  // Documento
-      { width: 16 },  // Teléfono
-      { width: 26 },  // Email
-      { width: 40 },  // Dirección
       { width: 14 },  // Fecha
       { width: 14 },  // Vencimiento
       { width: 16 },  // Monto
       { width: 16 },  // Pagado
       { width: 16 },  // Saldo
       { width: 14 },  // Estado
-      { width: 14 },  // Días Vencido
     ];
 
     // Formato numérico en columnas de montos (Monto, Pagado, Saldo)
-    ['I', 'J', 'K'].forEach((col) => {
+    ['E', 'F', 'G'].forEach((col) => {
       worksheet.getColumn(col).numFmt = '#,##0.00';
     });
 
@@ -553,139 +551,6 @@ export default function InvoicesPage() {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
     saveAs(blob, `facturas-por-cobrar-${new Date().toISOString().split('T')[0]}.xlsx`);
-  };
-
-  const handleNewInvoice = () => {
-    setSelectedInvoice(null);
-    setSelectedCustomerId('');
-    setNewInvoiceItems([{ itemId: undefined, description: '', quantity: 1, price: 0, total: 0 }]);
-    setNewInvoiceSubtotal(0);
-    setNewInvoiceTax(0);
-    setNewInvoiceTotal(0);
-    setNewInvoiceDiscountType('percentage');
-    setNewInvoiceDiscountPercent(0);
-    setNewInvoiceNoTax(false);
-    setShowInvoiceModal(true);
-  };
-
-  const handleRegisterPayment = (invoice?: Invoice) => {
-    setSelectedInvoice(invoice || null);
-    setShowPaymentModal(true);
-  };
-
-  const handleViewInvoice = (invoiceId: string) => {
-    const invoice = invoices.find(inv => inv.id === invoiceId);
-    if (invoice) {
-      alert(`Detalles de la factura ${invoice.invoiceNumber}:\n\nCliente: ${invoice.customerName}\nMonto: RD$ ${formatAmount(invoice.amount)}\nSaldo: RD$ ${formatAmount(invoice.balance)}\nEstado: ${getStatusName(invoice.status)}`);
-    }
-  };
-
-  const handlePrintInvoice = (invoiceId: string) => {
-    const invoice = invoices.find(inv => inv.id === invoiceId);
-    if (!invoice) return;
-
-    const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
-    const companyRnc = (companyInfo as any)?.ruc || (companyInfo as any)?.tax_id || '';
-
-    const customer = customers.find((c) => c.id === invoice.customerId);
-
-    const customerDetailsHtml = customer
-      ? `
-            <p><strong>Cliente:</strong> ${customer.name}</p>
-            ${customer.document ? `<p><strong>Documento:</strong> ${customer.document}</p>` : ''}
-            ${customer.phone ? `<p><strong>Teléfono:</strong> ${customer.phone}</p>` : ''}
-            ${customer.email ? `<p><strong>Email:</strong> ${customer.email}</p>` : ''}
-            ${customer.address ? `<p><strong>Dirección:</strong> ${customer.address}</p>` : ''}
-        `
-      : `
-            <p><strong>Cliente:</strong> ${invoice.customerName}</p>
-        `;
-
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert('No se pudo abrir la ventana de impresión.');
-      return;
-    }
-
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>Factura ${invoice.invoiceNumber}</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            .header { text-align: center; margin-bottom: 20px; }
-            .details { margin: 20px 0; }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            .total { font-weight: bold; text-align: right; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1>${companyName}</h1>
-            ${companyRnc ? `<p>RNC: ${companyRnc}</p>` : ''}
-            <h2>Factura #${invoice.invoiceNumber}</h2>
-            <p>Fecha: ${formatDate(invoice.date)}</p>
-          </div>
-          <div class="details">
-            ${customerDetailsHtml}
-            <p><strong>Vencimiento:</strong> ${invoice.dueDate ? formatDate(invoice.dueDate) : ''}</p>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Descripción</th>
-                <th>Cantidad</th>
-                <th>Precio</th>
-                <th>Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${invoice.items
-                .map(
-                  (item) => `
-                  <tr>
-                    <td>${item.description}</td>
-                    <td>${item.quantity}</td>
-                    <td>RD$ ${formatAmount(item.price)}</td>
-                    <td>RD$ ${formatAmount(item.total)}</td>
-                  </tr>`
-                )
-                .join('')}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="3" class="total">Subtotal:</td>
-                <td>RD$ ${formatAmount(invoice.subtotal)}</td>
-              </tr>
-              <tr>
-                <td colspan="3" class="total">ITBIS:</td>
-                <td>RD$ ${formatAmount(invoice.tax)}</td>
-              </tr>
-              <tr>
-                <td colspan="3" class="total">Total:</td>
-                <td>RD$ ${formatAmount(invoice.amount)}</td>
-              </tr>
-              <tr>
-                <td colspan="3" class="total">Pagado:</td>
-                <td>RD$ ${formatAmount(invoice.paidAmount)}</td>
-              </tr>
-              <tr>
-                <td colspan="3" class="total">Saldo:</td>
-                <td>RD$ ${formatAmount(invoice.balance)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          <script>
-            window.onload = function() {
-              window.print();
-              setTimeout(() => window.close(), 1000);
-            };
-          <\/script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
   };
 
   const handleExportInvoiceExcel = async (invoiceId: string) => {
@@ -701,8 +566,6 @@ export default function InvoicesPage() {
       (companyInfo as any)?.tax_id ||
       (companyInfo as any)?.ruc ||
       '';
-
-    const customer = customers.find((c) => c.id === invoice.customerId);
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Factura');
@@ -725,28 +588,17 @@ export default function InvoicesPage() {
     worksheet.getCell(`A${headerStartRow}`).font = { bold: true, size: 12 };
 
     worksheet.addRow([]);
-
-    const customerName = customer?.name || invoice.customerName;
-    const customerDoc = customer?.document || '';
-    const customerEmail = customer?.email || '';
-    const customerPhone = customer?.phone || '';
-
-    worksheet.addRow(['Cliente', customerName]);
-    if (customerDoc) worksheet.addRow(['Documento', customerDoc]);
-    if (customerEmail) worksheet.addRow(['Correo', customerEmail]);
-    if (customerPhone) worksheet.addRow(['Teléfono', customerPhone]);
-    worksheet.addRow([
-      'Fecha',
-      invoice.date ? formatDate(invoice.date) : '',
-    ]);
-    worksheet.addRow([
-      'Vencimiento',
-      invoice.dueDate ? formatDate(invoice.dueDate) : '',
-    ]);
+    worksheet.addRow(['Cliente', invoice.customerName]);
+    worksheet.addRow(['Fecha', invoice.date ? formatDate(invoice.date) : '']);
+    worksheet.addRow(['Vencimiento', invoice.dueDate ? formatDate(invoice.dueDate) : '']);
 
     worksheet.addRow([]);
-
-    const itemsHeader = worksheet.addRow(['Descripción', 'Cantidad', 'Precio', 'Total']);
+    const itemsHeader = worksheet.addRow([
+      'Descripción',
+      'Cantidad',
+      'Precio',
+      'Total',
+    ]);
     itemsHeader.font = { bold: true };
 
     invoice.items.forEach((item) => {
@@ -808,7 +660,33 @@ export default function InvoicesPage() {
     console.log('[Invoices] handleSaveInvoice payload', { customerId, dueDate, description, amount });
 
     const todayStr = new Date().toISOString().slice(0, 10);
-    const invoiceNumber = `FAC-${Date.now()}`;
+    let invoiceNumber = `FAC-${Date.now()}`;
+
+    const selectedDocType = String(newInvoiceDocumentType || '');
+    if (selectedDocType) {
+      const availableDocTypes = Array.from(
+        new Set(
+          (ncfSeries || [])
+            .filter((s: any) => s.status === 'active')
+            .map((s: any) => String(s.document_type)),
+        ),
+      );
+
+      if (!availableDocTypes.includes(selectedDocType)) {
+        alert('No hay serie NCF activa disponible para el tipo seleccionado.');
+        return;
+      }
+
+      try {
+        const nextNcf = await taxService.getNextNcf(user.id, selectedDocType);
+        if (nextNcf?.ncf) {
+          invoiceNumber = nextNcf.ncf;
+        }
+      } catch (ncfError) {
+        // eslint-disable-next-line no-console
+        console.error('[Invoices] No se pudo obtener NCF, usando número interno FAC-*', ncfError);
+      }
+    }
 
     const invoicePayload = {
       customer_id: customerId,
@@ -955,9 +833,7 @@ export default function InvoicesPage() {
             },
           ];
 
-          const description = currentInvoice.customerName
-            ? `Pago factura ${currentInvoice.invoiceNumber} - ${currentInvoice.customerName}`
-            : `Pago factura ${currentInvoice.invoiceNumber}`;
+          const description = `Pago factura ${currentInvoice.invoiceNumber}`;
 
           const refText = reference || '';
           const entryReference = createdPayment?.id
@@ -1005,13 +881,6 @@ export default function InvoicesPage() {
         });
 
         const receiptNo = (createdReceipt as any)?.receipt_number || receiptNumber;
-        const receiptDate = (createdReceipt as any)?.receipt_date || paymentDate;
-
-        const customer = customers.find((c) => c.id === currentInvoice.customerId);
-        const customerDocument = customer?.document || '';
-        const customerPhone = customer?.phone || '';
-        const customerEmail = customer?.email || '';
-        const customerAddress = customer?.address || '';
 
         const companyName = (companyInfo as any)?.name || (companyInfo as any)?.company_name || 'ContaBi';
         const companyRnc =
@@ -1147,6 +1016,227 @@ export default function InvoicesPage() {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const handleNewInvoice = () => {
+    setSelectedInvoice(null);
+    setSelectedCustomerId('');
+    setNewInvoiceItems([{ itemId: undefined, description: '', quantity: 1, price: 0, total: 0 }]);
+    setNewInvoiceDiscountType('percentage');
+    setNewInvoiceDiscountPercent(0);
+    setNewInvoiceNoTax(false);
+    setNewInvoiceDocumentType('');
+    recalcNewInvoiceTotals([{ itemId: undefined, description: '', quantity: 1, price: 0, total: 0 }]);
+    setShowInvoiceModal(true);
+  };
+
+  const handleRegisterPayment = (invoice?: Invoice) => {
+    setSelectedInvoice(invoice ?? null);
+    setShowPaymentModal(true);
+  };
+
+  const handleViewInvoice = (invoiceId: string) => {
+    const invoice = invoices.find((inv) => inv.id === invoiceId);
+    if (!invoice) return;
+    alert(
+      `Factura: ${invoice.invoiceNumber}\nCliente: ${invoice.customerName}\nMonto: RD$ ${formatAmount(invoice.amount)}\nPagado: RD$ ${formatAmount(invoice.paidAmount)}\nSaldo: RD$ ${formatAmount(invoice.balance)}`,
+    );
+  };
+
+  const handlePrintInvoice = (invoiceId: string) => {
+    const invoice = invoices.find((inv) => inv.id === invoiceId);
+    if (!invoice) return;
+
+    (async () => {
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        alert('No se pudo abrir la ventana de impresión');
+        return;
+      }
+
+      const fullCustomer = invoice.customerId
+        ? customers.find((c) => c.id === invoice.customerId)
+        : undefined;
+
+      const customerDocument = fullCustomer?.document || '';
+      const customerPhone = fullCustomer?.phone || '';
+      const customerEmail = fullCustomer?.email || '';
+      const customerAddress = fullCustomer?.address || '';
+
+      const companyName =
+        (companyInfo as any)?.name ||
+        (companyInfo as any)?.company_name ||
+        'ContaBi';
+
+      const companyRnc =
+        (companyInfo as any)?.rnc ||
+        (companyInfo as any)?.tax_id ||
+        (companyInfo as any)?.ruc ||
+        '';
+
+      const companyPhone =
+        (companyInfo as any)?.phone ||
+        (companyInfo as any)?.company_phone ||
+        (companyInfo as any)?.contact_phone ||
+        '';
+
+      const companyEmail =
+        (companyInfo as any)?.email ||
+        (companyInfo as any)?.company_email ||
+        (companyInfo as any)?.contact_email ||
+        '';
+
+      const companyAddress =
+        (companyInfo as any)?.address ||
+        (companyInfo as any)?.company_address ||
+        '';
+
+      let qrDataUrl = '';
+      try {
+        const token = invoice.publicToken;
+        const qrUrl = token
+          ? `${window.location.origin}/public/document/invoice/${encodeURIComponent(String(token))}`
+          : `${window.location.origin}/document/invoice/${encodeURIComponent(String(invoice.id))}`;
+        qrDataUrl = await QRCode.toDataURL(qrUrl, {
+          errorCorrectionLevel: 'M',
+          margin: 1,
+          width: 160,
+        });
+      } catch {
+        qrDataUrl = '';
+      }
+
+      const itemsHtml = (invoice.items || [])
+        .map(
+          (item, idx) => `
+            <tr>
+              <td>${idx + 1}</td>
+              <td>${item.description}</td>
+              <td class="num">RD$ ${formatAmount(item.price)}</td>
+              <td class="num">${item.quantity}</td>
+              <td class="num">RD$ ${formatAmount(item.total)}</td>
+            </tr>`,
+        )
+        .join('');
+
+      const html = `
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>Factura ${invoice.invoiceNumber}</title>
+            <style>
+              :root { --primary:#0b2a6f; --accent:#19a34a; --text:#111827; --muted:#6b7280; --border:#e5e7eb; --bg:#ffffff; }
+              * { box-sizing: border-box; }
+              body { font-family: Arial, sans-serif; padding: 28px; color: var(--text); background: var(--bg); }
+              .top { display:grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; align-items: start; }
+              .company-name { font-weight: 800; font-size: 18px; color: var(--primary); }
+              .company-meta { font-size: 12px; color: var(--muted); line-height: 1.35; }
+              .doc { text-align: right; }
+              .doc-title { font-size: 44px; font-weight: 800; color: #9ca3af; letter-spacing: 1px; line-height: 1; }
+              .doc-number { margin-top: 6px; font-size: 22px; font-weight: 800; color: var(--accent); }
+              .doc-kv { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+              .qr { margin-top: 10px; width: 110px; height: 110px; }
+              .grid { display:grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; margin-top: 16px; }
+              .card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #fff; }
+              .card-head { background: var(--primary); padding: 10px 12px; color: #fff; font-weight: 800; font-size: 13px; }
+              .card-body { padding: 12px; font-size: 12px; }
+              .kv { display:grid; grid-template-columns: 140px 1fr; gap: 6px 10px; }
+              .kv .k { color: var(--muted); }
+              .kv .v { color: var(--text); font-weight: 600; }
+              .table-wrap { margin-top: 18px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+              table { width: 100%; border-collapse: collapse; }
+              thead th { background: var(--primary); color: #fff; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; padding: 10px; text-align: left; }
+              tbody td { border-bottom: 1px solid var(--border); padding: 10px; font-size: 12px; vertical-align: top; }
+              tbody tr:last-child td { border-bottom: none; }
+              .num { text-align: right; font-variant-numeric: tabular-nums; }
+              .totals { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+              .totals-head { background: var(--primary); color: #fff; padding: 10px 12px; font-weight: 800; font-size: 13px; }
+              .totals-body { padding: 12px; }
+              .totals-row { display:grid; grid-template-columns: 1fr auto; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+              .totals-row:last-child { border-bottom: none; }
+              .totals-row .label { color: var(--muted); font-weight: 700; }
+              .totals-row .value { font-weight: 800; color: var(--text); }
+              .totals-row.total .value { color: var(--primary); }
+              @media print { body { padding: 0; } }
+            </style>
+          </head>
+          <body>
+            <div class="top">
+              <div>
+                <div class="company-name">${companyName}</div>
+                ${companyRnc ? `<div class="company-meta">RNC: ${companyRnc}</div>` : ''}
+                ${companyPhone ? `<div class="company-meta">Tel: ${companyPhone}</div>` : ''}
+                ${companyEmail ? `<div class="company-meta">Email: ${companyEmail}</div>` : ''}
+                ${companyAddress ? `<div class="company-meta">Dirección: ${companyAddress}</div>` : ''}
+              </div>
+              <div class="doc">
+                <div class="doc-title">FACTURA</div>
+                <div class="doc-number">#${invoice.invoiceNumber}</div>
+                <div class="doc-kv">
+                  <div><strong>Fecha:</strong> ${invoice.date ? formatDate(invoice.date) : ''}</div>
+                  ${invoice.dueDate ? `<div><strong>Vence:</strong> ${formatDate(invoice.dueDate)}</div>` : ''}
+                </div>
+                ${qrDataUrl ? `<img class="qr" alt="QR" src="${qrDataUrl}" />` : ''}
+              </div>
+            </div>
+
+            <div class="grid">
+              <div class="card">
+                <div class="card-head">Cliente</div>
+                <div class="card-body">
+                  <div class="kv">
+                    <div class="k">Nombre</div>
+                    <div class="v">${invoice.customerName}</div>
+                    ${customerDocument ? `<div class="k">Documento</div><div class="v">${customerDocument}</div>` : ''}
+                    ${customerPhone ? `<div class="k">Teléfono</div><div class="v">${customerPhone}</div>` : ''}
+                    ${customerEmail ? `<div class="k">Email</div><div class="v">${customerEmail}</div>` : ''}
+                    ${customerAddress ? `<div class="k">Dirección</div><div class="v">${customerAddress}</div>` : ''}
+                    <div class="k">Factura</div>
+                    <div class="v">${invoice.invoiceNumber}</div>
+                  </div>
+                </div>
+              </div>
+              <div class="totals">
+                <div class="totals-head">Resumen</div>
+                <div class="totals-body">
+                  <div class="totals-row"><div class="label">Subtotal</div><div class="value">RD$ ${formatAmount(invoice.subtotal)}</div></div>
+                  <div class="totals-row"><div class="label">ITBIS</div><div class="value">RD$ ${formatAmount(invoice.tax)}</div></div>
+                  <div class="totals-row total"><div class="label">Total</div><div class="value">RD$ ${formatAmount(invoice.amount)}</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 54px;">No.</th>
+                    <th>Descripción</th>
+                    <th class="num" style="width: 110px;">Precio</th>
+                    <th class="num" style="width: 80px;">Cant.</th>
+                    <th class="num" style="width: 120px;">Importe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemsHtml}
+                </tbody>
+              </table>
+            </div>
+
+            <script>
+              window.onload = function() {
+                window.print();
+                setTimeout(() => window.close(), 1000);
+              };
+            </script>
+          </body>
+        </html>
+      `;
+
+      printWindow.document.write(html);
+      printWindow.document.close();
+    })();
   };
 
   const handleCancelInvoice = async (invoice: Invoice) => {
@@ -1380,6 +1470,7 @@ export default function InvoicesPage() {
                     <select 
                       required
                       name="customer_id"
+                      value={selectedCustomerId}
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                       onChange={(e) => handleNewInvoiceCustomerChange(e.target.value)}
                     >
@@ -1401,6 +1492,27 @@ export default function InvoicesPage() {
                       name="due_date"
                       className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de documento (NCF)</label>
+                    <select
+                      value={newInvoiceDocumentType}
+                      onChange={(e) => setNewInvoiceDocumentType(e.target.value)}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                    >
+                      <option value="">Sin seleccionar...</option>
+                      {Array.from(
+                        new Set(
+                          (ncfSeries || [])
+                            .filter((s: any) => s.status === 'active')
+                            .map((s: any) => String(s.document_type)),
+                        ),
+                      ).map((dt) => (
+                        <option key={dt} value={dt}>
+                          {dt}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 

@@ -18,6 +18,8 @@ interface Payment {
   paymentMethod: 'cash' | 'check' | 'transfer' | 'card';
   date: string;
   reference: string;
+  itbisWithheld: number;
+  isrWithheld: number;
 }
 
 interface InvoiceOption {
@@ -28,6 +30,8 @@ interface InvoiceOption {
   customerId: string;
   totalAmount: number;
   paidAmount: number;
+  taxAmount?: number;
+  status?: string;
 }
 
 interface BankAccountOption {
@@ -61,6 +65,11 @@ export default function PaymentsPage() {
   const [documentPreviewRows, setDocumentPreviewRows] = useState<Array<Array<string | number>>>([]);
   const [documentPreviewSummary, setDocumentPreviewSummary] = useState<Array<{ label: string; value: string }>>([]);
   const documentPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  const [paymentInvoiceId, setPaymentInvoiceId] = useState<string>('');
+  const [paymentAmount, setPaymentAmount] = useState<number>(0);
+  const [paymentItbisWithheld, setPaymentItbisWithheld] = useState<number>(0);
+  const [paymentIsrWithheld, setPaymentIsrWithheld] = useState<number>(0);
 
   const receivableAccounts = accounts.filter((acc) => {
     if (!acc.allowPosting) return false;
@@ -113,6 +122,8 @@ export default function PaymentsPage() {
           paymentMethod: p.payment_method,
           date: p.payment_date,
           reference: p.reference || '',
+          itbisWithheld: Number(p.itbis_withheld) || 0,
+          isrWithheld: Number(p.isr_withheld) || 0,
         }));
         setPayments(mappedPayments);
 
@@ -121,6 +132,7 @@ export default function PaymentsPage() {
           .map((inv: any) => {
             const total = Number(inv.total_amount) || 0;
             const paid = Number(inv.paid_amount) || 0;
+            const taxAmount = Number(inv.tax_amount) || 0;
             return {
               id: inv.id,
               invoiceNumber: inv.invoice_number,
@@ -129,6 +141,8 @@ export default function PaymentsPage() {
               balance: Math.max(total - paid, 0),
               totalAmount: total,
               paidAmount: paid,
+              taxAmount,
+              status: inv.status,
             };
           });
         setInvoices(mappedInvoices);
@@ -336,12 +350,14 @@ export default function PaymentsPage() {
       payment.invoiceNumber,
       formatMoney(payment.amount),
       getPaymentMethodName(payment.paymentMethod),
-      payment.reference
+      payment.reference,
+      formatMoney(payment.itbisWithheld),
+      formatMoney(payment.isrWithheld)
     ]);
 
     (doc as any).autoTable({
       startY: (doc as any).lastAutoTable.finalY + 30,
-      head: [['Fecha', 'Cliente', 'Factura', 'Monto', 'Método', 'Referencia']],
+      head: [['Fecha', 'Cliente', 'Factura', 'Monto', 'Método', 'Referencia', 'ITBIS Retenido', 'ISR Retenido']],
       body: paymentData,
       theme: 'striped',
       headStyles: { fillColor: [16, 185, 129] },
@@ -360,6 +376,8 @@ export default function PaymentsPage() {
       amount: payment.amount,
       method: getPaymentMethodName(payment.paymentMethod),
       reference: payment.reference,
+      itbisWithheld: payment.itbisWithheld,
+      isrWithheld: payment.isrWithheld,
     }));
 
     if (!rows.length) {
@@ -377,6 +395,8 @@ export default function PaymentsPage() {
       { key: 'amount', title: 'Monto' },
       { key: 'method', title: 'Método' },
       { key: 'reference', title: 'Referencia' },
+      { key: 'itbisWithheld', title: 'ITBIS Retenido' },
+      { key: 'isrWithheld', title: 'ISR Retenido' },
     ];
 
     const wb = new ExcelJS.Workbook();
@@ -388,6 +408,8 @@ export default function PaymentsPage() {
       { key: 'amount', header: 'Monto', width: 16 },
       { key: 'method', header: 'Método', width: 18 },
       { key: 'reference', header: 'Referencia', width: 24 },
+      { key: 'itbisWithheld', header: 'ITBIS Retenido', width: 16 },
+      { key: 'isrWithheld', header: 'ISR Retenido', width: 16 },
     ];
 
     const headerRow = ws.getRow(1);
@@ -399,6 +421,12 @@ export default function PaymentsPage() {
 
     const amountCol = ws.getColumn('amount');
     amountCol.numFmt = '#,##0.00';
+
+    const itbisCol = ws.getColumn('itbisWithheld');
+    itbisCol.numFmt = '#,##0.00';
+
+    const isrCol = ws.getColumn('isrWithheld');
+    isrCol.numFmt = '#,##0.00';
 
     const buffer = await wb.xlsx.writeBuffer();
     const blob = new Blob([buffer], {
@@ -416,7 +444,7 @@ export default function PaymentsPage() {
       filename: `pagos-recibidos-${todayIso}.xlsx`,
       blob,
       headers: headers.map(h => h.title),
-      rows: rows.map(r => [r.date, r.customer, r.invoice, formatMoney(r.amount), r.method, r.reference]),
+      rows: rows.map(r => [r.date, r.customer, r.invoice, formatMoney(r.amount), r.method, r.reference, formatMoney(r.itbisWithheld), formatMoney(r.isrWithheld)]),
       summary: [
         { label: 'Empresa', value: companyName },
         { label: 'Total Recibido', value: formatMoney(totalPayments) },
@@ -430,7 +458,45 @@ export default function PaymentsPage() {
   };
 
   const handleNewPayment = () => {
+    setPaymentInvoiceId('');
+    setPaymentAmount(0);
+    setPaymentItbisWithheld(0);
+    setPaymentIsrWithheld(0);
     setShowPaymentModal(true);
+  };
+
+  const resolveInvoiceForPayment = () => {
+    const invoice = invoices.find((inv) => inv.id === paymentInvoiceId);
+    return invoice || null;
+  };
+
+  const isFiscalInvoiceNumber = (invoiceNumber: string) => {
+    const no = String(invoiceNumber || '');
+    return no !== '' && !no.toUpperCase().startsWith('FAC-');
+  };
+
+  const recomputeWithheldDefaults = (nextInvoiceId?: string, nextAmount?: number) => {
+    const invoiceId = typeof nextInvoiceId === 'string' ? nextInvoiceId : paymentInvoiceId;
+    const amount = typeof nextAmount === 'number' ? nextAmount : paymentAmount;
+    const invoice = invoices.find((inv) => inv.id === invoiceId);
+    if (!invoice) {
+      setPaymentItbisWithheld(0);
+      setPaymentIsrWithheld(0);
+      return;
+    }
+    const invoiceNumber = String(invoice.invoiceNumber || '');
+    if (!isFiscalInvoiceNumber(invoiceNumber)) {
+      setPaymentItbisWithheld(0);
+      setPaymentIsrWithheld(0);
+      return;
+    }
+    const effectivePayment = Math.min(Number(amount || 0), Number(invoice.balance || 0));
+    const total = Number(invoice.totalAmount || 0);
+    const ratio = total > 0 ? Math.max(0, Math.min(1, effectivePayment / total)) : 0;
+    const itbis = Number((invoice as any).taxAmount || 0);
+    const suggestedItbisWithheld = Math.round(itbis * ratio * 100) / 100;
+    setPaymentItbisWithheld(suggestedItbisWithheld);
+    setPaymentIsrWithheld(0);
   };
 
   const handleSavePayment = async (e: FormEvent<HTMLFormElement>) => {
@@ -449,6 +515,8 @@ export default function PaymentsPage() {
     const amountToPay = Number(formData.get('amount') || 0);
     const paymentMethod = String(formData.get('paymentMethod') || 'cash');
     const reference = String(formData.get('reference') || '').trim();
+    const itbisWithheld = Number(formData.get('itbisWithheld') || 0) || 0;
+    const isrWithheld = Number(formData.get('isrWithheld') || 0) || 0;
 
     if (!invoiceId) {
       alert('Debes seleccionar una factura');
@@ -463,6 +531,13 @@ export default function PaymentsPage() {
     const invoice = invoices.find((inv) => inv.id === invoiceId);
     if (!invoice) {
       alert('La factura seleccionada no es válida');
+      return;
+    }
+
+    const invoiceNo = String(invoice.invoiceNumber || '');
+    const isFiscal = isFiscalInvoiceNumber(invoiceNo);
+    if (!isFiscal && (itbisWithheld > 0 || isrWithheld > 0)) {
+      alert('No se puede registrar retención en una factura sin NCF (FAC-*)');
       return;
     }
 
@@ -511,6 +586,32 @@ export default function PaymentsPage() {
         return;
       }
 
+      // Cuenta para registrar retenciones (best-effort)
+      // Reusamos itbis_receivable_account_id (si existe) o la cuenta 110201 como fallback.
+      // Si no existe ninguna, caemos en Caja General solo para evitar descuadre.
+      let withholdingAccountId: string | null = (settings as any)?.itbis_receivable_account_id
+        ? String((settings as any).itbis_receivable_account_id)
+        : null;
+
+      if (!withholdingAccountId) {
+        const fromState = accounts.find((a: any) => normalizeCode(a.code) === '110201');
+        if (fromState?.id) withholdingAccountId = String(fromState.id);
+      }
+
+      if (!withholdingAccountId) {
+        try {
+          const allAccounts = await chartAccountsService.getAll(user.id);
+          const itbis110201 = (allAccounts || []).find((a: any) => normalizeCode(a.code) === '110201');
+          if (itbis110201?.id) withholdingAccountId = String(itbis110201.id);
+        } catch {
+          withholdingAccountId = null;
+        }
+      }
+
+      if (!withholdingAccountId) {
+        withholdingAccountId = cashGeneralAccountId;
+      }
+
       if (!resolvedArAccountId) {
         alert(
           'No se pudo registrar el pago: configure la cuenta de Cuentas por Cobrar (Clientes) en Ajustes Contables o en el cliente.',
@@ -526,6 +627,8 @@ export default function PaymentsPage() {
         payment_method: paymentMethod,
         payment_date: paymentDate,
         reference: reference || null,
+        itbis_withheld: isFiscal ? itbisWithheld : 0,
+        isr_withheld: isFiscal ? isrWithheld : 0,
       };
 
       const createdPayment = await customerPaymentsService.create(user.id, paymentPayload);
@@ -548,6 +651,8 @@ export default function PaymentsPage() {
           paymentMethod: p.payment_method,
           date: p.payment_date,
           reference: p.reference || '',
+          itbisWithheld: Number(p.itbis_withheld) || 0,
+          isrWithheld: Number(p.isr_withheld) || 0,
         }));
         setPayments(mappedPayments);
 
@@ -556,6 +661,7 @@ export default function PaymentsPage() {
           .map((inv: any) => {
             const total = Number(inv.total_amount) || 0;
             const paid = Number(inv.paid_amount) || 0;
+            const taxAmount = Number(inv.tax_amount) || 0;
             return {
               id: inv.id,
               invoiceNumber: inv.invoice_number,
@@ -564,6 +670,8 @@ export default function PaymentsPage() {
               balance: Math.max(total - paid, 0),
               totalAmount: total,
               paidAmount: paid,
+              taxAmount,
+              status: inv.status,
             };
           });
         setInvoices(mappedInvoices);
@@ -572,20 +680,34 @@ export default function PaymentsPage() {
       }
 
       try {
+        const totalWithheld = isFiscal ? Math.max(0, (Number(itbisWithheld) || 0) + (Number(isrWithheld) || 0)) : 0;
+        const cashReceived = Math.max(0, effectivePayment - totalWithheld);
+
         const lines: any[] = [
           {
             account_id: cashGeneralAccountId,
             description: 'Cobro de cliente - Caja General',
-            debit_amount: effectivePayment,
+            debit_amount: cashReceived,
             credit_amount: 0,
             line_number: 1,
           },
+          ...(totalWithheld > 0
+            ? [
+                {
+                  account_id: withholdingAccountId,
+                  description: 'Retenciones de cliente (ITBIS/ISR) - Por cobrar',
+                  debit_amount: totalWithheld,
+                  credit_amount: 0,
+                  line_number: 2,
+                },
+              ]
+            : []),
           {
             account_id: resolvedArAccountId,
             description: 'Cobro de cliente - Cuentas por Cobrar',
             debit_amount: 0,
             credit_amount: effectivePayment,
-            line_number: 2,
+            line_number: totalWithheld > 0 ? 3 : 2,
           },
         ];
 
@@ -910,6 +1032,12 @@ export default function PaymentsPage() {
                     Referencia
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    ITBIS Retenido
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    ISR Retenido
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Acciones
                   </th>
                 </tr>
@@ -936,6 +1064,12 @@ export default function PaymentsPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {payment.reference}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {formatMoney(payment.itbisWithheld)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {formatMoney(payment.isrWithheld)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex space-x-2">
@@ -1021,6 +1155,16 @@ export default function PaymentsPage() {
                     <p className="text-sm font-semibold text-gray-900 break-words">
                       {selectedPayment.reference || '—'}
                     </p>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 p-4">
+                    <p className="text-xs text-gray-500">ITBIS Retenido</p>
+                    <p className="text-sm font-semibold text-gray-900">{formatMoney(selectedPayment.itbisWithheld)}</p>
+                  </div>
+
+                  <div className="rounded-lg border border-gray-200 p-4">
+                    <p className="text-xs text-gray-500">ISR Retenido</p>
+                    <p className="text-sm font-semibold text-gray-900">{formatMoney(selectedPayment.isrWithheld)}</p>
                   </div>
                 </div>
 
@@ -1179,10 +1323,51 @@ export default function PaymentsPage() {
                   <select 
                     required
                     name="invoiceId"
+                    value={paymentInvoiceId}
+                    onChange={async (e) => {
+                      const next = String(e.target.value || '');
+                      setPaymentInvoiceId(next);
+
+                      if (next && user?.id && invoiceHasServiceLines[next] === undefined) {
+                        try {
+                          const lines = await invoicesService.getLinesWithItemType(user.id, next);
+                          const hasServices = (lines || []).some((ln: any) => {
+                            const itemType = String((ln as any)?.inventory_items?.item_type || '').toLowerCase();
+                            return itemType === 'service';
+                          });
+                          setInvoiceHasServiceLines((prev) => ({ ...prev, [next]: hasServices }));
+                          // Recompute after caching
+                          const inv = invoices.find((i) => i.id === next);
+                          const invNumber = String(inv?.invoiceNumber || '');
+                          if (inv && isFiscalInvoiceNumber(invNumber)) {
+                            const total = Number(inv.totalAmount || 0);
+                            const itbis = Number((inv as any).taxAmount || 0);
+                            const effectivePayment = Math.min(Number(paymentAmount || 0), Number(inv.balance || 0));
+                            const ratio = total > 0 ? Math.max(0, Math.min(1, effectivePayment / total)) : 0;
+                            const suggestedItbisWithheld = Math.round(itbis * ratio * 100) / 100;
+                            setPaymentItbisWithheld(suggestedItbisWithheld);
+
+                            const baseSubtotal = Math.max(0, total - itbis);
+                            const isrRate = Math.max(0, Number(isrServiceRatePct) || 0) / 100;
+                            const suggestedIsrWithheld = hasServices && isrRate > 0
+                              ? Math.round(baseSubtotal * ratio * isrRate * 100) / 100
+                              : 0;
+                            setPaymentIsrWithheld(suggestedIsrWithheld);
+                          } else {
+                            recomputeWithheldDefaults(next, paymentAmount);
+                          }
+                        } catch {
+                          setInvoiceHasServiceLines((prev) => ({ ...prev, [next]: false }));
+                          recomputeWithheldDefaults(next, paymentAmount);
+                        }
+                      } else {
+                        recomputeWithheldDefaults(next, paymentAmount);
+                      }
+                    }}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                   >
                     <option value="">Seleccionar factura</option>
-                    {invoices.filter(inv => inv.balance > 0).map((invoice) => (
+                    {invoices.filter(inv => inv.balance > 0 && inv.status !== 'cancelled' && inv.status !== 'paid').map((invoice) => (
                       <option key={invoice.id} value={invoice.id}>
                         {invoice.invoiceNumber} - {invoice.customerName} ({formatMoney(invoice.balance)})
                       </option>
@@ -1234,6 +1419,12 @@ export default function PaymentsPage() {
                     step="0.01"
                     required
                     name="amount"
+                    value={Number.isFinite(paymentAmount) ? String(paymentAmount) : '0'}
+                    onChange={(e) => {
+                      const next = Number(e.target.value) || 0;
+                      setPaymentAmount(next);
+                      recomputeWithheldDefaults(paymentInvoiceId, next);
+                    }}
                     className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="0.00"
                   />
@@ -1267,10 +1458,56 @@ export default function PaymentsPage() {
                   />
                 </div>
 
+                {(() => {
+                  const inv = resolveInvoiceForPayment();
+                  const isFiscal = inv ? isFiscalInvoiceNumber(String(inv.invoiceNumber || '')) : false;
+                  const disabled = !inv || !isFiscal;
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          ITBIS Retenido
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          name="itbisWithheld"
+                          disabled={disabled}
+                          value={Number.isFinite(paymentItbisWithheld) ? String(paymentItbisWithheld) : '0'}
+                          onChange={(e) => setPaymentItbisWithheld(Number(e.target.value) || 0)}
+                          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                          ISR Retenido
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          name="isrWithheld"
+                          disabled={disabled}
+                          value={Number.isFinite(paymentIsrWithheld) ? String(paymentIsrWithheld) : '0'}
+                          onChange={(e) => setPaymentIsrWithheld(Number(e.target.value) || 0)}
+                          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+                
                 <div className="flex space-x-3 mt-6">
                   <button
                     type="button"
                     onClick={() => {
+                      setPaymentInvoiceId('');
+                      setPaymentAmount(0);
+                      setPaymentItbisWithheld(0);
+                      setPaymentIsrWithheld(0);
                       setShowPaymentModal(false);
                     }}
                     className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg hover:bg-gray-400 transition-colors whitespace-nowrap"
