@@ -143,51 +143,64 @@ export default function FixedAssetsPage() {
       description: 'Registro y mantenimiento de activos fijos',
       icon: 'ri-building-line',
       href: '/fixed-assets/register',
-      color: 'blue'
+      color: 'blue',
     },
     {
       title: 'Tipos de Activos',
       description: 'Configuración de categorías de activos',
       icon: 'ri-list-check-line',
       href: '/fixed-assets/types',
-      color: 'green'
+      color: 'green',
     },
     {
       title: 'Depreciación',
       description: 'Cálculo y registro de depreciaciones',
       icon: 'ri-line-chart-line',
       href: '/fixed-assets/depreciation',
-      color: 'purple'
+      color: 'purple',
     },
     {
       title: 'Tipos de Depreciación',
       description: 'Catálogo de métodos y parámetros de depreciación',
       icon: 'ri-settings-3-line',
       href: '/fixed-assets/depreciation-types',
-      color: 'indigo'
+      color: 'indigo',
     },
     {
       title: 'Reporte de Activos Fijos',
       description: 'Listado consolidado de activos con valores y depreciación acumulada',
       icon: 'ri-file-list-3-line',
       href: '/fixed-assets/report',
-      color: 'cyan'
+      color: 'cyan',
     },
     {
       title: 'Revalorización',
       description: 'Revalorización de activos fijos',
       icon: 'ri-trending-up-line',
       href: '/fixed-assets/revaluation',
-      color: 'orange'
+      color: 'orange',
     },
     {
       title: 'Retiro de Activos',
       description: 'Proceso de baja de activos fijos',
       icon: 'ri-delete-bin-line',
       href: '/fixed-assets/disposal',
-      color: 'red'
-    }
+      color: 'red',
+    },
   ];
+
+  const colorMap: Record<string, { bg: string; text: string }> = {
+    blue: { bg: 'bg-blue-100', text: 'text-blue-600' },
+    red: { bg: 'bg-red-100', text: 'text-red-600' },
+    green: { bg: 'bg-green-100', text: 'text-green-600' },
+    purple: { bg: 'bg-purple-100', text: 'text-purple-600' },
+    indigo: { bg: 'bg-indigo-100', text: 'text-indigo-600' },
+    cyan: { bg: 'bg-cyan-100', text: 'text-cyan-600' },
+    orange: { bg: 'bg-orange-100', text: 'text-orange-600' },
+    slate: { bg: 'bg-slate-100', text: 'text-slate-600' },
+  };
+
+  const getColorClasses = (c: string) => colorMap[c] || colorMap.slate;
 
   const [assetsStats, setAssetsStats] = useState([
     {
@@ -195,29 +208,29 @@ export default function FixedAssetsPage() {
       value: 'RD$ 0',
       change: '',
       icon: 'ri-building-line',
-      color: 'blue'
+      color: 'blue',
     },
     {
       title: 'Depreciación Acumulada',
       value: 'RD$ 0',
       change: '',
       icon: 'ri-line-chart-line',
-      color: 'red'
+      color: 'red',
     },
     {
       title: 'Valor Neto',
       value: 'RD$ 0',
       change: '',
       icon: 'ri-money-dollar-circle-line',
-      color: 'green'
+      color: 'green',
     },
     {
       title: 'Total de Activos',
       value: '0',
       change: '',
       icon: 'ri-archive-line',
-      color: 'purple'
-    }
+      color: 'purple',
+    },
   ]);
 
   const [assetsByCategory, setAssetsByCategory] = useState<Array<{
@@ -263,8 +276,8 @@ export default function FixedAssetsPage() {
                   <p className="text-sm font-medium text-gray-600">{stat.title}</p>
                   <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
                 </div>
-                <div className={`w-12 h-12 rounded-lg flex items-center justify-center bg-${stat.color}-100`}>
-                  <i className={`${stat.icon} text-xl text-${stat.color}-600`}></i>
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${getColorClasses(stat.color).bg}`}>
+                  <i className={`${stat.icon || 'ri-apps-line'} text-xl ${getColorClasses(stat.color).text}`}></i>
                 </div>
               </div>
               <div className="mt-4">
@@ -282,13 +295,13 @@ export default function FixedAssetsPage() {
           {modules.map((module, index) => (
             <div key={index} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer">
               <div className="flex items-center mb-4">
-                <div className={`w-12 h-12 rounded-lg flex items-center justify-center bg-${module.color}-100 mr-4`}>
-                  <i className={`${module.icon} text-xl text-${module.color}-600`}></i>
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${getColorClasses(module.color).bg} mr-4`}>
+                  <i className={`${module.icon || 'ri-apps-line'} text-xl ${getColorClasses(module.color).text}`}></i>
                 </div>
               </div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">{module.title}</h3>
               <p className="text-gray-600 mb-4 text-sm">{module.description}</p>
-              <button 
+              <button
                 onClick={() => handleAccessModule(module.href)}
                 className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
               >
@@ -308,10 +321,15 @@ export default function FixedAssetsPage() {
               <div className="space-y-4">
                 {assetsByCategory.map((category, index) => (
                   <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="font-medium text-gray-900">{category.category}</p>
-                      <p className="text-sm text-gray-600">{category.count} activos</p>
-                      <p className="text-xs text-gray-500">Depreciación: {category.depreciation} anual</p>
+                    <div className="flex items-center">
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-blue-100 mr-3">
+                        <i className="ri-folder-2-line text-lg text-blue-600"></i>
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{category.category}</p>
+                        <p className="text-sm text-gray-600">{category.count} activos</p>
+                        <p className="text-xs text-gray-500">Depreciación: {category.depreciation} anual</p>
+                      </div>
                     </div>
                     <div className="text-right">
                       <p className="font-semibold text-gray-900">{category.value}</p>
@@ -327,7 +345,7 @@ export default function FixedAssetsPage() {
             <div className="p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">Depreciaciones del Mes</h3>
-                <button 
+                <button
                   onClick={handleViewAllDepreciations}
                   className="text-blue-600 hover:text-blue-700 text-sm font-medium whitespace-nowrap"
                 >
@@ -339,10 +357,15 @@ export default function FixedAssetsPage() {
               <div className="space-y-4">
                 {recentDepreciations.map((depreciation, index) => (
                   <div key={index} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="font-medium text-gray-900">{depreciation.asset}</p>
-                      <p className="text-sm text-gray-600">Código: {depreciation.code}</p>
-                      <p className="text-xs text-gray-500">Acumulada: {depreciation.accumulatedDepreciation}</p>
+                    <div className="flex items-center">
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-green-100 mr-3">
+                        <i className="ri-calendar-line text-lg text-green-600"></i>
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{depreciation.asset}</p>
+                        <p className="text-sm text-gray-600">Código: {depreciation.code}</p>
+                        <p className="text-xs text-gray-500">Acumulada: {depreciation.accumulatedDepreciation}</p>
+                      </div>
                     </div>
                     <div className="text-right">
                       <p className="font-semibold text-red-600">{depreciation.monthlyDepreciation}</p>

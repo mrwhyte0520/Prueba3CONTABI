@@ -49,12 +49,19 @@ export function AccountingFormatProvider({ children }: { children: React.ReactNo
         setSettings(next);
         applyGlobals(next);
       } else {
-        applyGlobals(settings);
+        const defaultSettings: AccountingFormatSettings = {
+          default_currency: 'DOP',
+          decimal_places: 2,
+          date_format: 'DD/MM/YYYY',
+          number_format: '1,234.56',
+        };
+        setSettings(defaultSettings);
+        applyGlobals(defaultSettings);
       }
     } finally {
       setLoading(false);
     }
-  }, [applyGlobals, settings, user?.id]);
+  }, [applyGlobals, user?.id]);
 
   useEffect(() => {
     if (!user?.id) {

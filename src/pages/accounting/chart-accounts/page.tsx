@@ -1199,13 +1199,6 @@ ACCNT	Gastos Operativos	Expense	Gastos operativos generales	5100`;
               Descargar plantilla
             </button>
             <button
-              onClick={() => setShowFormatModal(true)}
-              className="w-full sm:w-auto bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors whitespace-nowrap"
-            >
-              <i className="ri-upload-line mr-2"></i>
-              Importar Catálogo
-            </button>
-            <button
               onClick={() => setShowAddModal(true)}
               className="w-full sm:w-auto bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
             >

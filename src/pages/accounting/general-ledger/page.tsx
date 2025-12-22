@@ -114,6 +114,7 @@ const GeneralLedgerPage: FC = () => {
   const [selectedPeriodId, setSelectedPeriodId] = useState('');
   const [documentTypeFilter, setDocumentTypeFilter] = useState<string[]>([]);
   const [companyInfo, setCompanyInfo] = useState<any | null>(null);
+  const [showAccountSelector, setShowAccountSelector] = useState(false);
 
   useEffect(() => {
     loadAccounts();
@@ -612,15 +613,21 @@ const GeneralLedgerPage: FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Accounts List */}
-        <div className="lg:col-span-1 print:hidden">
-          <div className="bg-white rounded-lg shadow">
-            <div className="p-6 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Catálogo de Cuentas</h2>
-              
-              {/* Filters */}
-              <div className="space-y-4">
+      {/* Modal de selección de cuentas */}
+      {showAccountSelector && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center print:hidden">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Seleccionar Cuenta</h2>
+              <button
+                onClick={() => setShowAccountSelector(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <i className="ri-close-line text-2xl"></i>
+              </button>
+            </div>
+            <div className="p-4 border-b border-gray-200">
+              <div className="space-y-3">
                 <div className="relative">
                   <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
                   <input
@@ -631,11 +638,10 @@ const GeneralLedgerPage: FC = () => {
                     className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                   />
                 </div>
-                
                 <select
                   value={accountTypeFilter}
                   onChange={(e) => setAccountTypeFilter(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm pr-8"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                 >
                   <option value="all">Todos los tipos</option>
                   <option value="asset">Activos</option>
@@ -646,14 +652,13 @@ const GeneralLedgerPage: FC = () => {
                 </select>
               </div>
             </div>
-
-            <div className="border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+            <div className="border-b border-gray-200 px-4 py-3 flex items-center justify-between bg-gray-50">
               <div>
                 <p className="text-sm font-medium text-gray-700">Ver todas las cuentas</p>
-                <p className="text-xs text-gray-500">Muestra el mayor general combinado.</p>
+                <p className="text-xs text-gray-500">Muestra el mayor general combinado</p>
               </div>
               <button
-                onClick={() =>
+                onClick={() => {
                   setSelectedAccount({
                     id: 'ALL',
                     code: 'TODAS',
@@ -661,25 +666,28 @@ const GeneralLedgerPage: FC = () => {
                     type: 'all',
                     balance: 0,
                     normalBalance: 'debit',
-                  } as Account)
-                }
+                  } as Account);
+                  setShowAccountSelector(false);
+                }}
                 className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors"
               >
                 Ver todas
               </button>
             </div>
-
-            <div className="max-h-96 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto">
               {filteredAccounts.map((account) => (
                 <div
                   key={account.id}
-                  onClick={() => setSelectedAccount(account)}
+                  onClick={() => {
+                    setSelectedAccount(account);
+                    setShowAccountSelector(false);
+                  }}
                   className={`p-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors ${
                     selectedAccount?.id === account.id ? 'bg-blue-50 border-blue-200' : ''
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <div>
+                    <div className="flex-1">
                       <div className="font-medium text-gray-900 text-sm">
                         {account.code} - {account.name}
                       </div>
@@ -689,7 +697,7 @@ const GeneralLedgerPage: FC = () => {
                         </span>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right ml-4">
                       <div className={`text-sm font-medium ${getBalanceColor(account.balance, account.normalBalance)}`}>
                         RD${formatAmount(Math.abs(account.balance))}
                       </div>
@@ -703,26 +711,37 @@ const GeneralLedgerPage: FC = () => {
             </div>
           </div>
         </div>
+      )}
 
-        {/* Ledger Details */}
-        <div className="lg:col-span-2 print:col-span-3">
+      <div className="grid grid-cols-1 gap-6">
+        {/* Ledger Details - Pantalla completa */}
+        <div className="print:col-span-3">
           {selectedAccount ? (
             <div className="bg-white rounded-lg shadow">
-              <div className="p-6 border-b border-gray-200 print:hidden">
+              <div className="p-4 border-b border-gray-200 print:hidden">
                 <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h2 className="text-lg font-semibold text-gray-900">
-                      {selectedAccount.id === 'ALL'
-                        ? 'Mayor General - Todas las cuentas'
-                        : `Mayor de la Cuenta: ${selectedAccount.code} - ${selectedAccount.name}`}
-                    </h2>
-                    <p className="text-sm text-gray-600 mt-1">
-                      {selectedAccount.id === 'ALL'
-                        ? 'Incluye todas las cuentas contables'
-                        : `Tipo: ${getAccountTypeName(selectedAccount.type)} | Balance Normal: ${
-                            selectedAccount.normalBalance === 'debit' ? 'Débito' : 'Crédito'
-                          }`}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setShowAccountSelector(true)}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      <i className="ri-list-check"></i>
+                      Cambiar Cuenta
+                    </button>
+                    <div>
+                      <h2 className="text-lg font-semibold text-gray-900">
+                        {selectedAccount.id === 'ALL'
+                          ? 'Mayor General - Todas las cuentas'
+                          : `${selectedAccount.code} - ${selectedAccount.name}`}
+                      </h2>
+                      <p className="text-sm text-gray-600">
+                        {selectedAccount.id === 'ALL'
+                          ? 'Incluye todas las cuentas contables'
+                          : `${getAccountTypeName(selectedAccount.type)} | Balance Normal: ${
+                              selectedAccount.normalBalance === 'debit' ? 'Débito' : 'Crédito'
+                            }`}
+                      </p>
+                    </div>
                   </div>
                   {selectedAccount.id !== 'ALL' && (
                     <div className="text-right">
@@ -739,19 +758,17 @@ const GeneralLedgerPage: FC = () => {
                   )}
                 </div>
 
-                {/* Date Filters */}
-                <div className="flex flex-col sm:flex-row gap-4 mb-4">
+                {/* Filtros compactos en una sola fila */}
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Año Fiscal
-                    </label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Año Fiscal</label>
                     <select
                       value={selectedFiscalYear}
                       onChange={(e) => {
                         setSelectedFiscalYear(e.target.value);
                         setSelectedPeriodId('');
                       }}
-                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm pr-8"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="">Todos</option>
                       {fiscalYears.map((year) => (
@@ -762,27 +779,22 @@ const GeneralLedgerPage: FC = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Período Contable
-                    </label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Período</label>
                     <select
                       value={selectedPeriodId}
                       onChange={(e) => handlePeriodChange(e.target.value)}
-                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm pr-8"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="">Todos</option>
                       {visiblePeriods.map((period) => (
                         <option key={period.id} value={period.id}>
-                          {period.name} ({formatDate(period.start_date)} -{' '}
-                          {formatDate(period.end_date)})
+                          {period.name}
                         </option>
                       ))}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Tipo de documento
-                    </label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Tipo Doc.</label>
                     <select
                       multiple
                       value={documentTypeFilter}
@@ -790,7 +802,7 @@ const GeneralLedgerPage: FC = () => {
                         const options = Array.from(e.target.selectedOptions).map((option) => option.value);
                         setDocumentTypeFilter(options);
                       }}
-                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500"
                     >
                       {documentTypes.map((type) => (
                         <option key={type} value={type}>
@@ -798,32 +810,23 @@ const GeneralLedgerPage: FC = () => {
                         </option>
                       ))}
                     </select>
-                    <p className="mt-1 text-xs text-gray-500">
-                      Si no seleccionas ningún tipo, se muestran todos.
-                    </p>
                   </div>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Fecha Desde
-                    </label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Desde</label>
                     <input
                       type="date"
                       value={dateFrom}
                       onChange={(e) => setDateFrom(e.target.value)}
-                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Fecha Hasta
-                    </label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Hasta</label>
                     <input
                       type="date"
                       value={dateTo}
                       onChange={(e) => setDateTo(e.target.value)}
-                      className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                   <div className="flex items-end">
@@ -835,16 +838,23 @@ const GeneralLedgerPage: FC = () => {
                         setSelectedPeriodId('');
                         setDocumentTypeFilter([]);
                       }}
-                      className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+                      className="w-full px-3 py-1.5 text-xs text-gray-600 hover:text-gray-900 border border-gray-300 rounded hover:bg-gray-50 transition-colors"
                     >
-                      Limpiar Filtros
+                      Limpiar
+                    </button>
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      onClick={downloadExcel}
+                      className="w-full px-3 py-1.5 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                    >
+                      <i className="ri-file-excel-2-line"></i> Excel
                     </button>
                   </div>
                 </div>
               </div>
 
               {/* Ledger Entries Table */}
-              {/* Contenido para impresión */}
               <div id="printable-ledger">
                 {/* Título para impresión */}
                 {companyNameForPrint && (
@@ -1024,7 +1034,7 @@ const GeneralLedgerPage: FC = () => {
               {/* Summary Stats */}
               {ledgerEntries.length > 0 && (
                 <div className="p-6 border-t border-gray-200 bg-gray-50 print:hidden">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="text-center">
                       <div className="text-sm text-gray-600">Total Movimientos</div>
                       <div className="text-lg font-bold text-gray-900">{filteredLedgerEntries.length}</div>
@@ -1041,12 +1051,6 @@ const GeneralLedgerPage: FC = () => {
                         RD${formatAmount(totalCredits)}
                       </div>
                     </div>
-                    <div className="text-center">
-                      <div className="text-sm text-gray-600">Balance Final</div>
-                      <div className={`text-lg font-bold ${getBalanceColor(finalBalance, selectedAccount.normalBalance)}`}>
-                        RD${formatAmount(Math.abs(finalBalance))}
-                      </div>
-                    </div>
                   </div>
                 </div>
               )}
@@ -1055,9 +1059,16 @@ const GeneralLedgerPage: FC = () => {
             <div className="bg-white rounded-lg shadow p-12 text-center">
               <i className="ri-file-list-3-line text-6xl text-gray-300 mb-4"></i>
               <h3 className="text-lg font-medium text-gray-900 mb-2">Selecciona una Cuenta</h3>
-              <p className="text-gray-600">
-                Elige una cuenta del catálogo para ver su mayor general con todos los movimientos detallados.
+              <p className="text-gray-600 mb-4">
+                Haz clic en el botón para elegir una cuenta del catálogo y ver su mayor general.
               </p>
+              <button
+                onClick={() => setShowAccountSelector(true)}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <i className="ri-list-check mr-2"></i>
+                Seleccionar Cuenta
+              </button>
             </div>
           )}
         </div>

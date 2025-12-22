@@ -1355,6 +1355,107 @@ const GeneralJournalPage = () => {
         </div>
       )}
 
+      {/* Preview Modal */}
+      {showPreviewModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-gray-900">Vista Previa - Diario General</h2>
+                <button
+                  onClick={handleClosePreview}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <i className="ri-close-line text-2xl"></i>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <div className="mb-4 flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    {companyInfo?.name || companyInfo?.company_name || 'Diario General'}
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    Período: {dateFrom ? formatDate(dateFrom) : 'Inicio'} - {dateTo ? formatDate(dateTo) : 'Fin'}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleDownloadPdf}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center"
+                  >
+                    <i className="ri-file-pdf-line mr-2"></i>
+                    Imprimir PDF
+                  </button>
+                  <button
+                    onClick={handleDownloadExcel}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center"
+                  >
+                    <i className="ri-file-excel-2-line mr-2"></i>
+                    Exportar Excel
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full border border-gray-200 rounded-lg">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Número</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Documento</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Proveedor</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Débito</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Crédito</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {sortedEntries.map((entry) => (
+                      <tr key={entry.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm font-medium text-blue-600">{entry.entry_number}</td>
+                        <td className="px-4 py-3 text-sm text-gray-900">{formatDate(entry.entry_date)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{getEntryDocumentType(entry)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          {entry.supplier_name || entry.vendor_name || entry.payee_name || entry.counterparty || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-700">{entry.description}</td>
+                        <td className="px-4 py-3 text-sm text-gray-900 text-right">RD${formatAmount(entry.total_debit)}</td>
+                        <td className="px-4 py-3 text-sm text-gray-900 text-right">RD${formatAmount(entry.total_credit)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50">
+                    <tr>
+                      <td colSpan={5} className="px-4 py-3 text-right font-semibold text-gray-900">Totales:</td>
+                      <td className="px-4 py-3 font-bold text-gray-900 text-right">RD${formatAmount(totalDebitsFiltered)}</td>
+                      <td className="px-4 py-3 font-bold text-gray-900 text-right">RD${formatAmount(totalCreditsFiltered)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              <div className="mt-6 grid grid-cols-3 gap-4">
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <div className="text-sm text-blue-600 font-medium">Total Asientos</div>
+                  <div className="text-2xl font-bold text-blue-900">{sortedEntries.length}</div>
+                </div>
+                <div className="bg-green-50 p-4 rounded-lg">
+                  <div className="text-sm text-green-600 font-medium">Total Débitos</div>
+                  <div className="text-2xl font-bold text-green-900">RD${formatAmount(totalDebitsFiltered)}</div>
+                </div>
+                <div className="bg-red-50 p-4 rounded-lg">
+                  <div className="text-sm text-red-600 font-medium">Total Créditos</div>
+                  <div className="text-2xl font-bold text-red-900">RD${formatAmount(totalCreditsFiltered)}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Entry Detail Modal */}
       {selectedEntry && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
