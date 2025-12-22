@@ -198,13 +198,26 @@ export default function FinancialStatementsPage() {
     let fromDate = monthFromDate;
     let toDate = monthToDate;
 
-    // Para Estado de Resultados, Costos, Gastos y Flujo de Efectivo usamos rango diario configurable
+    // Para Estado de Resultados, Costos, Gastos y Flujo de Efectivo:
+    // usar SIEMPRE las fechas seleccionadas en los inputs si existen; de lo contrario, el mes completo
     if (activeTab === 'income' || activeTab === 'costs' || activeTab === 'expenses' || activeTab === 'cashflow') {
-      const from = useCustomRange ? incomeFromDate || monthFromDate : monthFromDate;
-      const to = useCustomRange ? incomeToDate || from : monthToDate;
+      const from = incomeFromDate || monthFromDate;
+      const to = incomeToDate || (incomeFromDate ? incomeFromDate : monthToDate);
 
-      let fromObj = new Date(from);
-      let toObj = new Date(to);
+      // Parsear como fecha local para evitar desfase (ej. mostrar 30 en lugar de 01)
+      const parseYMDLocal = (s: string): Date => {
+        const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(s);
+        if (m) {
+          const y = parseInt(m[1], 10);
+          const mo = parseInt(m[2], 10) - 1;
+          const d = parseInt(m[3], 10);
+          return new Date(y, mo, d);
+        }
+        return new Date(s);
+      };
+
+      let fromObj = parseYMDLocal(from);
+      let toObj = parseYMDLocal(to);
 
       if (Number.isNaN(fromObj.getTime())) {
         fromObj = new Date(monthFromDate);
@@ -358,6 +371,39 @@ export default function FinancialStatementsPage() {
               break;
           }
         });
+
+        // Agrupar ITBIS pagado en compras (110201) y retención ITBIS pagado en servicios (110202)
+        // bajo la cuenta control Saldo a favor en ITBIS (1102) en el Balance General
+        try {
+          const normalize = (c: string | undefined) => (c || '').replace(/\./g, '');
+          const isITBISDetail = (code: string | undefined) => {
+            const n = normalize(code);
+            return n === '110201' || n === '110202';
+          };
+
+          // Sumar los montos de las cuentas detalle
+          const itbisSum = nextData.assets.current
+            .filter((i) => isITBISDetail(i.code))
+            .reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
+
+          if (Math.abs(itbisSum) > 0.005) {
+            // Quitar las cuentas detalle del arreglo
+            nextData.assets.current = nextData.assets.current.filter((i) => !isITBISDetail(i.code));
+
+            // Intentar obtener el nombre de la cuenta control 1102 desde la balanza
+            let name1102 = 'Saldo a favor en ITBIS';
+            const parentAcc = (trialBalance || []).find((acc: any) => normalize(String(acc.code || '')) === '1102');
+            if (parentAcc?.name) {
+              name1102 = String(parentAcc.name);
+            }
+
+            // Agregar la cuenta control 1102 con el total
+            nextData.assets.current.push({ code: '1102', name: name1102, amount: itbisSum });
+          }
+        } catch (aggErr) {
+          // eslint-disable-next-line no-console
+          console.error('[Balance] Error aggregating ITBIS control account (1102):', aggErr);
+        }
 
         setFinancialData(nextData);
       } catch (error) {
@@ -866,7 +912,7 @@ export default function FinancialStatementsPage() {
 
   const periodDates = getPeriodDates();
 
-  // Rango de fechas específico para Estado de Resultados (rango diario)
+  // Rango de fechas específico para Estado de Resultados (sincronizado con el selector y el flag de rango personalizado)
   const getIncomePeriodDates = () => {
     const now = new Date();
     const defaultPeriod = selectedPeriod || now.toISOString().slice(0, 7); // YYYY-MM
@@ -874,22 +920,32 @@ export default function FinancialStatementsPage() {
     const baseYear = parseInt(yearStr, 10);
     const baseMonth = parseInt(monthStr, 10);
 
-    const defaultStart =
-      !Number.isNaN(baseYear) && !Number.isNaN(baseMonth)
-        ? new Date(baseYear, baseMonth - 1, 1)
-        : now;
-    let from = incomeFromDate ? new Date(incomeFromDate) : defaultStart;
-    let to = incomeToDate ? new Date(incomeToDate) : from;
+    const monthFromDate = !Number.isNaN(baseYear) && !Number.isNaN(baseMonth)
+      ? new Date(baseYear, baseMonth - 1, 1)
+      : new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthToDate = !Number.isNaN(baseYear) && !Number.isNaN(baseMonth)
+      ? new Date(baseYear, baseMonth, 0)
+      : new Date(now.getFullYear(), now.getMonth() + 1, 0);
 
-    if (Number.isNaN(from.getTime())) {
-      from = defaultStart;
-    }
-    if (Number.isNaN(to.getTime())) {
-      to = from;
-    }
-    if (to.getTime() < from.getTime()) {
-      to = from;
-    }
+    // Helper: parsear YYYY-MM-DD como fecha local para evitar desfase por zona horaria
+    const parseYMDLocal = (s: string | null | undefined): Date | null => {
+      if (!s) return null;
+      const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(s);
+      if (!m) return null;
+      const y = parseInt(m[1], 10);
+      const mo = parseInt(m[2], 10) - 1;
+      const d = parseInt(m[3], 10);
+      return new Date(y, mo, d);
+    };
+
+    // Usar SIEMPRE las fechas de los inputs si existen; si no, el mes completo seleccionado
+    let from = incomeFromDate ? parseYMDLocal(incomeFromDate) || monthFromDate : monthFromDate;
+    let to: Date | null = incomeToDate ? parseYMDLocal(incomeToDate) : null;
+    if (!to) to = incomeFromDate ? new Date(from) : monthToDate;
+
+    if (Number.isNaN(from.getTime())) from = monthFromDate;
+    if (Number.isNaN(to.getTime())) to = new Date(from);
+    if (to.getTime() < from.getTime()) to = new Date(from);
 
     const formatLongDate = (date: Date) => {
       return date.toLocaleDateString('es-DO', {
@@ -913,8 +969,18 @@ export default function FinancialStatementsPage() {
     if (!comparisonFromDate) return null;
 
     const now = new Date();
-    let startDate = comparisonFromDate ? new Date(comparisonFromDate) : now;
-    let endDate = comparisonToDate ? new Date(comparisonToDate) : startDate;
+    const parseYMDLocal = (s: string | null | undefined): Date | null => {
+      if (!s) return null;
+      const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(s);
+      if (!m) return null;
+      const y = parseInt(m[1], 10);
+      const mo = parseInt(m[2], 10) - 1;
+      const d = parseInt(m[3], 10);
+      return new Date(y, mo, d);
+    };
+
+    let startDate = comparisonFromDate ? parseYMDLocal(comparisonFromDate) || now : now;
+    let endDate = comparisonToDate ? parseYMDLocal(comparisonToDate) || startDate : startDate;
 
     if (Number.isNaN(startDate.getTime())) {
       startDate = now;
@@ -971,17 +1037,22 @@ export default function FinancialStatementsPage() {
   const nonCurrentLiabilities = financialData.liabilities.nonCurrent;
   const equityItems = financialData.equity;
 
-  // Efectivo en Caja y Bancos: excluir la cuenta de ITBIS (110201) para evitar doble conteo en efectivo
+  // Efectivo en Caja y Bancos: no incluir 1102 (ITBIS control) y excluir explícitamente la cuenta ITBIS configurada
   const efectivoCajaBancos = currentAssets.reduce((sum, item) => {
     const normalizedCode = (item.code || '').replace(/\./g, '');
     if (itbisAccountCode && normalizedCode === itbisAccountCode) return sum;
-    return ['1001', '1002', '1102'].some((p) => normalizedCode.startsWith(p)) ? sum + item.amount : sum;
+    // Solo códigos de efectivo/caja y bancos (no ITBIS 1102)
+    return ['1001', '1002'].some((p) => normalizedCode.startsWith(p)) ? sum + item.amount : sum;
   }, 0);
   const cxcClientes = sumByPrefixes(currentAssets, ['1101']); // CxC Clientes
   const otrasCxc = sumByPrefixes(currentAssets, ['1103', '1104', '1105', '1199']); // Otras CxC (excluye 1102 que es Bancos)
-  const itbisCompras = itbisAccountCode
-    ? sumByPrefixes(currentAssets, [itbisAccountCode])
-    : 0; // ITBIS en compras (cuenta configurada o 110201)
+  const itbisCompras = (() => {
+    const prefixes: string[] = [];
+    if (itbisAccountCode) prefixes.push(itbisAccountCode);
+    // Incluir también la cuenta control 1102 (agregada a partir de 110201+110202)
+    prefixes.push('1102');
+    return sumByPrefixes(currentAssets, prefixes);
+  })();
   const inventarios = sumByPrefixes(currentAssets, ['12']); // Inventarios
   const anticiposISR = sumByPrefixes(currentAssets, ['1301']); // Anticipos ISR
   const gastosPagadosAnticipado = sumByPrefixes(currentAssets, ['13']) - anticiposISR; // Gastos anticipados
@@ -1030,8 +1101,21 @@ export default function FinancialStatementsPage() {
       let from = fromInput;
       let to = toInput || fromInput;
 
-      let fromObj = new Date(from);
-      let toObj = new Date(to);
+      // Parsear como fechas locales para evitar desfase por zona horaria
+      const parseYMDLocal = (s: string | null): Date => {
+        if (!s) return new Date();
+        const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(s);
+        if (m) {
+          const y = parseInt(m[1], 10);
+          const mo = parseInt(m[2], 10) - 1;
+          const d = parseInt(m[3], 10);
+          return new Date(y, mo, d);
+        }
+        return new Date(s);
+      };
+
+      let fromObj = parseYMDLocal(from);
+      let toObj = parseYMDLocal(to);
 
       if (Number.isNaN(fromObj.getTime())) {
         fromObj = new Date();
@@ -1562,7 +1646,7 @@ export default function FinancialStatementsPage() {
       const headerRow = ['Grupo', 'Cuenta', 'Monto'];
       const titleRows = [
         ['ESTADO DE RESULTADOS', '', ''],
-        [periodDates.periodLabel.toUpperCase(), '', ''],
+        [incomePeriodDates.periodLabel.toUpperCase(), '', ''],
         ['VALORES EN RD$', '', ''],
         ['', '', ''],
       ];

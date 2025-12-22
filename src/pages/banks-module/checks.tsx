@@ -1,444 +1,180 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { apInvoicesService, bankAccountsService, bankChecksService, chartAccountsService, financialReportsService } from '../../services/database';
+import { bankAccountsService, chartAccountsService, bankChecksService, suppliersService, apInvoicesService } from '../../services/database';
+import { formatAmount } from '../../utils/numberFormat';
 
 interface BankCheck {
   id: string;
-  banco: string; // bank_id
-  cuentaBanco: string; // bank_account_code
-  numeroCheque: string; // check_number
-  beneficiario: string; // payee_name
-  moneda: string; // currency
-  monto: number; // amount
-  fecha: string; // check_date (ISO)
-  descripcion: string;
-  estado: string; // status
+  bank_id: string;
+  check_number: string;
+  payment_type: 'accounts_payable' | 'cash' | 'internal_transfer';
+  supplier_id?: string;
+  payee_name?: string;
+  account_id?: string;
+  destination_bank_id?: string;
+  currency: string;
+  amount: number;
+  check_date: string;
+  description: string;
+  status: string;
+}
+
+interface Invoice {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  total_to_pay: number;
+  paid_amount: number;
+  balance: number;
 }
 
 export default function BankChecksPage() {
   const { user } = useAuth();
   const [checks, setChecks] = useState<BankCheck[]>([]);
   const [banks, setBanks] = useState<any[]>([]);
-  const [accountsById, setAccountsById] = useState<Record<string, { id: string; code: string; name: string }>>({});
-  const [expenseAccounts, setExpenseAccounts] = useState<Array<{ id: string; code: string; name: string }>>([]);
-  const [apInvoices, setApInvoices] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [pendingInvoices, setPendingInvoices] = useState<Invoice[]>([]);
+  const [selectedInvoices, setSelectedInvoices] = useState<Map<string, number>>(new Map());
+  const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
-    banco: '',
-    cuentaBanco: '',
-    numeroCheque: '',
-    beneficiario: '',
-    cuentaGasto: '',
-    apInvoiceId: '',
-    moneda: 'DOP',
-    monto: '',
-    fecha: new Date().toISOString().slice(0, 10),
-    descripcion: '',
+    bank_id: '',
+    check_number: '',
+    payment_type: 'cash' as 'accounts_payable' | 'cash' | 'internal_transfer',
+    supplier_id: '',
+    payee_name: '',
+    account_id: '',
+    destination_bank_id: '',
+    amount: '',
+    description: '',
   });
 
-  const handleChange = (field: keyof typeof form, value: string) => {
-    setForm(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleBankChange = (bankId: string) => {
-    setForm(prev => {
-      const next = { ...prev, banco: bankId };
-      const selectedBank = (banks || []).find((b: any) => b.id === bankId);
-      if (selectedBank) {
-        const accountId = selectedBank.chart_account_id as string | undefined;
-        if (accountId) {
-          const acc = accountsById[accountId];
-          if (acc) {
-            next.cuentaBanco = acc.code;
-          }
-        }
-        if (selectedBank.currency) {
-          next.moneda = selectedBank.currency;
-        }
-      }
-      return next;
-    });
-  };
-
   useEffect(() => {
-    const loadChecks = async () => {
+    const load = async () => {
       if (!user?.id) return;
-      const data = await bankChecksService.getAll(user.id);
-      const mapped: BankCheck[] = (data || []).map((row: any) => ({
-        id: row.id,
-        banco: row.bank_id || '',
-        cuentaBanco: row.bank_account_code || '',
-        numeroCheque: row.check_number || '',
-        beneficiario: row.payee_name || '',
-        moneda: row.currency || 'DOP',
-        monto: Number(row.amount) || 0,
-        fecha: row.check_date || (row.created_at ? row.created_at.slice(0, 10) : ''),
-        descripcion: row.description || '',
-        estado: row.status || 'issued',
-      }));
-      setChecks(mapped);
+      const [chks, bnks, sups, accs] = await Promise.all([
+        bankChecksService.getAll(user.id),
+        bankAccountsService.getAll(user.id),
+        suppliersService.getAll(user.id),
+        chartAccountsService.getAll(user.id),
+      ]);
+      setChecks(chks || []);
+      setBanks(bnks || []);
+      setSuppliers(sups || []);
+      setAccounts(accs || []);
     };
-
-    loadChecks();
+    load();
   }, [user?.id]);
 
   useEffect(() => {
-    const loadBanksAndAccounts = async () => {
-      if (!user?.id) return;
-      try {
-        const [bankRows, chartRows, invoiceRows] = await Promise.all([
-          bankAccountsService.getAll(user.id),
-          chartAccountsService.getAll(user.id),
-          apInvoicesService.getAll(user.id),
-        ]);
-
-        setBanks(bankRows || []);
-
-        const map: Record<string, { id: string; code: string; name: string }> = {};
-        const expenses: Array<{ id: string; code: string; name: string }> = [];
-
-        (chartRows || []).forEach((acc: any) => {
-          const mapped = {
-            id: acc.id,
-            code: acc.code,
-            name: acc.name,
-          };
-          map[acc.id] = mapped;
-
-          if (acc.allowPosting && acc.isActive !== false && !acc.isBankAccount) {
-            expenses.push(mapped);
-          }
-        });
-
-        setAccountsById(map);
-        setExpenseAccounts(expenses);
-
-        const pendingInvoices = (invoiceRows || []).filter((inv: any) => inv.status !== 'paid');
-        setApInvoices(pendingInvoices);
-      } catch (error) {
-        console.error('Error cargando bancos y cuentas contables para cheques', error);
+    const loadInv = async () => {
+      if (!user?.id || !form.supplier_id || form.payment_type !== 'accounts_payable') {
+        setPendingInvoices([]);
+        setSelectedInvoices(new Map());
+        return;
       }
-    };
-
-    loadBanksAndAccounts();
-  }, [user?.id]);
-
-  const handleAddCheck = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const montoNumber = Number(form.monto);
-    if (
-      !form.banco ||
-      !form.cuentaBanco ||
-      !form.numeroCheque.trim() ||
-      !form.beneficiario.trim() ||
-      !form.cuentaGasto ||
-      !form.moneda ||
-      !form.fecha
-    ) {
-      alert('Complete banco, cuenta de banco, número de cheque, beneficiario, cuenta de gasto/proveedor, moneda y fecha.');
-      return;
-    }
-    if (isNaN(montoNumber) || montoNumber <= 0) {
-      alert('El monto debe ser un número mayor que cero.');
-      return;
-    }
-
-    if (!user?.id) {
-      alert('Usuario no autenticado. Inicie sesión nuevamente.');
-      return;
-    }
-
-    try {
-      // Validar saldo disponible en cuenta bancaria
-      const selectedBank = (banks || []).find((b: any) => b.id === form.banco);
-      const bankAccountId = selectedBank?.chart_account_id;
-      
-      if (bankAccountId) {
-        const saldoDisponible = await financialReportsService.getAccountBalance(user.id, bankAccountId);
-        
-        if (saldoDisponible < montoNumber) {
-          const bankAccount = accountsById[bankAccountId];
-          alert(
-            `❌ Saldo insuficiente en cuenta bancaria\n\n` +
-            `Banco: ${selectedBank?.bank_name || 'N/A'}\n` +
-            `Cuenta: ${bankAccount?.code || 'N/A'} - ${bankAccount?.name || 'N/A'}\n` +
-            `Saldo disponible: RD$${saldoDisponible.toFixed(2)}\n` +
-            `Monto del cheque: RD$${montoNumber.toFixed(2)}\n\n` +
-            `No puede emitir un cheque sin fondos suficientes.`
-          );
-          return;
-        }
-      }
-
-      const created = await bankChecksService.create(user.id, {
-        bank_id: form.banco,
-        bank_account_code: form.cuentaBanco,
-        check_number: form.numeroCheque.trim(),
-        payee_name: form.beneficiario.trim(),
-        currency: form.moneda,
-        amount: montoNumber,
-        check_date: form.fecha,
-        description: form.descripcion.trim(),
-        expense_account_code: form.cuentaGasto,
-        ap_invoice_id: form.apInvoiceId || null,
+      const invs = await apInvoicesService.getAll(user.id);
+      const pending = (invs || []).filter((i: any) => {
+        const st = String(i.status || '').toLowerCase();
+        if (i.supplier_id !== form.supplier_id) return false;
+        if (st === 'paid') return false;
+        if (st === 'cancelled' || st === 'cancelada' || st === 'void' || st === 'anulada' || st === 'draft') return false;
+        return true;
+      }).map((i: any) => {
+        const totalToPay = Number(i.total_to_pay) || 0;
+        const paid = Number(i.paid_amount) || 0;
+        const balRaw = Number(i.balance_amount);
+        const balance = Number.isFinite(balRaw) ? Math.max(balRaw, 0) : Math.max(totalToPay - paid, 0);
+        return {
+          id: i.id,
+          invoice_number: i.invoice_number,
+          invoice_date: i.invoice_date,
+          total_to_pay: totalToPay,
+          paid_amount: paid,
+          balance,
+        };
       });
+      setPendingInvoices(pending);
+    };
+    loadInv();
+  }, [user?.id, form.supplier_id, form.payment_type]);
 
-      const mapped: BankCheck = {
-        id: created.id,
-        banco: created.bank_id || form.banco,
-        cuentaBanco: created.bank_account_code || form.cuentaBanco,
-        numeroCheque: created.check_number || form.numeroCheque.trim(),
-        beneficiario: created.payee_name || form.beneficiario.trim(),
-        moneda: created.currency || form.moneda,
-        monto: Number(created.amount) || montoNumber,
-        fecha: created.check_date || form.fecha,
-        descripcion: created.description || form.descripcion.trim(),
-        estado: created.status || 'issued',
-      };
+  useEffect(() => {
+    if (form.payment_type === 'accounts_payable' && selectedInvoices.size > 0) {
+      const total = Array.from(selectedInvoices.values()).reduce((s, a) => s + a, 0);
+      setForm(p => ({ ...p, amount: total.toFixed(2) }));
+    }
+  }, [selectedInvoices, form.payment_type]);
 
-      setChecks(prev => [mapped, ...prev]);
-      setForm(prev => ({
-        ...prev,
-        numeroCheque: '',
-        beneficiario: '',
-        cuentaGasto: '',
-        apInvoiceId: '',
-        monto: '',
-        descripcion: '',
-      }));
-    } catch (error: any) {
-      console.error('Error creando cheque bancario:', error);
-      alert(error?.message || 'Error al registrar el cheque bancario.');
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user?.id || !form.bank_id || !form.check_number.trim()) return alert('Complete banco y numero de cheque');
+    const amt = parseFloat(form.amount);
+    if (isNaN(amt) || amt <= 0) return alert('Monto invalido');
+    if (form.payment_type === 'accounts_payable' && (!form.supplier_id || selectedInvoices.size === 0)) return alert('Seleccione suplidor y facturas');
+    if (form.payment_type === 'cash' && (!form.payee_name.trim() || !form.account_id)) return alert('Complete beneficiario y cuenta a cargar');
+    if (form.payment_type === 'internal_transfer' && !form.destination_bank_id) return alert('Seleccione banco destino');
+    try {
+      setLoading(true);
+      const bank = banks.find(b => b.id === form.bank_id);
+      const supplier = suppliers.find(s => s.id === form.supplier_id);
+      const invoicePayments = form.payment_type === 'accounts_payable' ? Array.from(selectedInvoices.entries()).map(([id, amount]) => {
+        const inv = pendingInvoices.find(i => i.id === id);
+        return { invoice_id: id, invoice_number: inv?.invoice_number || '', amount_to_pay: amount, invoice_total: inv?.total_to_pay || 0 };
+      }) : undefined;
+      await bankChecksService.create(user.id, {
+        bank_id: form.bank_id,
+        bank_account_code: bank?.chart_account_id || '',
+        check_number: form.check_number.trim(),
+        payment_type: form.payment_type,
+        supplier_id: form.supplier_id || undefined,
+        payee_name: form.payment_type === 'cash' ? form.payee_name : form.payment_type === 'internal_transfer' ? 'Transferencia Interna' : (supplier?.name || ''),
+        account_id: form.account_id || undefined,
+        destination_bank_id: form.destination_bank_id || undefined,
+        currency: bank?.currency || 'DOP',
+        amount: amt,
+        check_date: new Date().toISOString().split('T')[0],
+        description: form.description,
+        invoice_payments: invoicePayments,
+      });
+      alert('Cheque registrado');
+      const data = await bankChecksService.getAll(user.id);
+      setChecks(data || []);
+      setForm({ bank_id: '', check_number: '', payment_type: 'cash', supplier_id: '', payee_name: '', account_id: '', destination_bank_id: '', amount: '', description: '' });
+      setSelectedInvoices(new Map());
+    } catch (err: any) {
+      alert(err?.message || 'Error');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const selectedBank = (banks || []).find((b: any) => b.id === form.banco);
-  const bankAccountLabel = (() => {
-    if (selectedBank?.chart_account_id) {
-      const acc = accountsById[selectedBank.chart_account_id];
-      if (acc) {
-        return `${acc.code} - ${acc.name}`;
-      }
-    }
-    return form.cuentaBanco;
-  })();
+  const selectedBank = banks.find(b => b.id === form.bank_id);
+  const selectedBankAccount = selectedBank?.chart_account_id ? accounts.find(a => a.id === selectedBank.chart_account_id) : null;
+  const destinationBank = banks.find(b => b.id === form.destination_bank_id);
+  const destinationBankAccount = destinationBank?.chart_account_id ? accounts.find(a => a.id === destinationBank.chart_account_id) : null;
 
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold mb-2">Cheques</h1>
-          <p className="text-gray-600 text-sm max-w-3xl">
-            Registre cheques emitidos desde las cuentas bancarias, indicando banco, cuenta de banco, número de cheque,
-            beneficiario, monto, moneda, fecha y concepto. Estos cheques se consideran egresos que acreditan la cuenta
-            del banco y debitan la cuenta de gasto o proveedor correspondiente.
-          </p>
-        </div>
-
-        {/* Formulario de registro */}
-        <form onSubmit={handleAddCheck} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 space-y-4">
-          <h2 className="text-lg font-semibold mb-2">Registrar nuevo cheque</h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Banco</label>
-              <select
-                value={form.banco}
-                onChange={(e) => handleBankChange(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Seleccione un banco...</option>
-                {banks.map((b: any) => (
-                  <option key={b.id} value={b.id}>{b.bank_name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Factura de CxP (opcional)</label>
-              <select
-                value={form.apInvoiceId}
-                onChange={(e) => handleChange('apInvoiceId', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Sin factura vinculada</option>
-                {apInvoices.map((inv: any) => (
-                  <option key={inv.id} value={inv.id}>
-                    {inv.invoice_number || inv.document_type || 'FAC'} - {(inv.suppliers as any)?.name || 'Suplidor'} - {inv.balance_amount ?? inv.total_to_pay ?? inv.total_gross}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de Banco (Cuenta Contable)</label>
-              <input
-                type="text"
-                value={bankAccountLabel || ''}
-                disabled
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
-                placeholder="Se asigna automáticamente según el banco seleccionado"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Número de Cheque</label>
-              <input
-                type="text"
-                value={form.numeroCheque}
-                onChange={(e) => handleChange('numeroCheque', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Ej: CH-0001"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Beneficiario</label>
-              <input
-                type="text"
-                value={form.beneficiario}
-                onChange={(e) => handleChange('beneficiario', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Nombre del beneficiario"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de Gasto / Proveedor (Débito)</label>
-              <select
-                value={form.cuentaGasto}
-                onChange={(e) => handleChange('cuentaGasto', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Seleccione una cuenta...</option>
-                {expenseAccounts.map((acc) => (
-                  <option key={acc.id} value={acc.code}>
-                    {acc.code} - {acc.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
-              <input
-                type="text"
-                value={form.moneda}
-                disabled
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Monto</label>
-              <input
-                type="number" min="0"
-                step="0.01"
-                value={form.monto}
-                onChange={(e) => handleChange('monto', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="0.00"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha del Cheque</label>
-              <input
-                type="date"
-                value={form.fecha}
-                onChange={(e) => handleChange('fecha', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-
-            <div className="md:col-span-2 lg:col-span-3">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Descripción / Concepto</label>
-              <input
-                type="text"
-                value={form.descripcion}
-                onChange={(e) => handleChange('descripcion', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Ej: Pago de factura de proveedor"
-              />
-            </div>
+        <div><h1 className="text-2xl font-bold">Cheques Bancarios</h1><p className="text-gray-600 text-sm">Registre cheques para pagos a proveedores, gastos de contado o transferencias internas</p></div>
+        <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow border p-6 space-y-4">
+          <h2 className="text-lg font-semibold">Nuevo Cheque</h2>
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="block text-sm font-medium mb-1">Banco Emisor *</label><select value={form.bank_id} onChange={e => setForm(p => ({...p, bank_id: e.target.value}))} className="w-full border rounded px-3 py-2" required><option value="">Seleccione...</option>{banks.map(b => <option key={b.id} value={b.id}>{b.bank_name}</option>)}</select></div>
+            <div><label className="block text-sm font-medium mb-1">Cuenta Bancaria</label><input type="text" value={selectedBankAccount ? `${selectedBankAccount.code} - ${selectedBankAccount.name}` : ''} disabled className="w-full border rounded px-3 py-2 bg-gray-100" /></div>
+            <div><label className="block text-sm font-medium mb-1">Numero de Cheque *</label><input type="text" value={form.check_number} onChange={e => setForm(p => ({...p, check_number: e.target.value}))} className="w-full border rounded px-3 py-2" required /></div>
           </div>
-
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Registrar cheque
-            </button>
-          </div>
+          <div><label className="block text-sm font-medium mb-2">Tipo de Pago *</label><div className="flex gap-4"><label className="flex items-center"><input type="radio" checked={form.payment_type === 'accounts_payable'} onChange={() => { setForm(p => ({...p, payment_type: 'accounts_payable', supplier_id: '', payee_name: '', account_id: '', destination_bank_id: '', amount: '', description: ''})); setSelectedInvoices(new Map()); }} className="mr-2" /><span className="text-sm">Cuentas por Pagar (CxP)</span></label><label className="flex items-center"><input type="radio" checked={form.payment_type === 'cash'} onChange={() => { setForm(p => ({...p, payment_type: 'cash', supplier_id: '', payee_name: '', account_id: '', destination_bank_id: '', amount: '', description: ''})); setSelectedInvoices(new Map()); }} className="mr-2" /><span className="text-sm">Pago de Contado</span></label><label className="flex items-center"><input type="radio" checked={form.payment_type === 'internal_transfer'} onChange={() => { setForm(p => ({...p, payment_type: 'internal_transfer', supplier_id: '', payee_name: '', account_id: '', destination_bank_id: '', amount: '', description: ''})); setSelectedInvoices(new Map()); }} className="mr-2" /><span className="text-sm">Transferencia Interna</span></label></div></div>
+          {form.payment_type === 'accounts_payable' && <div className="space-y-4 border-t pt-4"><div><label className="block text-sm font-medium mb-1">Suplidor *</label><select value={form.supplier_id} onChange={e => { setForm(p => ({...p, supplier_id: e.target.value})); setSelectedInvoices(new Map()); }} className="w-full border rounded px-3 py-2" required><option value="">Seleccione...</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>{form.supplier_id && pendingInvoices.length > 0 && <div><label className="block text-sm font-medium mb-2">Facturas Pendientes</label><div className="border rounded overflow-hidden"><table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="px-4 py-2 text-left">Sel.</th><th className="px-4 py-2 text-left">Factura</th><th className="px-4 py-2 text-right">Saldo</th><th className="px-4 py-2 text-right">Pagar</th></tr></thead><tbody>{pendingInvoices.map(inv => { const sel = selectedInvoices.has(inv.id); const amt = selectedInvoices.get(inv.id) || inv.balance; return <tr key={inv.id}><td className="px-4 py-2"><input type="checkbox" checked={sel} onChange={e => { const next = new Map(selectedInvoices); if (e.target.checked) next.set(inv.id, inv.balance); else next.delete(inv.id); setSelectedInvoices(next); }} /></td><td className="px-4 py-2">{inv.invoice_number}</td><td className="px-4 py-2 text-right">RD${formatAmount(inv.balance)}</td><td className="px-4 py-2">{sel && <input type="number" min="0" max={inv.balance} step="0.01" value={amt} onChange={e => { const next = new Map(selectedInvoices); next.set(inv.id, parseFloat(e.target.value) || 0); setSelectedInvoices(next); }} className="w-full border rounded px-2 py-1 text-right" />}</td></tr>; })}</tbody></table></div></div>}</div>}
+          {form.payment_type === 'cash' && <div className="grid grid-cols-2 gap-4 border-t pt-4"><div><label className="block text-sm font-medium mb-1">Beneficiario *</label><input type="text" value={form.payee_name} onChange={e => setForm(p => ({...p, payee_name: e.target.value}))} className="w-full border rounded px-3 py-2" required /></div><div><label className="block text-sm font-medium mb-1">Cuenta a Cargar *</label><select value={form.account_id} onChange={e => setForm(p => ({...p, account_id: e.target.value}))} className="w-full border rounded px-3 py-2" required><option value="">Seleccione...</option>{accounts.filter(a => a.type === 'expense' || a.type === 'asset' || a.type === 'liability').map(a => <option key={a.id} value={a.id}>{a.code} - {a.name}</option>)}</select></div><div><label className="block text-sm font-medium mb-1">Monto *</label><input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(p => ({...p, amount: e.target.value}))} className="w-full border rounded px-3 py-2" required /></div></div>}
+          {form.payment_type === 'internal_transfer' && <div className="grid grid-cols-2 gap-4 border-t pt-4"><div><label className="block text-sm font-medium mb-1">Banco Destino *</label><select value={form.destination_bank_id} onChange={e => setForm(p => ({...p, destination_bank_id: e.target.value}))} className="w-full border rounded px-3 py-2" required><option value="">Seleccione...</option>{banks.filter(b => b.id !== form.bank_id).map(b => <option key={b.id} value={b.id}>{b.bank_name}</option>)}</select></div><div><label className="block text-sm font-medium mb-1">Cuenta Destino</label><input type="text" value={destinationBankAccount ? `${destinationBankAccount.code} - ${destinationBankAccount.name}` : ''} disabled className="w-full border rounded px-3 py-2 bg-gray-100" /></div><div><label className="block text-sm font-medium mb-1">Monto *</label><input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(p => ({...p, amount: e.target.value}))} className="w-full border rounded px-3 py-2" required /></div></div>}
+          <div><label className="block text-sm font-medium mb-1">Descripcion / Concepto</label><textarea value={form.description} onChange={e => setForm(p => ({...p, description: e.target.value}))} className="w-full border rounded px-3 py-2" rows={2} /></div>
+          {form.payment_type === 'accounts_payable' && <div><label className="block text-sm font-medium mb-1">Total</label><input type="text" value={`RD$ ${formatAmount(parseFloat(form.amount) || 0)}`} disabled className="w-full border rounded px-3 py-2 bg-gray-100 font-bold" /></div>}
+          <div className="flex justify-end gap-3"><button type="button" onClick={() => { setForm({ bank_id: '', check_number: '', payment_type: 'cash', supplier_id: '', payee_name: '', account_id: '', destination_bank_id: '', amount: '', description: '' }); setSelectedInvoices(new Map()); }} className="px-4 py-2 border rounded">Cancelar</button><button type="submit" disabled={loading} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400">{loading ? 'Procesando...' : 'Registrar Cheque'}</button></div>
         </form>
-
-        {/* Listado de cheques */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-700">Cheques registrados</h2>
-            <span className="text-xs text-gray-500">Total: {checks.length}</span>
-          </div>
-          {checks.length === 0 ? (
-            <div className="p-6 text-center text-gray-500 text-sm">
-              No hay cheques registrados aún.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Fecha</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Banco</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Cuenta de Banco</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Nº Cheque</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Beneficiario</th>
-                    <th className="px-4 py-2 text-right font-medium text-gray-600">Monto</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Moneda</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Estado</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Descripción</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 bg-white">
-                  {checks.map(ch => {
-                    const currencyLabel =
-                      ch.moneda === 'DOP'
-                        ? 'Peso Dominicano'
-                        : ch.moneda === 'USD'
-                        ? 'Dólar Estadounidense'
-                        : ch.moneda === 'EUR'
-                        ? 'Euro'
-                        : ch.moneda;
-                    const statusLabel =
-                      ch.estado === 'issued'
-                        ? 'Emitido'
-                        : ch.estado === 'paid'
-                        ? 'Pagado'
-                        : ch.estado === 'void'
-                        ? 'Anulado'
-                        : ch.estado;
-                    return (
-                      <tr key={ch.id}>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{ch.fecha}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{ch.banco}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{ch.cuentaBanco}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{ch.numeroCheque}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{ch.beneficiario}</td>
-                        <td className="px-4 py-2 text-right text-gray-900">
-                          {ch.moneda} {ch.monto.toLocaleString()}
-                        </td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{currencyLabel}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{statusLabel}</td>
-                        <td className="px-4 py-2 text-gray-900">{ch.descripcion}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <div className="bg-white rounded-lg shadow border overflow-hidden"><div className="px-4 py-3 border-b bg-gray-50"><h2 className="text-lg font-semibold">Cheques Registrados</h2></div>{checks.length === 0 ? <div className="p-6 text-center text-gray-500">No hay cheques registrados</div> : <table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="px-4 py-2 text-left">Fecha</th><th className="px-4 py-2 text-left">Numero</th><th className="px-4 py-2 text-left">Banco</th><th className="px-4 py-2 text-left">Tipo</th><th className="px-4 py-2 text-left">Beneficiario</th><th className="px-4 py-2 text-right">Monto</th><th className="px-4 py-2 text-left">Estado</th></tr></thead><tbody>{checks.map(c => { const bank = banks.find(b => b.id === c.bank_id); return <tr key={c.id}><td className="px-4 py-2">{c.check_date}</td><td className="px-4 py-2">{c.check_number}</td><td className="px-4 py-2">{bank?.bank_name || '-'}</td><td className="px-4 py-2">{c.payment_type === 'accounts_payable' ? 'CxP' : c.payment_type === 'cash' ? 'Contado' : 'Transf. Interna'}</td><td className="px-4 py-2">{c.payee_name || '-'}</td><td className="px-4 py-2 text-right">{c.currency} {formatAmount(c.amount)}</td><td className="px-4 py-2"><span className={`px-2 py-1 text-xs rounded ${c.status === 'issued' ? 'bg-blue-100 text-blue-800' : c.status === 'cleared' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{c.status === 'issued' ? 'Emitido' : c.status === 'cleared' ? 'Cobrado' : c.status}</span></td></tr>; })}</tbody></table>}</div>
       </div>
     </DashboardLayout>
   );

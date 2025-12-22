@@ -34,6 +34,7 @@ export default function BanksPage() {
   
   const [showBankModal, setShowBankModal] = useState(false);
   const [editingBank, setEditingBank] = useState<Bank | null>(null);
+  const [selectedCurrency, setSelectedCurrency] = useState('DOP');
 
   // Función para formatear moneda
   const formatCurrency = (value: number, currency: string = 'DOP') => {
@@ -116,15 +117,23 @@ export default function BanksPage() {
     const form = e.target as HTMLFormElement;
     const formData = new FormData(form);
 
-    const initialBalance = parseFloat((formData.get('balance') as string) || '0') || 0;
+    const currency = (formData.get('currency') as string) || 'DOP';
     const chartAccountId = (formData.get('chart_account_id') as string) || null;
+
+    // Validar que si la moneda es diferente a DOP, debe tener cuenta contable
+    if (currency !== 'DOP' && !chartAccountId) {
+      toast.error('Para bancos en moneda extranjera es obligatorio asignar una cuenta contable');
+      return;
+    }
+
+    const initialBalance = parseFloat((formData.get('balance') as string) || '0') || 0;
 
     try {
       const payloadBase = {
         bank_name: formData.get('name') as string,
         account_number: formData.get('account_number') as string,
         account_type: formData.get('account_type') as string,
-        currency: (formData.get('currency') as string) || 'DOP',
+        currency: currency,
         bank_code: formData.get('bank_code') as string,
         swift_bic: (formData.get('swift_code') as string) || '',
         contact_info: (formData.get('contact_info') as string) || '',
@@ -165,7 +174,10 @@ export default function BanksPage() {
             <p className="text-gray-600 mt-1">Bancos registrados</p>
           </div>
           <button
-            onClick={() => setShowBankModal(true)}
+            onClick={() => {
+              setSelectedCurrency('DOP');
+              setShowBankModal(true);
+            }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center"
           >
             <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -224,6 +236,7 @@ export default function BanksPage() {
                         type="button"
                         onClick={() => {
                           setEditingBank(bank);
+                          setSelectedCurrency(bank.currency || 'DOP');
                           setShowBankModal(true);
                         }}
                         className="text-blue-600 hover:text-blue-800 text-xs font-medium"
@@ -249,6 +262,7 @@ export default function BanksPage() {
                   onClick={() => {
                     setShowBankModal(false);
                     setEditingBank(null);
+                    setSelectedCurrency('DOP');
                   }}
                   className="text-gray-400 hover:text-gray-500"
                 >
@@ -310,10 +324,18 @@ export default function BanksPage() {
                         required
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
                         defaultValue={editingBank?.currency || 'DOP'}
+                        onChange={(e) => setSelectedCurrency(e.target.value)}
                       >
                         <option value="DOP">Peso Dominicano (DOP)</option>
                         <option value="USD">Dólar Estadounidense (USD)</option>
+                        <option value="EUR">Euro (EUR)</option>
                       </select>
+                      {selectedCurrency !== 'DOP' && (
+                        <p className="mt-1 text-xs text-orange-600 font-medium">
+                          <i className="ri-alert-line mr-1"></i>
+                          Moneda extranjera: debe asignar cuenta contable obligatoriamente
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -335,8 +357,21 @@ export default function BanksPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center">
                         Código del Banco *
+                        <span className="ml-2 group relative">
+                          <i className="ri-information-line text-blue-500 cursor-help"></i>
+                          <div className="hidden group-hover:block absolute left-0 top-6 w-64 p-3 bg-gray-900 text-white text-xs rounded-lg shadow-lg z-10">
+                            <p className="font-semibold mb-1">¿Qué es el código del banco?</p>
+                            <p>Es el identificador único del banco en República Dominicana. Ejemplos:</p>
+                            <ul className="mt-1 space-y-1">
+                              <li>• BPDO - Banco Popular</li>
+                              <li>• BHD - BHD León</li>
+                              <li>• BDI - Banco BDI</li>
+                              <li>• BANRESERVAS - Banreservas</li>
+                            </ul>
+                          </div>
+                        </span>
                       </label>
                       <input
                         type="text"
@@ -344,8 +379,11 @@ export default function BanksPage() {
                         defaultValue={editingBank?.bank_code || ''}
                         required
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        placeholder="Ej: BPDO"
+                        placeholder="Ej: BPDO, BHD, BANRESERVAS"
                       />
+                      <p className="mt-1 text-xs text-gray-500">
+                        Código de identificación del banco (generalmente 3-4 letras)
+                      </p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -373,17 +411,24 @@ export default function BanksPage() {
                     </div>
                     <div className="md:col-span-2">
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Cuenta Contable del Banco
+                        Cuenta Contable del Banco {selectedCurrency !== 'DOP' && <span className="text-red-500">*</span>}
                       </label>
                       {loadingAccounts ? (
                         <p className="text-sm text-gray-500">Cargando plan de cuentas...</p>
                       ) : (
                         <select
                           name="chart_account_id"
-                          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8"
+                          required={selectedCurrency !== 'DOP'}
+                          className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-8 ${
+                            selectedCurrency !== 'DOP' ? 'border-orange-300 bg-orange-50' : 'border-gray-300'
+                          }`}
                           defaultValue={editingBank ? (editingBank as any).chart_account_id || '' : ''}
                         >
-                          <option value="">Seleccionar cuenta contable (opcional)</option>
+                          <option value="">
+                            {selectedCurrency !== 'DOP' 
+                              ? 'Seleccionar cuenta contable (OBLIGATORIO)' 
+                              : 'Seleccionar cuenta contable (opcional)'}
+                          </option>
                           {accounts.map((acc) => (
                             <option key={acc.id} value={acc.id}>
                               {acc.code} - {acc.name}
@@ -392,7 +437,9 @@ export default function BanksPage() {
                         </select>
                       )}
                       <p className="mt-1 text-xs text-gray-500">
-                        Esta cuenta se usará para los asientos contables de este banco.
+                        {selectedCurrency !== 'DOP' 
+                          ? '⚠️ Obligatorio para bancos en moneda extranjera. Esta cuenta se usará para los asientos contables.' 
+                          : 'Esta cuenta se usará para los asientos contables de este banco (opcional para DOP).'}
                       </p>
                     </div>
                   </div>
@@ -400,7 +447,10 @@ export default function BanksPage() {
                   <div className="flex justify-end space-x-3 pt-6">
                     <button
                       type="button"
-                      onClick={() => setShowBankModal(false)}
+                      onClick={() => {
+                        setShowBankModal(false);
+                        setSelectedCurrency('DOP');
+                      }}
                       className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
                     >
                       Cancelar

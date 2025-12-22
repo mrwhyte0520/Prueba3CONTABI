@@ -1784,13 +1784,23 @@ export const bankChecksService = {
     bank_id: string;
     bank_account_code: string;
     check_number: string;
-    payee_name: string;
+    payment_type: 'accounts_payable' | 'cash' | 'internal_transfer';
+    supplier_id?: string;
+    payee_name?: string;
+    account_id?: string;
+    destination_bank_id?: string;
     currency: string;
     amount: number;
     check_date: string;
     description: string;
     expense_account_code?: string;
     ap_invoice_id?: string | null;
+    invoice_payments?: Array<{
+      invoice_id: string;
+      invoice_number: string;
+      amount_to_pay: number;
+      invoice_total: number;
+    }>;
   }) {
     try {
       if (!userId) throw new Error('userId required');
@@ -1813,114 +1823,145 @@ export const bankChecksService = {
 
       if (error) throw error;
 
-      // Asiento contable automático: Debe gasto/CxP / Haber banco
+      // Asiento contable automático según tipo de pago
       try {
         const amount = Number(check.amount) || 0;
-        if (amount > 0 && check.expense_account_code) {
-          // Si el cheque está vinculado a una factura de CxP, usar Cuentas por Pagar
-          // Si no, usar la cuenta de gasto especificada
-          let debitAccountId: string | null = null;
-          let debitDescription = check.description || 'Pago mediante cheque';
-
-          if (check.ap_invoice_id) {
-            // Cheque vinculado a CxP: usar cuenta de Cuentas por Pagar
-            const settings = await accountingSettingsService.get(tenantId);
-            debitAccountId = settings?.ap_account_id || null;
-            debitDescription = 'Pago a proveedor mediante cheque - Cuentas por Pagar';
-          } else {
-            // Cheque no vinculado: usar cuenta de gasto
-            const { data: expenseAccount, error: expenseError } = await supabase
-              .from('chart_accounts')
-              .select('id')
-              .eq('user_id', tenantId)
-              .eq('code', check.expense_account_code)
-              .maybeSingle();
-            if (!expenseError && expenseAccount?.id) {
-              debitAccountId = expenseAccount.id as string;
-            }
-          }
-
-          // Buscar banco y su cuenta contable
+        if (amount > 0) {
           const { data: bank, error: bankError } = await supabase
             .from('bank_accounts')
             .select('chart_account_id, bank_name')
             .eq('id', check.bank_id)
             .maybeSingle();
 
-          if (debitAccountId && !bankError && bank?.chart_account_id) {
-            const entryPayload = {
-              entry_number: `CHK-${new Date(check.check_date).toISOString().slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
-              entry_date: String(check.check_date),
-              description: check.description || `Cheque a ${check.payee_name}`.trim(),
-              reference: data.id ? String(data.id) : null,
-              status: 'posted' as const,
-            };
+          if (bankError || !bank?.chart_account_id) {
+            throw new Error('Banco sin cuenta contable configurada');
+          }
 
-            const lines = [
-              {
-                account_id: debitAccountId,
-                description: debitDescription,
-                debit_amount: amount,
-                credit_amount: 0,
-              },
-              {
-                account_id: bank.chart_account_id as string,
-                description: `Cheque bancario - Banco ${bank.bank_name || ''}`.trim(),
-                debit_amount: 0,
-                credit_amount: amount,
-              },
-            ];
+          const entryPayload = {
+            entry_number: `CHK-${new Date(check.check_date).toISOString().slice(0, 10)}-${(data.id || '').toString().slice(0, 6)}`,
+            entry_date: String(check.check_date),
+            description: check.description || `Cheque ${check.check_number}`,
+            reference: data.id ? String(data.id) : null,
+            status: 'posted' as const,
+          };
 
-            await journalEntriesService.createWithLines(userId, entryPayload, lines);
+          const lines: any[] = [];
 
-            // Marcar factura de CxP como pagada o parcial y actualizar saldo si el cheque está vinculado a una factura
-            if (check.ap_invoice_id) {
-              try {
-                const { data: invoice, error: invError } = await supabase
-                  .from('ap_invoices')
-                  .select('id, user_id, total_to_pay, paid_amount, balance_amount, status')
-                  .eq('id', check.ap_invoice_id)
-                  .eq('user_id', tenantId)
-                  .maybeSingle();
+          // Tipo 1: Cuentas por Pagar (CxP)
+          if (check.payment_type === 'accounts_payable') {
+            const settings = await accountingSettingsService.get(tenantId);
+            const apAccountId = settings?.ap_account_id;
+            if (!apAccountId) throw new Error('Cuenta de CxP no configurada');
 
-                if (!invError && invoice) {
-                  const totalToPay = Number(invoice.total_to_pay) || 0;
-                  const currentPaid = Number((invoice as any).paid_amount) || 0;
-                  const currentBalance = Number((invoice as any).balance_amount) || totalToPay;
+            lines.push({
+              account_id: apAccountId,
+              description: `Pago a proveedor - ${check.payee_name || ''}`,
+              debit_amount: amount,
+              credit_amount: 0,
+            });
+            lines.push({
+              account_id: bank.chart_account_id,
+              description: `Cheque ${check.check_number} - ${bank.bank_name || ''}`,
+              debit_amount: 0,
+              credit_amount: amount,
+            });
 
-                  const remainingBefore = totalToPay > 0 ? Math.max(totalToPay - currentPaid, 0) : currentBalance;
-                  const amountToApply = totalToPay > 0 ? Math.min(amount, remainingBefore) : amount;
+            // Actualizar facturas si hay invoice_payments
+            if (check.invoice_payments && check.invoice_payments.length > 0) {
+              for (const payment of check.invoice_payments) {
+                try {
+                  await supabase.from('ap_invoice_payments').insert({
+                    user_id: tenantId,
+                    invoice_id: payment.invoice_id,
+                    payment_date: check.check_date,
+                    amount: payment.amount_to_pay,
+                    payment_method: 'check',
+                    reference: check.check_number,
+                    notes: `Pago con cheque ${check.check_number}`,
+                  });
 
-                  const newPaid = currentPaid + amountToApply;
-                  const newBalance = totalToPay > 0
-                    ? Math.max(totalToPay - newPaid, 0)
-                    : Math.max(currentBalance - amountToApply, 0);
-
-                  let newStatus = invoice.status || 'pending';
-                  if (totalToPay > 0) {
-                    if (newBalance <= 0.01) {
-                      newStatus = 'paid';
-                    } else if (newPaid > 0) {
-                      newStatus = 'partial';
-                    }
-                  }
-
-                  await supabase
+                  const { data: invoice } = await supabase
                     .from('ap_invoices')
-                    .update({
-                      status: newStatus,
-                      paid_amount: newPaid,
-                      balance_amount: newBalance,
-                      updated_at: new Date().toISOString(),
-                    })
-                    .eq('id', invoice.id)
-                    .eq('user_id', tenantId);
+                    .select('total_to_pay, paid_amount, balance_amount, status')
+                    .eq('id', payment.invoice_id)
+                    .eq('user_id', tenantId)
+                    .single();
+
+                  if (invoice) {
+                    const totalToPay = Number((invoice as any).total_to_pay) || 0;
+                    const currentPaid = Number((invoice as any).paid_amount) || 0;
+                    const currentBalance = Number((invoice as any).balance_amount);
+
+                    const remaining = Number.isFinite(currentBalance)
+                      ? Math.max(currentBalance, 0)
+                      : Math.max(totalToPay - currentPaid, 0);
+
+                    const amountToApply = Math.min(Number(payment.amount_to_pay) || 0, remaining);
+                    const newPaid = currentPaid + amountToApply;
+                    const newBalance = Math.max(remaining - amountToApply, 0);
+
+                    const newStatus = newBalance <= 0.01 ? 'paid' : newPaid > 0 ? 'partial' : (invoice as any).status;
+
+                    await supabase
+                      .from('ap_invoices')
+                      .update({
+                        paid_amount: newPaid,
+                        balance_amount: newBalance,
+                        status: newStatus,
+                        updated_at: new Date().toISOString(),
+                      })
+                      .eq('id', payment.invoice_id)
+                      .eq('user_id', tenantId);
+                  }
+                } catch (err) {
+                  console.error('Error updating invoice:', err);
                 }
-              } catch (updateApError) {
-                // No interrumpir el flujo del cheque por errores al actualizar la factura de CxP
-                console.error('Error updating AP invoice status from bankChecksService:', updateApError);
               }
             }
+          }
+          // Tipo 2: Pago de Contado
+          else if (check.payment_type === 'cash') {
+            if (!check.account_id) throw new Error('Cuenta a cargar no especificada');
+            lines.push({
+              account_id: check.account_id,
+              description: check.description || `Pago a ${check.payee_name || ''}`,
+              debit_amount: amount,
+              credit_amount: 0,
+            });
+            lines.push({
+              account_id: bank.chart_account_id,
+              description: `Cheque ${check.check_number} - ${bank.bank_name || ''}`,
+              debit_amount: 0,
+              credit_amount: amount,
+            });
+          }
+          // Tipo 3: Transferencia Interna
+          else if (check.payment_type === 'internal_transfer') {
+            if (!check.destination_bank_id) throw new Error('Banco destino no especificado');
+            const { data: destBank } = await supabase
+              .from('bank_accounts')
+              .select('chart_account_id, bank_name')
+              .eq('id', check.destination_bank_id)
+              .single();
+
+            if (!destBank?.chart_account_id) throw new Error('Banco destino sin cuenta contable');
+
+            lines.push({
+              account_id: destBank.chart_account_id,
+              description: `Transferencia desde ${bank.bank_name || ''} - Cheque ${check.check_number}`,
+              debit_amount: amount,
+              credit_amount: 0,
+            });
+            lines.push({
+              account_id: bank.chart_account_id,
+              description: `Transferencia a ${destBank.bank_name || ''} - Cheque ${check.check_number}`,
+              debit_amount: 0,
+              credit_amount: amount,
+            });
+          }
+
+          if (lines.length > 0) {
+            await journalEntriesService.createWithLines(userId, entryPayload, lines);
           }
         }
       } catch (jeError) {
@@ -1962,11 +2003,21 @@ export const paymentRequestsService = {
   async create(userId: string, request: {
     bank_id: string;
     bank_account_code: string;
-    payee_name: string;
+    payment_method: 'transfer' | 'check'; // Transferencia o Cheque
+    payment_type: 'accounts_payable' | 'cash'; // CxP o Contado
+    supplier_id?: string; // Solo para CxP
+    payee_name?: string; // Solo para Contado
+    account_id?: string; // Cuenta contable contrapartida (solo para Contado)
     currency: string;
     amount: number;
     request_date: string;
     description: string;
+    invoice_payments?: Array<{ // Solo para CxP
+      invoice_id: string;
+      invoice_number: string;
+      amount_to_pay: number;
+      invoice_total: number;
+    }>;
   }) {
     try {
       const tenantId = await resolveTenantId(userId);
@@ -1974,6 +2025,7 @@ export const paymentRequestsService = {
       const now = new Date().toISOString();
       const payload = {
         ...request,
+        invoice_payments: request.invoice_payments ? JSON.stringify(request.invoice_payments) : null,
         status: 'pending',
         user_id: tenantId,
         created_at: now,
@@ -1994,11 +2046,21 @@ export const paymentRequestsService = {
     }
   },
 
-  async updateStatus(id: string, status: string) {
+  async updateStatus(id: string, status: string, approvedBy?: string) {
     try {
+      const updateData: any = { 
+        status, 
+        updated_at: new Date().toISOString() 
+      };
+      
+      if (status === 'approved' && approvedBy) {
+        updateData.approved_by = approvedBy;
+        updateData.approved_at = new Date().toISOString();
+      }
+
       const { data, error } = await supabase
         .from('bank_payment_requests')
-        .update({ status, updated_at: new Date().toISOString() })
+        .update(updateData)
         .eq('id', id)
         .select('*');
 
@@ -2013,6 +2075,198 @@ export const paymentRequestsService = {
       return rows[0];
     } catch (error) {
       console.error('paymentRequestsService.updateStatus error', error);
+      throw error;
+    }
+  },
+
+  async approveAndCreateJournalEntry(userId: string, requestId: string) {
+    try {
+      const tenantId = await resolveTenantId(userId);
+      if (!tenantId) throw new Error('userId required');
+
+      // Obtener la solicitud
+      const { data: request, error: fetchError } = await supabase
+        .from('bank_payment_requests')
+        .select('*')
+        .eq('id', requestId)
+        .eq('user_id', tenantId)
+        .single();
+
+      if (fetchError || !request) throw new Error('Solicitud no encontrada');
+      if (request.status !== 'pending') throw new Error('Solo se pueden aprobar solicitudes pendientes');
+
+      // Actualizar estado a aprobado
+      await this.updateStatus(requestId, 'approved', userId);
+
+      // Crear asiento contable automático
+      const entryDate = new Date().toISOString().split('T')[0];
+      const [year, month] = entryDate.split('-');
+      const prefix = `PR-${year}${month}`;
+
+      const { data: existingEntries } = await supabase
+        .from('journal_entries')
+        .select('entry_number')
+        .eq('user_id', tenantId)
+        .like('entry_number', `${prefix}%`)
+        .order('entry_number', { ascending: false })
+        .limit(1);
+
+      let nextSeq = 1;
+      if (existingEntries && existingEntries.length > 0) {
+        const lastNumber = existingEntries[0].entry_number || '';
+        const seqStr = lastNumber.slice(prefix.length);
+        const parsed = parseInt(seqStr, 10);
+        if (!Number.isNaN(parsed)) {
+          nextSeq = parsed + 1;
+        }
+      }
+
+      const entryNumber = `${prefix}${nextSeq.toString().padStart(4, '0')}`;
+      const description = `Pago aprobado - ${request.description || 'Solicitud de pago'}`;
+
+      // Crear asiento: Debito cuenta de gasto/CxP, Credito banco
+      const lines: any[] = [];
+
+      if (request.payment_type === 'accounts_payable' && request.supplier_id) {
+        // Para CxP: Debito CxP, Credito Banco
+        // Obtener cuenta de CxP del proveedor
+        const { data: supplier } = await supabase
+          .from('suppliers')
+          .select('ap_account_id')
+          .eq('id', request.supplier_id)
+          .single();
+
+        const apAccountId = supplier?.ap_account_id;
+        if (!apAccountId) throw new Error('Proveedor sin cuenta de CxP configurada');
+
+        lines.push({
+          account_id: apAccountId,
+          debit_amount: request.amount,
+          credit_amount: 0,
+          description: `Pago a proveedor - ${request.payee_name || ''}`,
+        });
+      } else if (request.payment_type === 'cash' && request.account_id) {
+        // Para Contado: Debito cuenta seleccionada, Credito Banco
+        lines.push({
+          account_id: request.account_id,
+          debit_amount: request.amount,
+          credit_amount: 0,
+          description: request.description || 'Pago de contado',
+        });
+      } else {
+        throw new Error('Configuración de pago inválida');
+      }
+
+      // Obtener cuenta contable del banco
+      const { data: bank } = await supabase
+        .from('bank_accounts')
+        .select('chart_account_id')
+        .eq('id', request.bank_id)
+        .single();
+
+      if (!bank?.chart_account_id) throw new Error('Banco sin cuenta contable configurada');
+
+      lines.push({
+        account_id: bank.chart_account_id,
+        debit_amount: 0,
+        credit_amount: request.amount,
+        description: `Pago ${request.payment_method === 'check' ? 'cheque' : 'transferencia'}`,
+      });
+
+      // Crear el asiento
+      const { data: entry, error: entryError } = await supabase
+        .from('journal_entries')
+        .insert({
+          user_id: tenantId,
+          entry_number: entryNumber,
+          entry_date: entryDate,
+          description,
+          total_debit: request.amount,
+          total_credit: request.amount,
+          status: 'posted',
+          source_type: 'payment_request',
+          source_id: requestId,
+        })
+        .select()
+        .single();
+
+      if (entryError) throw entryError;
+
+      // Crear líneas del asiento
+      const linesData = lines.map((line, index) => ({
+        journal_entry_id: entry.id,
+        account_id: line.account_id,
+        debit_amount: line.debit_amount,
+        credit_amount: line.credit_amount,
+        description: line.description,
+        line_number: index + 1,
+      }));
+
+      const { error: linesError } = await supabase
+        .from('journal_entry_lines')
+        .insert(linesData);
+
+      if (linesError) throw linesError;
+
+      // Si es pago a CxP, actualizar facturas
+      if (request.payment_type === 'accounts_payable' && request.invoice_payments) {
+        const invoicePayments = typeof request.invoice_payments === 'string' 
+          ? JSON.parse(request.invoice_payments) 
+          : request.invoice_payments;
+
+        for (const payment of invoicePayments) {
+          // Registrar el pago en la factura
+          await supabase
+            .from('ap_invoice_payments')
+            .insert({
+              user_id: tenantId,
+              invoice_id: payment.invoice_id,
+              payment_date: entryDate,
+              amount: payment.amount_to_pay,
+              payment_method: request.payment_method,
+              reference: entryNumber,
+              notes: `Pago desde solicitud ${requestId}`,
+            });
+
+          // Actualizar saldo de la factura (alineado a esquema real)
+          const { data: invoice } = await supabase
+            .from('ap_invoices')
+            .select('total_to_pay, paid_amount, balance_amount, status')
+            .eq('id', payment.invoice_id)
+            .eq('user_id', tenantId)
+            .single();
+
+          if (invoice) {
+            const totalToPay = Number((invoice as any).total_to_pay) || 0;
+            const currentPaid = Number((invoice as any).paid_amount) || 0;
+            const currentBalance = Number((invoice as any).balance_amount);
+
+            const remaining = Number.isFinite(currentBalance)
+              ? Math.max(currentBalance, 0)
+              : Math.max(totalToPay - currentPaid, 0);
+
+            const amountToApply = Math.min(Number(payment.amount_to_pay) || 0, remaining);
+            const newPaidAmount = currentPaid + amountToApply;
+            const newBalance = Math.max(remaining - amountToApply, 0);
+            const newStatus = newBalance <= 0.01 ? 'paid' : newPaidAmount > 0 ? 'partial' : (invoice as any).status;
+
+            await supabase
+              .from('ap_invoices')
+              .update({
+                paid_amount: newPaidAmount,
+                balance_amount: newBalance,
+                status: newStatus,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', payment.invoice_id)
+              .eq('user_id', tenantId);
+          }
+        }
+      }
+
+      return { request, entry };
+    } catch (error) {
+      console.error('paymentRequestsService.approveAndCreateJournalEntry error', error);
       throw error;
     }
   },
@@ -7099,7 +7353,7 @@ export const deliveryNotesService = {
             status: 'posted' as const,
           };
 
-          await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
+          // Agregar líneas de Costo de Ventas e Inventario al mismo asiento (createInvoiceFromNotes)
           try {
             const { data: costLines, error: costLinesError } = await supabase
               .from('invoice_lines')
@@ -7112,7 +7366,6 @@ export const deliveryNotesService = {
             if (!costLinesError && costLines && costLines.length > 0) {
               const cogsTotals: Record<string, number> = {};
               const inventoryTotals: Record<string, number> = {};
-              let totalCost = 0;
 
               costLines.forEach((line: any) => {
                 const invItem = line.inventory_items as any | null;
@@ -7126,56 +7379,42 @@ export const deliveryNotesService = {
                 const inventoryAccountId = invItem.inventory_account_id as string | null;
 
                 if (cogsAccountId && inventoryAccountId) {
-                  totalCost += lineCost;
                   cogsTotals[cogsAccountId] = (cogsTotals[cogsAccountId] || 0) + lineCost;
                   inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
                 }
               });
 
-              if (totalCost > 0) {
-                const cogsLines: any[] = [];
-                let lineNumber = 1;
-
-                for (const [accountId, amount] of Object.entries(cogsTotals)) {
-                  if (amount > 0) {
-                    cogsLines.push({
-                      account_id: accountId,
-                      description: 'Costo de Ventas',
-                      debit_amount: amount,
-                      credit_amount: 0,
-                      line_number: lineNumber++,
-                    });
-                  }
+              // Agregar líneas de Costo de Ventas (Débito)
+              for (const [accountId, amount] of Object.entries(cogsTotals)) {
+                if (amount > 0) {
+                  entryLines.push({
+                    account_id: accountId,
+                    description: 'Costo de Ventas',
+                    debit_amount: amount,
+                    credit_amount: 0,
+                    line_number: nextLineNumber++,
+                  });
                 }
+              }
 
-                for (const [accountId, amount] of Object.entries(inventoryTotals)) {
-                  if (amount > 0) {
-                    cogsLines.push({
-                      account_id: accountId,
-                      description: 'Inventario',
-                      debit_amount: 0,
-                      credit_amount: amount,
-                      line_number: lineNumber++,
-                    });
-                  }
-                }
-
-                if (cogsLines.length > 0) {
-                  const cogsEntryPayload = {
-                    entry_number: `${String((invoiceData as any).invoice_number || '')}-COGS`,
-                    entry_date: String((invoiceData as any).invoice_date),
-                    description: `Costo de ventas factura ${(invoiceData as any).invoice_number || ''}`.trim(),
-                    reference: invoiceData.id,
-                    status: 'posted' as const,
-                  };
-
-                  await journalEntriesService.createWithLines(userId, cogsEntryPayload, cogsLines);
+              // Agregar líneas de Inventario (Crédito)
+              for (const [accountId, amount] of Object.entries(inventoryTotals)) {
+                if (amount > 0) {
+                  entryLines.push({
+                    account_id: accountId,
+                    description: 'Inventario',
+                    debit_amount: 0,
+                    credit_amount: amount,
+                    line_number: nextLineNumber++,
+                  });
                 }
               }
             }
           } catch (cogsError) {
-            console.error('Error posting invoice COGS to ledger:', cogsError);
+            console.error('Error calculating invoice COGS for ledger (createInvoiceFromNotes):', cogsError);
           }
+
+          await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
         }
       } catch (postError) {
         console.error('deliveryNotesService.createInvoiceFromNotes invoice posting error', postError);
@@ -7472,16 +7711,7 @@ export const invoicesService = {
             }
           }
 
-          const entryPayload = {
-            entry_number: String(invoiceData.invoice_number || ''),
-            entry_date: String(invoiceData.invoice_date),
-            description: `Factura ${invoiceData.invoice_number || ''}`.trim(),
-            reference: invoiceData.id ? String(invoiceData.id) : null,
-            status: 'posted' as const,
-          };
-
-          await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
-          // Segundo asiento: Costo de Ventas vs Inventario (best-effort, por producto)
+          // Agregar líneas de Costo de Ventas e Inventario al mismo asiento
           try {
             const { data: costLines, error: costLinesError } = await supabase
               .from('invoice_lines')
@@ -7495,8 +7725,6 @@ export const invoicesService = {
               const cogsTotals: Record<string, number> = {};
               const inventoryTotals: Record<string, number> = {};
 
-              let totalCost = 0;
-
               costLines.forEach((line: any) => {
                 const invItem = line.inventory_items as any | null;
                 const qty = Number(line.quantity) || 0;
@@ -7509,56 +7737,50 @@ export const invoicesService = {
                 const inventoryAccountId = invItem.inventory_account_id as string | null;
 
                 if (cogsAccountId && inventoryAccountId) {
-                  totalCost += lineCost;
                   cogsTotals[cogsAccountId] = (cogsTotals[cogsAccountId] || 0) + lineCost;
                   inventoryTotals[inventoryAccountId] = (inventoryTotals[inventoryAccountId] || 0) + lineCost;
                 }
               });
 
-              if (totalCost > 0) {
-                const cogsLines: any[] = [];
-                let lineNumber = 1;
-
-                for (const [accountId, amount] of Object.entries(cogsTotals)) {
-                  if (amount > 0) {
-                    cogsLines.push({
-                      account_id: accountId,
-                      description: 'Costo de Ventas',
-                      debit_amount: amount,
-                      credit_amount: 0,
-                      line_number: lineNumber++,
-                    });
-                  }
+              // Agregar líneas de Costo de Ventas (Débito)
+              for (const [accountId, amount] of Object.entries(cogsTotals)) {
+                if (amount > 0) {
+                  entryLines.push({
+                    account_id: accountId,
+                    description: 'Costo de Ventas',
+                    debit_amount: amount,
+                    credit_amount: 0,
+                    line_number: nextLineNumber++,
+                  });
                 }
+              }
 
-                for (const [accountId, amount] of Object.entries(inventoryTotals)) {
-                  if (amount > 0) {
-                    cogsLines.push({
-                      account_id: accountId,
-                      description: 'Inventario',
-                      debit_amount: 0,
-                      credit_amount: amount,
-                      line_number: lineNumber++,
-                    });
-                  }
-                }
-
-                if (cogsLines.length > 0) {
-                  const cogsEntryPayload = {
-                    entry_number: `${String(invoiceData.invoice_number || '')}-COGS`,
-                    entry_date: String(invoiceData.invoice_date),
-                    description: `Costo de ventas factura ${invoiceData.invoice_number || ''}`.trim(),
-                    reference: invoiceData.id,
-                    status: 'posted' as const,
-                  };
-
-                  await journalEntriesService.createWithLines(tenantId, cogsEntryPayload, cogsLines);
+              // Agregar líneas de Inventario (Crédito)
+              for (const [accountId, amount] of Object.entries(inventoryTotals)) {
+                if (amount > 0) {
+                  entryLines.push({
+                    account_id: accountId,
+                    description: 'Inventario',
+                    debit_amount: 0,
+                    credit_amount: amount,
+                    line_number: nextLineNumber++,
+                  });
                 }
               }
             }
           } catch (cogsError) {
-            console.error('Error posting invoice COGS to ledger:', cogsError);
+            console.error('Error calculating invoice COGS for ledger:', cogsError);
           }
+
+          const entryPayload = {
+            entry_number: String(invoiceData.invoice_number || ''),
+            entry_date: String(invoiceData.invoice_date),
+            description: `Factura ${invoiceData.invoice_number || ''}`.trim(),
+            reference: invoiceData.id ? String(invoiceData.id) : null,
+            status: 'posted' as const,
+          };
+
+          await journalEntriesService.createWithLines(userId, entryPayload, entryLines);
         }
       } catch (error) {
         console.error('Error posting invoice to ledger:', error);

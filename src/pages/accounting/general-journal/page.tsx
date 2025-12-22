@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -8,7 +8,7 @@ import { formatAmount } from '../../../utils/numberFormat';
 import { formatDate } from '../../../utils/dateFormat';
 import DateInput from '../../../components/common/DateInput';
 
-// Estilos CSS para mejorar la impresión
+// Estilos CSS para mejorar la impresiÃ³n
 const printStyles = `
   @media print {
     @page { size: landscape; margin: 0.5cm; }
@@ -70,8 +70,8 @@ const getEntryDocumentType = (entry: JournalEntry): string => {
 
   if (num.startsWith('ED-') || num.startsWith('JE-')) return 'Asiento manual';
   if (num.startsWith('BCG-')) return 'Cargo bancario';
-  if (num.startsWith('DEP-')) return 'Depósito bancario';
-  if (num.startsWith('CRD-')) return 'Crédito bancario';
+  if (num.startsWith('DEP-')) return 'DepÃ³sito bancario';
+  if (num.startsWith('CRD-')) return 'CrÃ©dito bancario';
   if (num.startsWith('TRF-')) return 'Transferencia bancaria';
   if (num.startsWith('CHK-')) return 'Cheque';
   if (num.startsWith('INV-MOV-')) return 'Movimiento de inventario';
@@ -128,7 +128,7 @@ const GeneralJournalPage = () => {
         const info = await settingsService.getCompanyInfo();
         setCompanyInfo(info);
       } catch (error) {
-        console.error('Error cargando información de la empresa para Diario General', error);
+        console.error('Error cargando informaciÃ³n de la empresa para Diario General', error);
       }
     };
 
@@ -250,27 +250,27 @@ const GeneralJournalPage = () => {
   const handleSaveEntry = async () => {
     if (!user) return;
 
-    // Validar que los débitos y créditos estén balanceados
+    // Validar que los dÃ©bitos y crÃ©ditos estÃ©n balanceados
     const totalDebit = formData.lines.reduce((sum, line) => sum + (line.debit_amount || 0), 0);
     const totalCredit = formData.lines.reduce((sum, line) => sum + (line.credit_amount || 0), 0);
 
-    // Validar que ninguna línea tenga simultáneamente débito y crédito
+    // Validar que ninguna lÃ­nea tenga simultÃ¡neamente dÃ©bito y crÃ©dito
     const invalidLines = formData.lines.filter(line =>
       (line.debit_amount || 0) > 0 && (line.credit_amount || 0) > 0
     );
 
     if (invalidLines.length > 0) {
-      alert('Cada línea debe tener solo débito o solo crédito, no ambos.');
+      alert('Cada lÃ­nea debe tener solo dÃ©bito o solo crÃ©dito, no ambos.');
       return;
     }
 
     if (Math.abs(totalDebit - totalCredit) > 0.01) {
-      alert('Los débitos y créditos deben estar balanceados');
+      alert('Los dÃ©bitos y crÃ©ditos deben estar balanceados');
       return;
     }
 
     if (totalDebit === 0 || totalCredit === 0) {
-      alert('Debe ingresar al menos un débito y un crédito');
+      alert('Debe ingresar al menos un dÃ©bito y un crÃ©dito');
       return;
     }
 
@@ -308,7 +308,7 @@ const GeneralJournalPage = () => {
 
         if (entryError) throw entryError;
 
-        // Reemplazar líneas del asiento
+        // Reemplazar lÃ­neas del asiento
         const { error: deleteError } = await supabase
           .from('journal_entry_lines')
           .delete()
@@ -348,7 +348,7 @@ const GeneralJournalPage = () => {
 
         if (existingEntriesError) {
           console.error('Error generating journal entry number:', existingEntriesError);
-          alert('No se pudo generar el número de asiento. Intente nuevamente.');
+          alert('No se pudo generar el nÃºmero de asiento. Intente nuevamente.');
           return;
         }
 
@@ -423,7 +423,7 @@ const GeneralJournalPage = () => {
   };
 
   const handleDeleteEntry = async (entryId: string) => {
-    if (!confirm('¿Está seguro de que desea anular este asiento? Esta acción no se puede deshacer.')) {
+    if (!confirm('Â¿EstÃ¡ seguro de que desea anular este asiento? Esta acciÃ³n no se puede deshacer.')) {
       return;
     }
 
@@ -473,7 +473,7 @@ const GeneralJournalPage = () => {
       lines: prev.lines.map((line, i) => {
         if (i !== index) return line;
 
-        // Regla: una línea solo puede tener débito o crédito, nunca ambos
+        // Regla: una lÃ­nea solo puede tener dÃ©bito o crÃ©dito, nunca ambos
         if (field === 'debit_amount') {
           return { ...line, debit_amount: value, credit_amount: 0 };
         }
@@ -511,11 +511,10 @@ const GeneralJournalPage = () => {
           Fecha: formatDate(entry.entry_date),
 
           'Número Asiento': entry.entry_number,
-          Descripción: entry.description,
-          Referencia: entry.reference,
+          'Descripción': entry.description,
           Cuenta: `${line.chart_accounts.code} - ${line.chart_accounts.name}`,
-          Débito: line.debit_amount || '',
-          Crédito: line.credit_amount || '',
+          'Débito': line.debit_amount || '',
+          'Crédito': line.credit_amount || '',
           Estado: entry.status === 'posted' ? 'Publicado' : entry.status === 'draft' ? 'Borrador' : 'Anulado',
         }));
       });
@@ -561,7 +560,6 @@ const GeneralJournalPage = () => {
         { wch: 12 },
         { wch: 16 },
         { wch: 40 },
-        { wch: 18 },
         { wch: 45 },
         { wch: 14 },
         { wch: 14 },
@@ -593,8 +591,7 @@ const GeneralJournalPage = () => {
           <td>${getEntryDocumentType(entry)}</td>
           <td>${entry.supplier_name || entry.vendor_name || entry.payee_name || entry.counterparty || ''}</td>
           <td>${entry.description || ''}</td>
-          <td>${entry.reference || ''}</td>
-          <td style="text-align:right;">${formatAmount(entry.total_debit)}</td>
+                    <td style="text-align:right;">${formatAmount(entry.total_debit)}</td>
           <td style="text-align:right;">${formatAmount(entry.total_credit)}</td>
         </tr>
       `,
@@ -626,7 +623,6 @@ const GeneralJournalPage = () => {
                 <th>Documento</th>
                 <th>Proveedor</th>
                 <th>Descripción</th>
-                <th>Referencia</th>
                 <th>Débito</th>
                 <th>Crédito</th>
               </tr>
@@ -803,11 +799,6 @@ const GeneralJournalPage = () => {
           <div style="margin-top:8px;">
             <div class="label">Descripción</div>
             <div class="value">${entry.description || ''}</div>
-          </div>
-
-          <div style="margin-top:8px;">
-            <div class="label">Referencia</div>
-            <div class="value">${entry.reference || ''}</div>
           </div>
 
           <h2>Detalle de líneas</h2>
@@ -1066,16 +1057,10 @@ const GeneralJournalPage = () => {
                   Fecha
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Documento
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Proveedor
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Descripción
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Referencia
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Débito
@@ -1101,16 +1086,10 @@ const GeneralJournalPage = () => {
                     {formatDate(entry.entry_date)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {getEntryDocumentType(entry)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {entry.supplier_name || entry.vendor_name || entry.payee_name || entry.counterparty || '-'}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-900">
                     {entry.description}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {entry.reference}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     RD${formatAmount(entry.total_debit)}
@@ -1207,19 +1186,6 @@ const GeneralJournalPage = () => {
                   <DateInput
                     value={formData.entry_date}
                     onValueChange={(v) => setFormData(prev => ({ ...prev, entry_date: v }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Referencia
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.reference}
-                    onChange={(e) => setFormData(prev => ({ ...prev, reference: e.target.value }))}
-                    placeholder="Número de documento"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
@@ -1419,10 +1385,6 @@ const GeneralJournalPage = () => {
                       </span>
                     </div>
                     <div>
-                      <span className="text-sm font-medium text-gray-500">Referencia:</span>
-                      <span className="ml-2 text-sm text-gray-900">{selectedEntry.reference}</span>
-                    </div>
-                    <div>
                       <span className="text-sm font-medium text-gray-500">Estado:</span>
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                         selectedEntry.status === 'posted'
@@ -1442,13 +1404,13 @@ const GeneralJournalPage = () => {
                   <h3 className="text-lg font-medium text-gray-900 mb-4">Totales</h3>
                   <div className="space-y-3">
                     <div>
-                      <span className="text-sm font-medium text-gray-500">Total Débito:</span>
+                      <span className="text-sm font-medium text-gray-500">Total DÃ©bito:</span>
                       <span className="ml-2 text-sm font-bold text-gray-900">
                         RD${formatAmount(selectedEntry.total_debit)}
                       </span>
                     </div>
                     <div>
-                      <span className="text-sm font-medium text-gray-500">Total Crédito:</span>
+                      <span className="text-sm font-medium text-gray-500">Total CrÃ©dito:</span>
                       <span className="ml-2 text-sm font-bold text-gray-900">
                         RD${formatAmount(selectedEntry.total_credit)}
                       </span>
@@ -1464,14 +1426,14 @@ const GeneralJournalPage = () => {
               </div>
 
               <div className="mb-6">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Descripción</h3>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">DescripciÃ³n</h3>
                 <p className="text-sm text-gray-700 bg-gray-50 p-4 rounded-lg">
                   {selectedEntry.description}
                 </p>
               </div>
 
               <div>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Líneas del Asiento</h3>
+                <h3 className="text-lg font-medium text-gray-900 mb-4">LÃ­neas del Asiento</h3>
                 <div className="overflow-x-auto">
                   <table className="min-w-full border border-gray-200 rounded-lg">
                     <thead className="bg-gray-50">
@@ -1480,13 +1442,13 @@ const GeneralJournalPage = () => {
                           Cuenta
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Descripción
+                          DescripciÃ³n
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Débito
+                          DÃ©bito
                         </th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Crédito
+                          CrÃ©dito
                         </th>
                       </tr>
                     </thead>
@@ -1533,3 +1495,8 @@ const GeneralJournalPage = () => {
 };
 
 export default GeneralJournalPage;
+
+
+
+
+

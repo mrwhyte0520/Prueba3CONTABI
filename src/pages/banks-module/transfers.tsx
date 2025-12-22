@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, bankTransfersService, chartAccountsService, financialReportsService } from '../../services/database';
+import { bankAccountsService, bankTransfersService, chartAccountsService, financialReportsService, suppliersService, apInvoicesService } from '../../services/database';
 
 interface BankTransfer {
   id: string;
+  tipo: 'interna' | 'proveedor'; // transfer_type
   bancoOrigen: string; // from_bank_id
   cuentaOrigen: string; // from_bank_account_code
   bancoDestino: string; // to_bank_id
   cuentaDestino: string; // to_bank_account_code
+  proveedor?: string; // supplier_id
+  proveedorNombre?: string; // supplier name
   moneda: string; // currency
   monto: number; // amount
   fecha: string; // transfer_date (ISO)
@@ -17,17 +20,37 @@ interface BankTransfer {
   estado: string; // status
 }
 
+interface Supplier {
+  id: string;
+  legal_name: string;
+  tax_id: string;
+}
+
+interface PendingInvoice {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  total_to_pay: number;
+  paid_amount: number;
+  balance: number;
+}
+
 export default function BankTransfersPage() {
   const { user } = useAuth();
   const [transfers, setTransfers] = useState<BankTransfer[]>([]);
   const [banks, setBanks] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [pendingInvoices, setPendingInvoices] = useState<PendingInvoice[]>([]);
   const [accountsById, setAccountsById] = useState<Record<string, { id: string; code: string; name: string }>>({});
   const [originBalance, setOriginBalance] = useState<number | null>(null);
+  const [selectedInvoices, setSelectedInvoices] = useState<Record<string, number>>({});
   const [form, setForm] = useState({
+    tipo: 'interna' as 'interna' | 'proveedor',
     bancoOrigen: '',
     cuentaOrigen: '',
     bancoDestino: '',
     cuentaDestino: '',
+    proveedor: '',
     moneda: 'DOP',
     monto: '',
     fecha: new Date().toISOString().slice(0, 10),
@@ -82,10 +105,13 @@ export default function BankTransfersPage() {
       const data = await bankTransfersService.getAll(user.id);
       const mapped: BankTransfer[] = (data || []).map((row: any) => ({
         id: row.id,
+        tipo: row.transfer_type || 'interna',
         bancoOrigen: row.from_bank_id || '',
         cuentaOrigen: row.from_bank_account_code || '',
         bancoDestino: row.to_bank_id || '',
         cuentaDestino: row.to_bank_account_code || '',
+        proveedor: row.supplier_id || '',
+        proveedorNombre: row.supplier_name || '',
         moneda: row.currency || 'DOP',
         monto: Number(row.amount) || 0,
         fecha: row.transfer_date || (row.created_at ? row.created_at.slice(0, 10) : ''),
@@ -103,12 +129,14 @@ export default function BankTransfersPage() {
     const loadBanksAndAccounts = async () => {
       if (!user?.id) return;
       try {
-        const [bankRows, chartRows] = await Promise.all([
+        const [bankRows, chartRows, supplierRows] = await Promise.all([
           bankAccountsService.getAll(user.id),
           chartAccountsService.getAll(user.id),
+          suppliersService.getAll(user.id),
         ]);
 
         setBanks(bankRows || []);
+        setSuppliers(supplierRows || []);
 
         const map: Record<string, { id: string; code: string; name: string }> = {};
         (chartRows || []).forEach((acc: any) => {
@@ -126,6 +154,46 @@ export default function BankTransfersPage() {
 
     loadBanksAndAccounts();
   }, [user?.id]);
+
+  // Cargar facturas pendientes cuando se selecciona un proveedor
+  useEffect(() => {
+    const loadPendingInvoices = async () => {
+      if (!user?.id || !form.proveedor || form.tipo !== 'proveedor') {
+        setPendingInvoices([]);
+        setSelectedInvoices({});
+        return;
+      }
+      try {
+        const invs = await apInvoicesService.getAll(user.id);
+        const pending = (invs || []).filter((i: any) => {
+          const st = String(i.status || '').toLowerCase();
+          if (i.supplier_id !== form.proveedor) return false;
+          if (st === 'paid') return false;
+          if (st === 'cancelled' || st === 'cancelada' || st === 'void' || st === 'anulada' || st === 'draft') return false;
+          return true;
+        }).map((i: any) => {
+          const totalToPay = Number(i.total_to_pay) || 0;
+          const paid = Number(i.paid_amount) || 0;
+          const balRaw = Number(i.balance_amount);
+          const balance = Number.isFinite(balRaw) ? Math.max(balRaw, 0) : Math.max(totalToPay - paid, 0);
+          return {
+            id: i.id,
+            invoice_number: i.invoice_number,
+            invoice_date: i.invoice_date,
+            total_to_pay: totalToPay,
+            paid_amount: paid,
+            balance,
+          };
+        });
+        setPendingInvoices(pending);
+      } catch (error) {
+        console.error('Error loading pending invoices for supplier', error);
+        setPendingInvoices([]);
+      }
+    };
+
+    loadPendingInvoices();
+  }, [user?.id, form.proveedor, form.tipo]);
 
   // Cargar saldo contable estimado de la cuenta de banco origen
   useEffect(() => {
@@ -172,6 +240,16 @@ export default function BankTransfersPage() {
       return;
     }
 
+    // Validaciones específicas por tipo
+    if (form.tipo === 'interna' && !form.bancoDestino) {
+      alert('Para transferencias internas debe seleccionar un banco destino.');
+      return;
+    }
+    if (form.tipo === 'proveedor' && !form.proveedor) {
+      alert('Para pagos a proveedores debe seleccionar un proveedor.');
+      return;
+    }
+
     if (!user?.id) {
       alert('Usuario no autenticado. Inicie sesión nuevamente.');
       return;
@@ -198,23 +276,36 @@ export default function BankTransfersPage() {
       }
 
       const created = await bankTransfersService.create(user.id, {
+        transfer_type: form.tipo,
         from_bank_id: form.bancoOrigen,
         from_bank_account_code: form.cuentaOrigen,
-        to_bank_id: form.bancoDestino || null,
-        to_bank_account_code: form.cuentaDestino || null,
+        to_bank_id: form.tipo === 'interna' ? form.bancoDestino : null,
+        to_bank_account_code: form.tipo === 'interna' ? form.cuentaDestino : null,
+        supplier_id: form.tipo === 'proveedor' ? form.proveedor : null,
         currency: form.moneda,
         amount: montoNumber,
         transfer_date: form.fecha,
         reference: form.referencia.trim(),
         description: form.descripcion.trim(),
+        invoice_payments: form.tipo === 'proveedor' ? Object.entries(selectedInvoices).map(([id, amount]) => ({
+          invoice_id: id,
+          amount_to_pay: amount
+        })) : [],
       });
+
+      const supplierName = form.tipo === 'proveedor' 
+        ? suppliers.find(s => s.id === form.proveedor)?.legal_name || ''
+        : '';
 
       const mapped: BankTransfer = {
         id: created.id,
+        tipo: form.tipo,
         bancoOrigen: created.from_bank_id || form.bancoOrigen,
         cuentaOrigen: created.from_bank_account_code || form.cuentaOrigen,
         bancoDestino: created.to_bank_id || form.bancoDestino,
         cuentaDestino: created.to_bank_account_code || form.cuentaDestino,
+        proveedor: created.supplier_id || form.proveedor,
+        proveedorNombre: supplierName,
         moneda: created.currency || form.moneda,
         monto: Number(created.amount) || montoNumber,
         fecha: created.transfer_date || form.fecha,
@@ -224,12 +315,17 @@ export default function BankTransfersPage() {
       };
 
       setTransfers(prev => [mapped, ...prev]);
+      setSelectedInvoices({});
       setForm(prev => ({
         ...prev,
         monto: '',
         referencia: '',
         descripcion: '',
+        proveedor: '',
+        bancoDestino: '',
+        cuentaDestino: '',
       }));
+      alert('Transferencia registrada exitosamente');
     } catch (error: any) {
       console.error('Error creando transferencia bancaria:', error);
       alert(error?.message || 'Error al registrar la transferencia bancaria.');
@@ -273,6 +369,43 @@ export default function BankTransfersPage() {
         <form onSubmit={handleAddTransfer} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 space-y-4">
           <h2 className="text-lg font-semibold mb-2">Registrar nueva transferencia bancaria</h2>
 
+          {/* Selector de tipo de transferencia */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Transferencia *</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setForm(prev => ({ ...prev, tipo: 'interna', proveedor: '', bancoDestino: '', cuentaDestino: '' }))}
+                className={`p-3 rounded-lg border-2 transition-all ${
+                  form.tipo === 'interna'
+                    ? 'border-blue-500 bg-blue-100 text-blue-900'
+                    : 'border-gray-300 bg-white text-gray-700 hover:border-blue-300'
+                }`}
+              >
+                <div className="flex items-center justify-center mb-1">
+                  <i className="ri-arrow-left-right-line text-2xl"></i>
+                </div>
+                <div className="font-semibold">Transferencia Interna</div>
+                <div className="text-xs mt-1">Entre cuentas de la misma empresa</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm(prev => ({ ...prev, tipo: 'proveedor', bancoDestino: '', cuentaDestino: '' }))}
+                className={`p-3 rounded-lg border-2 transition-all ${
+                  form.tipo === 'proveedor'
+                    ? 'border-green-500 bg-green-100 text-green-900'
+                    : 'border-gray-300 bg-white text-gray-700 hover:border-green-300'
+                }`}
+              >
+                <div className="flex items-center justify-center mb-1">
+                  <i className="ri-user-line text-2xl"></i>
+                </div>
+                <div className="font-semibold">Pago a Proveedor</div>
+                <div className="text-xs mt-1">Transferencia a terceros</div>
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Banco Origen</label>
@@ -299,30 +432,56 @@ export default function BankTransfersPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Banco Destino (opcional)</label>
-              <select
-                value={form.bancoDestino}
-                onChange={(e) => handleDestBankChange(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Sin banco destino (solo salida de fondos)</option>
-                {banks.map((b: any) => (
-                  <option key={b.id} value={b.id}>{b.bank_name}</option>
-                ))}
-              </select>
-            </div>
+            {/* Campos para transferencia interna */}
+            {form.tipo === 'interna' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Banco Destino *</label>
+                  <select
+                    value={form.bancoDestino}
+                    onChange={(e) => handleDestBankChange(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  >
+                    <option value="">Seleccione banco destino...</option>
+                    {banks.filter(b => b.id !== form.bancoOrigen).map((b: any) => (
+                      <option key={b.id} value={b.id}>{b.bank_name}</option>
+                    ))}
+                  </select>
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Destino (Cuenta Contable, opcional)</label>
-              <input
-                type="text"
-                value={destBankAccountLabel || ''}
-                disabled
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
-                placeholder="Se asigna automáticamente si selecciona un banco destino"
-              />
-            </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Destino (Cuenta Contable)</label>
+                  <input
+                    type="text"
+                    value={destBankAccountLabel || ''}
+                    disabled
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
+                    placeholder="Se asigna automáticamente según el banco destino"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Campos para pago a proveedor */}
+            {form.tipo === 'proveedor' && (
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Proveedor *</label>
+                <select
+                  value={form.proveedor}
+                  onChange={(e) => handleChange('proveedor', e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                >
+                  <option value="">Seleccione un proveedor...</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.legal_name} - {s.tax_id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
@@ -374,10 +533,56 @@ export default function BankTransfersPage() {
                 value={form.descripcion}
                 onChange={(e) => handleChange('descripcion', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Ej: Transferencia entre cuentas"
+                placeholder={form.tipo === 'interna' ? 'Ej: Transferencia entre cuentas' : 'Ej: Pago factura #123'}
               />
             </div>
           </div>
+
+          {/* Facturas pendientes para pago a proveedor */}
+          {form.tipo === 'proveedor' && form.proveedor && pendingInvoices.length > 0 && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                Facturas Pendientes del Proveedor (opcional)
+              </h3>
+              <p className="text-xs text-gray-600 mb-3">
+                Puede asignar el pago a facturas específicas. Si no selecciona ninguna, se registrará como pago general.
+              </p>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {pendingInvoices.map((inv) => (
+                  <div key={inv.id} className="flex items-center justify-between bg-white p-2 rounded border border-gray-200">
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-gray-900">{inv.invoice_number}</div>
+                      <div className="text-xs text-gray-500">
+                        Fecha: {inv.invoice_date} | Saldo: {form.moneda} {inv.balance.toLocaleString()}
+                      </div>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      max={inv.balance}
+                      step="0.01"
+                      value={selectedInvoices[inv.id] || ''}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || 0;
+                        setSelectedInvoices(prev => {
+                          if (val <= 0) {
+                            const { [inv.id]: _, ...rest } = prev;
+                            return rest;
+                          }
+                          return { ...prev, [inv.id]: Math.min(val, inv.balance) };
+                        });
+                      }}
+                      placeholder="Monto"
+                      className="w-32 border border-gray-300 rounded px-2 py-1 text-sm"
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 text-xs text-gray-600">
+                Total asignado: {form.moneda} {Object.values(selectedInvoices).reduce((sum, val) => sum + val, 0).toLocaleString()}
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-end">
             <button
@@ -404,13 +609,11 @@ export default function BankTransfersPage() {
               <table className="min-w-full divide-y divide-gray-200 text-sm">
                 <thead className="bg-gray-50">
                   <tr>
+                    <th className="px-4 py-2 text-left font-medium text-gray-600">Tipo</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Fecha</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Banco Origen</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Cuenta Origen</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Banco Destino</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Cuenta Destino</th>
+                    <th className="px-4 py-2 text-left font-medium text-gray-600">Destino</th>
                     <th className="px-4 py-2 text-right font-medium text-gray-600">Monto</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Moneda</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Estado</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Referencia</th>
                     <th className="px-4 py-2 text-left font-medium text-gray-600">Descripción</th>
@@ -434,17 +637,23 @@ export default function BankTransfersPage() {
                         : tr.estado === 'void'
                         ? 'Anulada'
                         : tr.estado;
+                    const tipoBadge = tr.tipo === 'interna' 
+                      ? <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">Interna</span>
+                      : <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">Proveedor</span>;
+                    
+                    const destino = tr.tipo === 'interna'
+                      ? (tr.bancoDestino || '-')
+                      : (tr.proveedorNombre || tr.proveedor || '-');
+
                     return (
                       <tr key={tr.id}>
+                        <td className="px-4 py-2 whitespace-nowrap">{tipoBadge}</td>
                         <td className="px-4 py-2 whitespace-nowrap text-gray-900">{tr.fecha}</td>
                         <td className="px-4 py-2 whitespace-nowrap text-gray-900">{tr.bancoOrigen}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{tr.cuentaOrigen}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{tr.bancoDestino || '-'}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{tr.cuentaDestino || '-'}</td>
+                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{destino}</td>
                         <td className="px-4 py-2 text-right text-gray-900">
                           {tr.moneda} {tr.monto.toLocaleString()}
                         </td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{currencyLabel}</td>
                         <td className="px-4 py-2 whitespace-nowrap text-gray-900">{statusLabel}</td>
                         <td className="px-4 py-2 whitespace-nowrap text-gray-900">{tr.referencia || '-'}</td>
                         <td className="px-4 py-2 text-gray-900">{tr.descripcion}</td>

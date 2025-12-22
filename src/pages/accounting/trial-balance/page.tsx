@@ -58,8 +58,9 @@ const TrialBalancePage: FC = () => {
   const [cutoffDate, setCutoffDate] = useState<string>(() =>
     new Date().toISOString().slice(0, 10)
   );
+  const [manualStartDate, setManualStartDate] = useState<string>('');
   const [selectedFiscalYear, setSelectedFiscalYear] = useState('');
-  const [selectedPeriodId, setSelectedPeriodId] = useState('');
+  const [selectedPeriodIds, setSelectedPeriodIds] = useState<string[]>([]);
   const [mode, setMode] = useState<'detail' | 'summary'>('detail');
 
   const [fromDateLabel, setFromDateLabel] = useState('');
@@ -77,7 +78,7 @@ const TrialBalancePage: FC = () => {
       void loadTrialBalance();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, cutoffDate, selectedFiscalYear, selectedPeriodId, mode]);
+  }, [user, cutoffDate, manualStartDate, selectedFiscalYear, selectedPeriodIds, mode]);
 
   useEffect(() => {
     const loadCompany = async () => {
@@ -125,22 +126,30 @@ const TrialBalancePage: FC = () => {
     let fromDate = effectiveCutoff;
     let toDate = effectiveCutoff;
 
-    const period = selectedPeriodId
-      ? periods.find((p) => p.id === selectedPeriodId)
-      : null;
-
-    if (period) {
-      const start = period.start_date.slice(0, 10);
-      const end = period.end_date.slice(0, 10);
-      fromDate = start;
-      // Asegurar que la fecha de corte esté dentro del período usando comparación de strings YYYY-MM-DD
-      toDate = effectiveCutoff < end ? effectiveCutoff : end;
-    } else if (selectedFiscalYear) {
-      fromDate = `${selectedFiscalYear}-01-01`;
+    // Si hay períodos seleccionados (uno o más)
+    if (selectedPeriodIds.length > 0) {
+      const selectedPeriods = periods.filter((p) => selectedPeriodIds.includes(p.id));
+      if (selectedPeriods.length > 0) {
+        // Ordenar por fecha de inicio
+        selectedPeriods.sort((a, b) => a.start_date.localeCompare(b.start_date));
+        const firstPeriod = selectedPeriods[0];
+        const lastPeriod = selectedPeriods[selectedPeriods.length - 1];
+        
+        fromDate = firstPeriod.start_date.slice(0, 10);
+        const lastEnd = lastPeriod.end_date.slice(0, 10);
+        // Asegurar que la fecha de corte esté dentro del rango
+        toDate = effectiveCutoff < lastEnd ? effectiveCutoff : lastEnd;
+      }
+    }
+    // Si hay año fiscal seleccionado pero no períodos específicos
+    else if (selectedFiscalYear) {
+      fromDate = manualStartDate || `${selectedFiscalYear}-01-01`;
       toDate = effectiveCutoff;
-    } else {
+    }
+    // Sin filtros: usar año actual
+    else {
       const year = effectiveCutoff.slice(0, 4);
-      fromDate = `${year}-01-01`;
+      fromDate = manualStartDate || `${year}-01-01`;
       toDate = effectiveCutoff;
     }
 
@@ -513,13 +522,26 @@ const TrialBalancePage: FC = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
+                Fecha inicial (opcional)
+              </label>
+              <input
+                type="date"
+                value={manualStartDate}
+                onChange={(e) => setManualStartDate(e.target.value)}
+                placeholder="Por defecto: 1 de enero"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-1">Si no se especifica, inicia el 1 de enero del año</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
                 Año fiscal
               </label>
               <select
                 value={selectedFiscalYear}
                 onChange={(e) => {
                   setSelectedFiscalYear(e.target.value);
-                  setSelectedPeriodId('');
+                  setSelectedPeriodIds([]);
                 }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm pr-8"
               >
@@ -527,24 +549,6 @@ const TrialBalancePage: FC = () => {
                 {fiscalYears.map((year) => (
                   <option key={year} value={year}>
                     {year}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Período contable
-              </label>
-              <select
-                value={selectedPeriodId}
-                onChange={(e) => setSelectedPeriodId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm pr-8"
-              >
-                <option value="">Todos</option>
-                {visiblePeriods.map((period) => (
-                  <option key={period.id} value={period.id}>
-                    {period.name} ({formatDate(period.start_date)} -{' '}
-                    {formatDate(period.end_date)})
                   </option>
                 ))}
               </select>
@@ -564,13 +568,50 @@ const TrialBalancePage: FC = () => {
             </div>
           </div>
 
+          {visiblePeriods.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Períodos contables (seleccione uno o más)
+              </label>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3">
+                {visiblePeriods.map((period) => (
+                  <label key={period.id} className="flex items-center space-x-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedPeriodIds.includes(period.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedPeriodIds([...selectedPeriodIds, period.id]);
+                        } else {
+                          setSelectedPeriodIds(selectedPeriodIds.filter(id => id !== period.id));
+                        }
+                      }}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700">{period.name}</span>
+                  </label>
+                ))}
+              </div>
+              {selectedPeriodIds.length > 0 && (
+                <button
+                  onClick={() => setSelectedPeriodIds([])}
+                  className="mt-2 text-xs text-blue-600 hover:text-blue-800"
+                >
+                  Limpiar selección
+                </button>
+              )}
+            </div>
+          )}
+
           {fromDateLabel && toDateLabel && (
-            <div className="text-sm text-gray-600">
-              Período del reporte:{' '}
-              <span className="font-medium text-gray-800">
-                {formatDate(fromDateLabel)} al{' '}
-                {formatDate(toDateLabel)}
+            <div className="text-sm text-gray-600 bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <span className="font-medium text-blue-900">Período del reporte:</span>{' '}
+              <span className="font-semibold text-blue-800">
+                {formatDate(fromDateLabel)} al {formatDate(toDateLabel)}
               </span>
+              {selectedPeriodIds.length > 0 && (
+                <span className="ml-2 text-blue-700">({selectedPeriodIds.length} período{selectedPeriodIds.length > 1 ? 's' : ''} seleccionado{selectedPeriodIds.length > 1 ? 's' : ''})</span>
+              )}
             </div>
           )}
         </div>

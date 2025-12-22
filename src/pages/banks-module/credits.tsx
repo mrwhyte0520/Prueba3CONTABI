@@ -24,11 +24,11 @@ export default function BankCreditsPage() {
   const [loanAccounts, setLoanAccounts] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [postableAccounts, setPostableAccounts] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [form, setForm] = useState({
-    tipoCredito: 'loan',
+    tipoCredito: 'intereses_ganados',
     banco: '',
     cuentaBanco: '',
     numeroCredito: '',
-    cuentaPasivo: '',
+    cuentaContrapartida: '',
     moneda: 'DOP',
     monto: '',
     fechaInicio: new Date().toISOString().slice(0, 10),
@@ -133,8 +133,8 @@ export default function BankCreditsPage() {
     const montoNumber = Number(form.monto);
     const tasaNumber = form.tasaInteres ? Number(form.tasaInteres) : null;
 
-    if (!form.banco || !form.cuentaBanco || !form.numeroCredito.trim() || !form.cuentaPasivo || !form.moneda || !form.fechaInicio) {
-      alert('Complete banco, cuenta de banco, número de crédito, cuenta de pasivo del préstamo, moneda y fecha de inicio.');
+    if (!form.banco || !form.cuentaBanco || !form.numeroCredito.trim() || !form.cuentaContrapartida || !form.moneda || !form.fechaInicio) {
+      alert('Complete banco, cuenta de banco, número de crédito, cuenta de contrapartida, moneda y fecha de inicio.');
       return;
     }
     if (isNaN(montoNumber) || montoNumber <= 0) {
@@ -155,13 +155,14 @@ export default function BankCreditsPage() {
       const created = await bankCreditsService.create(user.id, {
         bank_id: form.banco,
         bank_account_code: form.cuentaBanco,
+        credit_type: form.tipoCredito,
         credit_number: form.numeroCredito.trim(),
         currency: form.moneda,
         amount: montoNumber,
         start_date: form.fechaInicio,
         interest_rate: tasaNumber,
         description: form.descripcion.trim(),
-        loan_account_code: form.cuentaPasivo,
+        contrapartida_account_code: form.cuentaContrapartida,
       });
 
       const mapped: BankCredit = {
@@ -181,11 +182,12 @@ export default function BankCreditsPage() {
       setForm(prev => ({
         ...prev,
         numeroCredito: '',
-        cuentaPasivo: '',
+        cuentaContrapartida: '',
         monto: '',
         tasaInteres: '',
         descripcion: '',
       }));
+      alert('Crédito bancario registrado exitosamente');
     } catch (error: any) {
       console.error('Error creando crédito bancario:', error);
       alert(error?.message || 'Error al registrar el crédito bancario.');
@@ -209,8 +211,9 @@ export default function BankCreditsPage() {
         <div>
           <h1 className="text-2xl font-bold mb-2">Créditos Bancarios</h1>
           <p className="text-gray-600 text-sm max-w-3xl">
-            Registre préstamos y líneas de crédito otorgados por bancos, indicando banco, cuenta de banco donde se
-            acreditan los fondos, moneda, monto, fecha de inicio, tasa de interés y descripción.
+            Registre créditos bancarios (valores que el banco acredita a su cuenta) como intereses ganados, 
+            cheques devueltos, reclamaciones, etc. Indique banco, tipo de crédito, cuenta contable de contrapartida, 
+            moneda, monto y descripción.
           </p>
         </div>
 
@@ -234,31 +237,46 @@ export default function BankCreditsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Crédito</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Tipo de Crédito *
+                <span className="ml-2 text-xs text-gray-500">(Valores que el banco acredita a su cuenta)</span>
+              </label>
               <select
                 value={form.tipoCredito}
                 onChange={(e) => handleChange('tipoCredito', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
-                <option value="loan">Préstamo / Línea de crédito</option>
-                <option value="general">Crédito de estado de cuenta (intereses, ajustes, etc.)</option>
+                <option value="intereses_ganados">Intereses Ganados</option>
+                <option value="cheques_devueltos">Cheques Devueltos</option>
+                <option value="reclamaciones">Reclamaciones</option>
+                <option value="otros">Otros Créditos</option>
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta Contable de Contrapartida (Crédito)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Cuenta Contable de Contrapartida (Crédito) *
+                <span className="ml-2 text-xs text-gray-500">
+                  {form.tipoCredito === 'intereses_ganados' && '(Ej: Ingresos por Intereses)'}
+                  {form.tipoCredito === 'cheques_devueltos' && '(Ej: Cuentas por Cobrar)'}
+                  {form.tipoCredito === 'reclamaciones' && '(Ej: Otros Ingresos)'}
+                </span>
+              </label>
               <select
-                value={form.cuentaPasivo}
-                onChange={(e) => handleChange('cuentaPasivo', e.target.value)}
+                value={form.cuentaContrapartida}
+                onChange={(e) => handleChange('cuentaContrapartida', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Seleccione una cuenta...</option>
-                {(form.tipoCredito === 'loan' ? loanAccounts : postableAccounts).map((acc) => (
+                {postableAccounts.map((acc) => (
                   <option key={acc.id} value={acc.code}>
                     {acc.code} - {acc.name}
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Catálogo completo de cuentas disponible. El crédito aumenta el banco (Débito) y acredita esta cuenta.
+              </p>
             </div>
 
             <div>
@@ -273,13 +291,13 @@ export default function BankCreditsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Número de Crédito</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Número/Referencia de Crédito *</label>
               <input
                 type="text"
                 value={form.numeroCredito}
                 onChange={(e) => handleChange('numeroCredito', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Ej: CR-0001"
+                placeholder="Ej: INT-2024-12, CHQ-DEV-001"
               />
             </div>
 
@@ -294,7 +312,7 @@ export default function BankCreditsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Monto del Crédito</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Monto del Crédito *</label>
               <input
                 type="number" min="0"
                 step="0.01"
@@ -306,7 +324,7 @@ export default function BankCreditsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de Inicio</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha del Crédito *</label>
               <input
                 type="date"
                 value={form.fechaInicio}
@@ -315,26 +333,33 @@ export default function BankCreditsPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Tasa de Interés (% anual, opcional)</label>
-              <input
-                type="number" min="0"
-                step="0.01"
-                value={form.tasaInteres}
-                onChange={(e) => handleChange('tasaInteres', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Ej: 12.50"
-              />
-            </div>
+            {form.tipoCredito === 'intereses_ganados' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tasa de Interés (% anual, opcional)</label>
+                <input
+                  type="number" min="0"
+                  step="0.01"
+                  value={form.tasaInteres}
+                  onChange={(e) => handleChange('tasaInteres', e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Ej: 2.50"
+                />
+              </div>
+            )}
 
             <div className="md:col-span-2 lg:col-span-3">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Descripción / Condiciones</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Descripción / Concepto</label>
               <input
                 type="text"
                 value={form.descripcion}
                 onChange={(e) => handleChange('descripcion', e.target.value)}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Ej: Línea de crédito para capital de trabajo"
+                placeholder={
+                  form.tipoCredito === 'intereses_ganados' ? 'Ej: Intereses del mes de diciembre 2024' :
+                  form.tipoCredito === 'cheques_devueltos' ? 'Ej: Cheque #1234 devuelto por fondos insuficientes' :
+                  form.tipoCredito === 'reclamaciones' ? 'Ej: Reclamación por cargo indebido' :
+                  'Ej: Descripción del crédito bancario'
+                }
               />
             </div>
           </div>

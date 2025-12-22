@@ -1,386 +1,176 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { useAuth } from '../../hooks/useAuth';
-import { bankAccountsService, chartAccountsService, paymentRequestsService } from '../../services/database';
+import { bankAccountsService, chartAccountsService, paymentRequestsService, suppliersService, apInvoicesService } from '../../services/database';
+import { formatAmount } from '../../utils/numberFormat';
 
 interface PaymentRequest {
   id: string;
-  banco: string; // bank_id
-  cuentaBanco: string; // bank_account_code
-  beneficiario: string; // payee_name
-  moneda: string; // currency
-  monto: number; // amount
-  fecha: string; // request_date (ISO)
-  descripcion: string;
-  estado: string; // status
+  bank_id: string;
+  payment_method: 'transfer' | 'check';
+  payment_type: 'accounts_payable' | 'cash';
+  supplier_id?: string;
+  payee_name?: string;
+  account_id?: string;
+  currency: string;
+  amount: number;
+  request_date: string;
+  description: string;
+  status: string;
+}
+
+interface Invoice {
+  id: string;
+  invoice_number: string;
+  invoice_date: string;
+  total_amount: number;
+  paid_amount: number;
+  balance: number;
 }
 
 export default function BankPaymentRequestsPage() {
   const { user } = useAuth();
   const [requests, setRequests] = useState<PaymentRequest[]>([]);
   const [banks, setBanks] = useState<any[]>([]);
-  const [accountsById, setAccountsById] = useState<Record<string, { id: string; code: string; name: string }>>({});
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [pendingInvoices, setPendingInvoices] = useState<Invoice[]>([]);
+  const [selectedInvoices, setSelectedInvoices] = useState<Map<string, number>>(new Map());
+  const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
-    banco: '',
-    cuentaBanco: '',
-    beneficiario: '',
-    moneda: 'DOP',
-    monto: '',
-    fecha: new Date().toISOString().slice(0, 10),
-    descripcion: '',
+    bank_id: '',
+    payment_method: 'transfer' as 'transfer' | 'check',
+    payment_type: 'accounts_payable' as 'accounts_payable' | 'cash',
+    supplier_id: '',
+    payee_name: '',
+    account_id: '',
+    amount: '',
+    description: '',
   });
 
-  const handleChange = (field: keyof typeof form, value: string) => {
-    setForm(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleBankChange = (bankId: string) => {
-    setForm(prev => {
-      const next = { ...prev, banco: bankId };
-      const selectedBank = (banks || []).find((b: any) => b.id === bankId);
-      if (selectedBank) {
-        const accountId = selectedBank.chart_account_id as string | undefined;
-        if (accountId) {
-          const acc = accountsById[accountId];
-          if (acc) {
-            next.cuentaBanco = acc.code;
-          }
-        }
-        if (selectedBank.currency) {
-          next.moneda = selectedBank.currency;
-        }
-      }
-      return next;
-    });
-  };
+  useEffect(() => {
+    const load = async () => {
+      if (!user?.id) return;
+      const [reqs, bnks, sups, accs] = await Promise.all([
+        paymentRequestsService.getAll(user.id),
+        bankAccountsService.getAll(user.id),
+        suppliersService.getAll(user.id),
+        chartAccountsService.getAll(user.id),
+      ]);
+      setRequests(reqs || []);
+      setBanks(bnks || []);
+      setSuppliers(sups || []);
+      setAccounts(accs || []);
+    };
+    load();
+  }, [user?.id]);
 
   useEffect(() => {
-    const loadRequests = async () => {
-      if (!user?.id) return;
-      const data = await paymentRequestsService.getAll(user.id);
-      const mapped: PaymentRequest[] = (data || []).map((row: any) => ({
-        id: row.id,
-        banco: row.bank_id || '',
-        cuentaBanco: row.bank_account_code || '',
-        beneficiario: row.payee_name || '',
-        moneda: row.currency || 'DOP',
-        monto: Number(row.amount) || 0,
-        fecha: row.request_date || (row.created_at ? row.created_at.slice(0, 10) : ''),
-        descripcion: row.description || '',
-        estado: row.status || 'pending',
+    const loadInv = async () => {
+      if (!user?.id || !form.supplier_id || form.payment_type !== 'accounts_payable') {
+        setPendingInvoices([]);
+        setSelectedInvoices(new Map());
+        return;
+      }
+      const invs = await apInvoicesService.getAll(user.id);
+      const pending = (invs || []).filter((i: any) => i.supplier_id === form.supplier_id && i.payment_status !== 'paid' && i.status === 'posted').map((i: any) => ({
+        id: i.id,
+        invoice_number: i.invoice_number,
+        invoice_date: i.invoice_date,
+        total_amount: i.total_amount || 0,
+        paid_amount: i.paid_amount || 0,
+        balance: (i.total_amount || 0) - (i.paid_amount || 0),
       }));
-      setRequests(mapped);
+      setPendingInvoices(pending);
     };
-
-    loadRequests();
-  }, [user?.id]);
+    loadInv();
+  }, [user?.id, form.supplier_id, form.payment_type]);
 
   useEffect(() => {
-    const loadBanksAndAccounts = async () => {
-      if (!user?.id) return;
-      try {
-        const [bankRows, chartRows] = await Promise.all([
-          bankAccountsService.getAll(user.id),
-          chartAccountsService.getAll(user.id),
-        ]);
+    if (form.payment_type === 'accounts_payable' && selectedInvoices.size > 0) {
+      const total = Array.from(selectedInvoices.values()).reduce((s, a) => s + a, 0);
+      setForm(p => ({ ...p, amount: total.toFixed(2) }));
+    }
+  }, [selectedInvoices, form.payment_type]);
 
-        setBanks(bankRows || []);
-
-        const map: Record<string, { id: string; code: string; name: string }> = {};
-        (chartRows || []).forEach((acc: any) => {
-          map[acc.id] = {
-            id: acc.id,
-            code: acc.code,
-            name: acc.name,
-          };
-        });
-        setAccountsById(map);
-      } catch (error) {
-        console.error('Error cargando bancos y cuentas contables para solicitudes de pago', error);
-      }
-    };
-
-    loadBanksAndAccounts();
-  }, [user?.id]);
-
-  const handleAddRequest = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    const montoNumber = Number(form.monto);
-    if (!form.banco || !form.cuentaBanco || !form.beneficiario.trim() || !form.moneda || !form.fecha) {
-      alert('Complete banco, cuenta de banco, beneficiario, moneda y fecha.');
-      return;
-    }
-    if (isNaN(montoNumber) || montoNumber <= 0) {
-      alert('El monto debe ser un número mayor que cero.');
-      return;
-    }
-
-    if (!user?.id) {
-      alert('Usuario no autenticado. Inicie sesión nuevamente.');
-      return;
-    }
-
+    if (!user?.id || !form.bank_id) return alert('Complete los campos requeridos');
+    const amt = parseFloat(form.amount);
+    if (isNaN(amt) || amt <= 0) return alert('Monto invalido');
+    if (form.payment_type === 'accounts_payable' && (!form.supplier_id || selectedInvoices.size === 0)) return alert('Seleccione suplidor y facturas');
+    if (form.payment_type === 'cash' && (!form.payee_name.trim() || !form.account_id)) return alert('Complete beneficiario y cuenta');
     try {
-      const created = await paymentRequestsService.create(user.id, {
-        bank_id: form.banco,
-        bank_account_code: form.cuentaBanco,
-        payee_name: form.beneficiario.trim(),
-        currency: form.moneda,
-        amount: montoNumber,
-        request_date: form.fecha,
-        description: form.descripcion.trim(),
+      setLoading(true);
+      const bank = banks.find(b => b.id === form.bank_id);
+      const supplier = suppliers.find(s => s.id === form.supplier_id);
+      const invoicePayments = form.payment_type === 'accounts_payable' ? Array.from(selectedInvoices.entries()).map(([id, amount]) => {
+        const inv = pendingInvoices.find(i => i.id === id);
+        return { invoice_id: id, invoice_number: inv?.invoice_number || '', amount_to_pay: amount, invoice_total: inv?.total_amount || 0 };
+      }) : undefined;
+      await paymentRequestsService.create(user.id, {
+        bank_id: form.bank_id,
+        bank_account_code: bank?.chart_account_id || '',
+        payment_method: form.payment_method,
+        payment_type: form.payment_type,
+        supplier_id: form.supplier_id || undefined,
+        payee_name: form.payment_type === 'cash' ? form.payee_name : (supplier?.name || ''),
+        account_id: form.account_id || undefined,
+        currency: bank?.currency || 'DOP',
+        amount: amt,
+        request_date: new Date().toISOString().split('T')[0],
+        description: form.description,
+        invoice_payments: invoicePayments,
       });
-
-      const mapped: PaymentRequest = {
-        id: created.id,
-        banco: created.bank_id || form.banco,
-        cuentaBanco: created.bank_account_code || form.cuentaBanco,
-        beneficiario: created.payee_name || form.beneficiario.trim(),
-        moneda: created.currency || form.moneda,
-        monto: Number(created.amount) || montoNumber,
-        fecha: created.request_date || form.fecha,
-        descripcion: created.description || form.descripcion.trim(),
-        estado: created.status || 'pending',
-      };
-
-      setRequests(prev => [mapped, ...prev]);
-      setForm(prev => ({
-        ...prev,
-        beneficiario: '',
-        monto: '',
-        descripcion: '',
-      }));
-    } catch (error: any) {
-      console.error('Error creando solicitud de pago:', error);
-      alert(error?.message || 'Error al registrar la solicitud de pago.');
+      alert('Solicitud creada');
+      const data = await paymentRequestsService.getAll(user.id);
+      setRequests(data || []);
+      setForm({ bank_id: '', payment_method: 'transfer', payment_type: 'accounts_payable', supplier_id: '', payee_name: '', account_id: '', amount: '', description: '' });
+      setSelectedInvoices(new Map());
+    } catch (err: any) {
+      alert(err?.message || 'Error');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleChangeStatus = async (requestId: string, newStatus: 'approved' | 'rejected') => {
-    if (!user?.id) {
-      alert('Usuario no autenticado. Inicie sesión nuevamente.');
-      return;
-    }
+  const handleApprove = async (id: string) => {
+    if (!user?.id || !confirm('Aprobar solicitud?')) return;
     try {
-      const updated = await paymentRequestsService.updateStatus(requestId, newStatus);
-      setRequests(prev => prev.map(req =>
-        req.id === requestId
-          ? { ...req, estado: updated?.status || newStatus }
-          : req,
-      ));
-    } catch (error: any) {
-      console.error('Error actualizando estado de solicitud de pago:', error);
-      alert(error?.message || 'Error al actualizar el estado de la solicitud de pago.');
+      setLoading(true);
+      await paymentRequestsService.approveAndCreateJournalEntry(user.id, id);
+      alert('Aprobada');
+      const data = await paymentRequestsService.getAll(user.id);
+      setRequests(data || []);
+    } catch (err: any) {
+      alert(err?.message || 'Error');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const selectedBank = (banks || []).find((b: any) => b.id === form.banco);
-  const bankAccountLabel = (() => {
-    if (selectedBank?.chart_account_id) {
-      const acc = accountsById[selectedBank.chart_account_id];
-      if (acc) {
-        return `${acc.code} - ${acc.name}`;
-      }
-    }
-    return form.cuentaBanco;
-  })();
+  const selectedBank = banks.find(b => b.id === form.bank_id);
+  const selectedBankAccount = selectedBank?.chart_account_id ? accounts.find(a => a.id === selectedBank.chart_account_id) : null;
 
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold mb-2">Solicitudes de Pago</h1>
-          <p className="text-gray-600 text-sm max-w-3xl">
-            Registre solicitudes de pago asociadas a bancos, indicando el banco, la cuenta de banco, el beneficiario,
-            el monto, la moneda y la fecha. Estas solicitudes podrán luego aprobarse y convertirse en pagos
-            mediante cheques o transferencias.
-          </p>
-        </div>
-
-        {/* Formulario de registro */}
-        <form onSubmit={handleAddRequest} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 space-y-4">
-          <h2 className="text-lg font-semibold mb-2">Registrar nueva solicitud de pago</h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Banco</label>
-              <select
-                value={form.banco}
-                onChange={(e) => handleBankChange(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">Seleccione un banco...</option>
-                {banks
-                  .filter((b: any) => b.use_payment_requests !== false)
-                  .map((b: any) => (
-                    <option key={b.id} value={b.id}>{b.bank_name}</option>
-                  ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cuenta de Banco (Cuenta Contable)</label>
-              <input
-                type="text"
-                value={bankAccountLabel || ''}
-                disabled
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
-                placeholder="Se asigna automáticamente según el banco seleccionado"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Beneficiario / Proveedor</label>
-              <input
-                type="text"
-                value={form.beneficiario}
-                onChange={(e) => handleChange('beneficiario', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Nombre del beneficiario"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Moneda</label>
-              <input
-                type="text"
-                value={form.moneda}
-                disabled
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-100 text-gray-700"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Monto</label>
-              <input
-                type="number" min="0"
-                step="0.01"
-                value={form.monto}
-                onChange={(e) => handleChange('monto', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="0.00"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha de la Solicitud</label>
-              <input
-                type="date"
-                value={form.fecha}
-                onChange={(e) => handleChange('fecha', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-
-            <div className="md:col-span-2 lg:col-span-3">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Descripción / Concepto</label>
-              <input
-                type="text"
-                value={form.descripcion}
-                onChange={(e) => handleChange('descripcion', e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Ej: Pago de factura de proveedor"
-              />
-            </div>
+        <div><h1 className="text-2xl font-bold">Solicitudes de Pago</h1><p className="text-gray-600 text-sm">Registre solicitudes de pago para CxP o contado</p></div>
+        <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow border p-6 space-y-4">
+          <h2 className="text-lg font-semibold">Nueva Solicitud</h2>
+          <div className="grid grid-cols-3 gap-4">
+            <div><label className="block text-sm font-medium mb-1">Banco *</label><select value={form.bank_id} onChange={e => setForm(p => ({...p, bank_id: e.target.value}))} className="w-full border rounded px-3 py-2" required><option value="">Seleccione...</option>{banks.filter(b => b.use_payment_requests !== false).map(b => <option key={b.id} value={b.id}>{b.bank_name}</option>)}</select></div>
+            <div><label className="block text-sm font-medium mb-1">Cuenta</label><input type="text" value={selectedBankAccount ? `${selectedBankAccount.code} - ${selectedBankAccount.name}` : ''} disabled className="w-full border rounded px-3 py-2 bg-gray-100" /></div>
+            <div><label className="block text-sm font-medium mb-1">Metodo *</label><select value={form.payment_method} onChange={e => setForm(p => ({...p, payment_method: e.target.value as any}))} className="w-full border rounded px-3 py-2" required><option value="transfer">Transferencia</option><option value="check">Cheque</option></select></div>
           </div>
-
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Registrar solicitud
-            </button>
-          </div>
+          <div><label className="block text-sm font-medium mb-2">Tipo *</label><div className="flex gap-4"><label className="flex items-center"><input type="radio" checked={form.payment_type === 'accounts_payable'} onChange={() => { setForm(p => ({...p, payment_type: 'accounts_payable', supplier_id: '', payee_name: '', account_id: '', amount: '', description: ''})); setSelectedInvoices(new Map()); }} className="mr-2" /><span className="text-sm">CxP</span></label><label className="flex items-center"><input type="radio" checked={form.payment_type === 'cash'} onChange={() => { setForm(p => ({...p, payment_type: 'cash', supplier_id: '', payee_name: '', account_id: '', amount: '', description: ''})); setSelectedInvoices(new Map()); }} className="mr-2" /><span className="text-sm">Contado</span></label></div></div>
+          {form.payment_type === 'accounts_payable' && <div className="space-y-4 border-t pt-4"><div><label className="block text-sm font-medium mb-1">Suplidor *</label><select value={form.supplier_id} onChange={e => { setForm(p => ({...p, supplier_id: e.target.value})); setSelectedInvoices(new Map()); }} className="w-full border rounded px-3 py-2" required><option value="">Seleccione...</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>{form.supplier_id && pendingInvoices.length > 0 && <div><label className="block text-sm font-medium mb-2">Facturas Pendientes</label><div className="border rounded overflow-hidden"><table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="px-4 py-2 text-left">Sel.</th><th className="px-4 py-2 text-left">Factura</th><th className="px-4 py-2 text-right">Saldo</th><th className="px-4 py-2 text-right">Pagar</th></tr></thead><tbody>{pendingInvoices.map(inv => { const sel = selectedInvoices.has(inv.id); const amt = selectedInvoices.get(inv.id) || inv.balance; return <tr key={inv.id}><td className="px-4 py-2"><input type="checkbox" checked={sel} onChange={e => { const next = new Map(selectedInvoices); if (e.target.checked) next.set(inv.id, inv.balance); else next.delete(inv.id); setSelectedInvoices(next); }} /></td><td className="px-4 py-2">{inv.invoice_number}</td><td className="px-4 py-2 text-right">RD${formatAmount(inv.balance)}</td><td className="px-4 py-2">{sel && <input type="number" min="0" max={inv.balance} step="0.01" value={amt} onChange={e => { const next = new Map(selectedInvoices); next.set(inv.id, parseFloat(e.target.value) || 0); setSelectedInvoices(next); }} className="w-full border rounded px-2 py-1 text-right" />}</td></tr>; })}</tbody></table></div></div>}</div>}
+          {form.payment_type === 'cash' && <div className="grid grid-cols-2 gap-4 border-t pt-4"><div><label className="block text-sm font-medium mb-1">Beneficiario *</label><input type="text" value={form.payee_name} onChange={e => setForm(p => ({...p, payee_name: e.target.value}))} className="w-full border rounded px-3 py-2" required /></div><div><label className="block text-sm font-medium mb-1">Cuenta *</label><select value={form.account_id} onChange={e => setForm(p => ({...p, account_id: e.target.value}))} className="w-full border rounded px-3 py-2" required><option value="">Seleccione...</option>{accounts.filter(a => a.type === 'expense' || a.type === 'asset').map(a => <option key={a.id} value={a.id}>{a.code} - {a.name}</option>)}</select></div><div><label className="block text-sm font-medium mb-1">Monto *</label><input type="number" min="0" step="0.01" value={form.amount} onChange={e => setForm(p => ({...p, amount: e.target.value}))} className="w-full border rounded px-3 py-2" required /></div></div>}
+          <div><label className="block text-sm font-medium mb-1">Descripcion</label><textarea value={form.description} onChange={e => setForm(p => ({...p, description: e.target.value}))} className="w-full border rounded px-3 py-2" rows={2} /></div>
+          {form.payment_type === 'accounts_payable' && <div><label className="block text-sm font-medium mb-1">Total</label><input type="text" value={`RD$ ${formatAmount(parseFloat(form.amount) || 0)}`} disabled className="w-full border rounded px-3 py-2 bg-gray-100 font-bold" /></div>}
+          <div className="flex justify-end gap-3"><button type="button" onClick={() => { setForm({ bank_id: '', payment_method: 'transfer', payment_type: 'accounts_payable', supplier_id: '', payee_name: '', account_id: '', amount: '', description: '' }); setSelectedInvoices(new Map()); }} className="px-4 py-2 border rounded">Cancelar</button><button type="submit" disabled={loading} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400">{loading ? 'Procesando...' : 'Crear'}</button></div>
         </form>
-
-        {/* Listado de solicitudes de pago */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-700">Solicitudes registradas</h2>
-            <span className="text-xs text-gray-500">Total: {requests.length}</span>
-          </div>
-          {requests.length === 0 ? (
-            <div className="p-6 text-center text-gray-500 text-sm">
-              No hay solicitudes de pago registradas aún.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Fecha</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Banco</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Cuenta de Banco</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Beneficiario</th>
-                    <th className="px-4 py-2 text-right font-medium text-gray-600">Monto</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Moneda</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Estado</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Descripción</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-600">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 bg-white">
-                  {requests.map(req => {
-                    const currencyLabel =
-                      req.moneda === 'DOP'
-                        ? 'Peso Dominicano'
-                        : req.moneda === 'USD'
-                        ? 'Dólar Estadounidense'
-                        : req.moneda === 'EUR'
-                        ? 'Euro'
-                        : req.moneda;
-                    const statusLabel =
-                      req.estado === 'pending'
-                        ? 'Pendiente'
-                        : req.estado === 'approved'
-                        ? 'Aprobada'
-                        : req.estado === 'rejected'
-                        ? 'Rechazada'
-                        : req.estado;
-                    return (
-                      <tr key={req.id}>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{req.fecha}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{req.banco}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{req.cuentaBanco}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{req.beneficiario}</td>
-                        <td className="px-4 py-2 text-right text-gray-900">
-                          {req.moneda} {req.monto.toLocaleString()}
-                        </td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{currencyLabel}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">{statusLabel}</td>
-                        <td className="px-4 py-2 text-gray-900">{req.descripcion}</td>
-                        <td className="px-4 py-2 whitespace-nowrap text-gray-900">
-                          {req.estado === 'pending' ? (
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleChangeStatus(req.id, 'approved')}
-                                className="px-2 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700"
-                              >
-                                Aprobar
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleChangeStatus(req.id, 'rejected')}
-                                className="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700"
-                              >
-                                Rechazar
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-gray-500">Sin acciones</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <div className="bg-white rounded-lg shadow border overflow-hidden"><div className="px-4 py-3 border-b bg-gray-50"><h2 className="text-lg font-semibold">Solicitudes</h2></div>{requests.length === 0 ? <div className="p-6 text-center text-gray-500">No hay solicitudes</div> : <table className="min-w-full text-sm"><thead className="bg-gray-50"><tr><th className="px-4 py-2 text-left">Fecha</th><th className="px-4 py-2 text-left">Banco</th><th className="px-4 py-2 text-left">Tipo</th><th className="px-4 py-2 text-left">Beneficiario</th><th className="px-4 py-2 text-right">Monto</th><th className="px-4 py-2 text-left">Estado</th><th className="px-4 py-2">Acciones</th></tr></thead><tbody>{requests.map(r => { const bank = banks.find(b => b.id === r.bank_id); return <tr key={r.id}><td className="px-4 py-2">{r.request_date}</td><td className="px-4 py-2">{bank?.bank_name || '-'}</td><td className="px-4 py-2">{r.payment_type === 'accounts_payable' ? 'CxP' : 'Contado'}</td><td className="px-4 py-2">{r.payee_name || '-'}</td><td className="px-4 py-2 text-right">{r.currency} {formatAmount(r.amount)}</td><td className="px-4 py-2"><span className={`px-2 py-1 text-xs rounded ${r.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : r.status === 'approved' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{r.status === 'pending' ? 'Pendiente' : r.status === 'approved' ? 'Aprobada' : 'Rechazada'}</span></td><td className="px-4 py-2">{r.status === 'pending' && <button onClick={() => handleApprove(r.id)} className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700">Aprobar</button>}</td></tr>; })}</tbody></table>}</div>
       </div>
     </DashboardLayout>
   );

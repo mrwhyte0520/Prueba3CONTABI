@@ -382,6 +382,34 @@ export default function BankReconciliationPage() {
     });
   }, [movements, filters, selectedBankAccountId]);
 
+  const parseAmountValue = (raw: string): number => {
+    const input = String(raw || '').trim().replace(/\s+/g, '');
+    if (!input) return 0;
+
+    const hasComma = input.includes(',');
+    const hasDot = input.includes('.');
+
+    let normalized = input;
+    if (hasComma && hasDot) {
+      const lastComma = input.lastIndexOf(',');
+      const lastDot = input.lastIndexOf('.');
+      const decimalSep = lastComma > lastDot ? ',' : '.';
+      const thousandSep = decimalSep === ',' ? '.' : ',';
+
+      normalized = normalized.split(thousandSep).join('');
+      if (decimalSep === ',') {
+        normalized = normalized.replace(',', '.');
+      }
+    } else if (hasComma && !hasDot) {
+      normalized = normalized.replace(',', '.');
+    } else {
+      normalized = normalized;
+    }
+
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : 0;
+  };
+
   const getSignedAmount = (m: BankMovement) => {
     // Para conciliación, tratamos:
     // - Depósitos y créditos como entradas (+)
@@ -467,34 +495,6 @@ export default function BankReconciliationPage() {
   );
 
   const formatCurrency = (value: number) => formatAmount(value);
-
-  const parseAmountValue = (raw: string): number => {
-    const input = String(raw || '').trim().replace(/\s+/g, '');
-    if (!input) return 0;
-
-    const hasComma = input.includes(',');
-    const hasDot = input.includes('.');
-
-    let normalized = input;
-    if (hasComma && hasDot) {
-      const lastComma = input.lastIndexOf(',');
-      const lastDot = input.lastIndexOf('.');
-      const decimalSep = lastComma > lastDot ? ',' : '.';
-      const thousandSep = decimalSep === ',' ? '.' : ',';
-
-      normalized = normalized.split(thousandSep).join('');
-      if (decimalSep === ',') {
-        normalized = normalized.replace(',', '.');
-      }
-    } else if (hasComma && !hasDot) {
-      normalized = normalized.replace(',', '.');
-    } else {
-      normalized = normalized;
-    }
-
-    const n = Number(normalized);
-    return Number.isFinite(n) ? n : 0;
-  };
 
   const formatTypeLabel = (type: MovementType) => {
     switch (type) {

@@ -26,6 +26,7 @@ const AccountingPeriodsPage: FC = () => {
   const [periods, setPeriods] = useState<AccountingPeriod[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showCreateFiscalYearModal, setShowCreateFiscalYearModal] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState<AccountingPeriod | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -33,10 +34,18 @@ const AccountingPeriodsPage: FC = () => {
 
   // Formulario para nuevo período
   const [formData, setFormData] = useState({
+    month: (new Date().getMonth() + 1).toString(),
+    year: new Date().getFullYear().toString(),
     name: '',
     start_date: '',
     end_date: '',
     fiscal_year: new Date().getFullYear().toString()
+  });
+
+  // Formulario para nuevo período fiscal
+  const [fiscalYearForm, setFiscalYearForm] = useState({
+    year: new Date().getFullYear().toString(),
+    autoGenerateMonths: true
   });
 
   useEffect(() => {
@@ -156,25 +165,49 @@ const AccountingPeriodsPage: FC = () => {
     if (!user) return;
 
     try {
+      // Calcular fechas automáticamente según mes y año seleccionados
+      const monthNum = parseInt(formData.month);
+      const yearNum = parseInt(formData.year);
+      const startDate = new Date(yearNum, monthNum - 1, 1);
+      const endDate = new Date(yearNum, monthNum, 0); // Último día del mes
+      
+      const startDateStr = startDate.toISOString().split('T')[0];
+      const endDateStr = endDate.toISOString().split('T')[0];
+
+      // Validar que existe un período fiscal para este año
+      const fiscalYearExists = periods.some(p => 
+        p.fiscal_year === formData.year && 
+        (p.name.includes('Año Fiscal') || p.start_date.startsWith(`${formData.year}-01-01`))
+      );
+
+      if (!fiscalYearExists && periods.filter(p => p.fiscal_year === formData.year).length === 0) {
+        if (!confirm(`No existe un período fiscal para el año ${formData.year}. ¿Desea crear el período de todas formas?`)) {
+          return;
+        }
+      }
+
       // Validar fechas
-      const validationError = validatePeriodDates(formData.start_date, formData.end_date);
+      const validationError = validatePeriodDates(startDateStr, endDateStr);
       if (validationError) {
         alert(validationError);
         return;
       }
 
-      if (!formData.name.trim()) {
-        alert('Debe especificar un nombre para el período');
-        return;
-      }
+      // Generar nombre automático si no se especificó
+      const monthNames = [
+        'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+      ];
+      const autoName = `${monthNames[monthNum - 1]} ${formData.year}`;
+      const periodName = formData.name.trim() || autoName;
 
       const newPeriod: AccountingPeriod = {
         id: Date.now().toString(),
-        name: formData.name,
-        start_date: formData.start_date,
-        end_date: formData.end_date,
+        name: periodName,
+        start_date: startDateStr,
+        end_date: endDateStr,
         status: 'open',
-        fiscal_year: formData.fiscal_year,
+        fiscal_year: formData.year,
         created_at: new Date().toISOString(),
         entries_count: 0,
         total_debits: 0,
@@ -211,11 +244,15 @@ const AccountingPeriodsPage: FC = () => {
       }
       
       // Resetear formulario
+      const nextMonth = monthNum === 12 ? 1 : monthNum + 1;
+      const nextYear = monthNum === 12 ? yearNum + 1 : yearNum;
       setFormData({
+        month: nextMonth.toString(),
+        year: nextYear.toString(),
         name: '',
         start_date: '',
         end_date: '',
-        fiscal_year: new Date().getFullYear().toString()
+        fiscal_year: nextYear.toString()
       });
       
       setShowCreateModal(false);
@@ -327,6 +364,133 @@ const AccountingPeriodsPage: FC = () => {
     }
   };
 
+  const handleCreateFiscalYear = async () => {
+    if (!user) return;
+
+    try {
+      const year = fiscalYearForm.year;
+      
+      // Verificar si ya existen períodos para este año
+      const existingPeriodsForYear = periods.filter(p => p.fiscal_year === year);
+      if (existingPeriodsForYear.length > 0) {
+        if (!confirm(`Ya existen ${existingPeriodsForYear.length} períodos para el año ${year}. ¿Desea continuar creando más períodos?`)) {
+          return;
+        }
+      }
+
+      const tenantId = await resolveTenantId(user.id);
+      if (!tenantId) {
+        alert('Error: No se pudo resolver el tenant');
+        return;
+      }
+
+      if (fiscalYearForm.autoGenerateMonths) {
+        // Generar automáticamente los 12 períodos mensuales
+        const monthNames = [
+          'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+          'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+        ];
+
+        const newPeriods: AccountingPeriod[] = [];
+        
+        for (let month = 0; month < 12; month++) {
+          const startDate = new Date(parseInt(year), month, 1);
+          const endDate = new Date(parseInt(year), month + 1, 0); // Último día del mes
+          
+          const periodName = `${monthNames[month]} ${year}`;
+          const startDateStr = startDate.toISOString().split('T')[0];
+          const endDateStr = endDate.toISOString().split('T')[0];
+
+          const newPeriod: AccountingPeriod = {
+            id: `${Date.now()}-${month}`,
+            name: periodName,
+            start_date: startDateStr,
+            end_date: endDateStr,
+            status: 'open',
+            fiscal_year: year,
+            created_at: new Date().toISOString(),
+            entries_count: 0,
+            total_debits: 0,
+            total_credits: 0
+          };
+
+          try {
+            const { data, error } = await supabase
+              .from('accounting_periods')
+              .insert([{
+                user_id: tenantId,
+                name: newPeriod.name,
+                start_date: newPeriod.start_date,
+                end_date: newPeriod.end_date,
+                status: newPeriod.status,
+                fiscal_year: newPeriod.fiscal_year
+              }])
+              .select()
+              .single();
+
+            if (error) throw error;
+            newPeriods.push({ ...newPeriod, id: data.id });
+          } catch (supabaseError) {
+            console.error('Supabase error creating period:', supabaseError);
+            newPeriods.push(newPeriod);
+          }
+        }
+
+        setPeriods(prev => [...newPeriods, ...prev]);
+        alert(`Año fiscal ${year} creado exitosamente con 12 períodos mensuales`);
+      } else {
+        // Crear solo el período fiscal anual
+        const startDate = `${year}-01-01`;
+        const endDate = `${year}-12-31`;
+        
+        const newPeriod: AccountingPeriod = {
+          id: Date.now().toString(),
+          name: `Año Fiscal ${year}`,
+          start_date: startDate,
+          end_date: endDate,
+          status: 'open',
+          fiscal_year: year,
+          created_at: new Date().toISOString(),
+          entries_count: 0,
+          total_debits: 0,
+          total_credits: 0
+        };
+
+        try {
+          const { data, error } = await supabase
+            .from('accounting_periods')
+            .insert([{
+              user_id: tenantId,
+              name: newPeriod.name,
+              start_date: newPeriod.start_date,
+              end_date: newPeriod.end_date,
+              status: newPeriod.status,
+              fiscal_year: newPeriod.fiscal_year
+            }])
+            .select()
+            .single();
+
+          if (error) throw error;
+          setPeriods(prev => [{ ...newPeriod, id: data.id }, ...prev]);
+        } catch (supabaseError) {
+          console.error('Supabase error:', supabaseError);
+          setPeriods(prev => [newPeriod, ...prev]);
+        }
+
+        alert(`Año fiscal ${year} creado exitosamente`);
+      }
+
+      setFiscalYearForm({
+        year: (parseInt(year) + 1).toString(),
+        autoGenerateMonths: true
+      });
+      setShowCreateFiscalYearModal(false);
+    } catch (error) {
+      console.error('Error creating fiscal year:', error);
+      alert('Error al crear el año fiscal');
+    }
+  };
+
   const filteredPeriods = periods.filter(period => {
     const matchesSearch = period.name.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || period.status === statusFilter;
@@ -388,13 +552,22 @@ const AccountingPeriodsPage: FC = () => {
             <p className="text-gray-600">Gestión de períodos fiscales</p>
           </div>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <i className="ri-add-line"></i>
-          Nuevo Período
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowCreateFiscalYearModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <i className="ri-calendar-line"></i>
+            Nuevo Año Fiscal
+          </button>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <i className="ri-add-line"></i>
+            Nuevo Período
+          </button>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -633,55 +806,68 @@ const AccountingPeriodsPage: FC = () => {
 
             <div className="p-6">
               <div className="space-y-4">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-blue-800">
+                    <i className="ri-information-line mr-1"></i>
+                    Seleccione el mes y año del período contable. Las fechas se calcularán automáticamente.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Mes *
+                    </label>
+                    <select
+                      value={formData.month}
+                      onChange={(e) => setFormData(prev => ({ ...prev, month: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="1">Enero</option>
+                      <option value="2">Febrero</option>
+                      <option value="3">Marzo</option>
+                      <option value="4">Abril</option>
+                      <option value="5">Mayo</option>
+                      <option value="6">Junio</option>
+                      <option value="7">Julio</option>
+                      <option value="8">Agosto</option>
+                      <option value="9">Septiembre</option>
+                      <option value="10">Octubre</option>
+                      <option value="11">Noviembre</option>
+                      <option value="12">Diciembre</option>
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Año *
+                    </label>
+                    <select
+                      value={formData.year}
+                      onChange={(e) => setFormData(prev => ({ ...prev, year: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      {Array.from({ length: 11 }, (_, i) => new Date().getFullYear() - 5 + i).map(year => (
+                        <option key={year} value={year}>{year}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Nombre del Período
+                    Nombre del Período (opcional)
                   </label>
                   <input
                     type="text"
                     value={formData.name}
                     onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="Ej: Enero 2025"
+                    placeholder="Se generará automáticamente si se deja vacío"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Fecha de Inicio
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.start_date}
-                    onChange={(e) => setFormData(prev => ({ ...prev, start_date: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Fecha de Fin
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.end_date}
-                    onChange={(e) => setFormData(prev => ({ ...prev, end_date: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Año Fiscal
-                  </label>
-                  <input
-                    type="number"
-                    value={formData.fiscal_year}
-                    onChange={(e) => setFormData(prev => ({ ...prev, fiscal_year: e.target.value }))}
-                    min="2020"
-                    max="2030"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Por defecto: {['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][parseInt(formData.month) - 1]} {formData.year}
+                  </p>
                 </div>
               </div>
 
@@ -694,10 +880,93 @@ const AccountingPeriodsPage: FC = () => {
                 </button>
                 <button
                   onClick={handleCreatePeriod}
-                  disabled={!formData.name || !formData.start_date || !formData.end_date}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                 >
-                  Crear Período
+                  Crear Período Contable
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Fiscal Year Modal */}
+      {showCreateFiscalYearModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-gray-900">Nuevo Año Fiscal</h2>
+                <button
+                  onClick={() => setShowCreateFiscalYearModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <i className="ri-close-line text-2xl"></i>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Año Fiscal
+                  </label>
+                  <input
+                    type="number"
+                    value={fiscalYearForm.year}
+                    onChange={(e) => setFiscalYearForm(prev => ({ ...prev, year: e.target.value }))}
+                    min="2020"
+                    max="2030"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    El período fiscal abarca del 1 de enero al 31 de diciembre
+                  </p>
+                </div>
+                
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <label className="flex items-start space-x-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={fiscalYearForm.autoGenerateMonths}
+                      onChange={(e) => setFiscalYearForm(prev => ({ ...prev, autoGenerateMonths: e.target.checked }))}
+                      className="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-blue-900">
+                        Crear automáticamente los 12 períodos contables mensuales
+                      </span>
+                      <p className="text-xs text-blue-700 mt-1">
+                        Se crearán períodos para Enero, Febrero, Marzo... hasta Diciembre del año seleccionado
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {!fiscalYearForm.autoGenerateMonths && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                    <p className="text-xs text-yellow-800">
+                      <i className="ri-information-line mr-1"></i>
+                      Solo se creará un período anual. Podrás crear períodos mensuales manualmente después.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end space-x-4 mt-6">
+                <button
+                  onClick={() => setShowCreateFiscalYearModal(false)}
+                  className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleCreateFiscalYear}
+                  className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  <i className="ri-calendar-line mr-2"></i>
+                  Crear Año Fiscal
                 </button>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, type FC } from 'react';
+import { useState, useEffect, type FC, Fragment } from 'react';
 import { useAuth } from '../../../hooks/useAuth';
 import { supabase } from '../../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -271,7 +271,6 @@ const GeneralLedgerPage: FC = () => {
           'Tipo Doc.': 'Balance inicial',
           Fecha: dateFrom ? formatDate(dateFrom) : 'Inicio',
           Descripción: `Balance inicial - ${selectedAccount.code} ${selectedAccount.name}`,
-          Referencia: '',
           Débito: '',
           Crédito: '',
           Balance: openingBalance,
@@ -281,7 +280,6 @@ const GeneralLedgerPage: FC = () => {
           'Tipo Doc.': getEntryDocumentType(e),
           Fecha: formatDate(e.date),
           Descripción: e.description || '',
-          Referencia: e.reference || '',
           Débito: e.debit > 0 ? e.debit : '',
           Crédito: e.credit > 0 ? e.credit : '',
           Balance: e.balance,
@@ -333,7 +331,6 @@ const GeneralLedgerPage: FC = () => {
         { wch: 20 }, // Tipo Doc
         { wch: 12 }, // Fecha  
         { wch: 40 }, // Descripción
-        { wch: 15 }, // Referencia
         { wch: 15 }, // Débito
         { wch: 15 }, // Crédito
         { wch: 15 }, // Balance
@@ -431,6 +428,48 @@ const GeneralLedgerPage: FC = () => {
       }
     }
   }
+
+  const isAllAccounts = selectedAccount?.id === 'ALL';
+  const groupedAll = (() => {
+    if (!isAllAccounts) return [] as Array<{ accountId: string; accountCode: string; accountName: string; opening: number; lines: LedgerEntry[]; totals: { debit: number; credit: number; final: number } }>;
+    const byAccountIds = Array.from(new Set(ledgerEntries.map(e => e.accountId || ''))).filter(Boolean) as string[];
+    const openingMap = new Map<string, number>();
+    if (dateFrom) {
+      for (const accId of byAccountIds) {
+        const entries = ledgerEntries.filter(e => e.accountId === accId).sort((a,b)=> (a.date<b.date? -1 : a.date>b.date? 1 : 0));
+        let lastBal = 0;
+        for (const e of entries) {
+          if (e.date < dateFrom) lastBal = e.balance; else break;
+        }
+        openingMap.set(accId, lastBal);
+      }
+    }
+
+    const groups: Array<{ accountId: string; accountCode: string; accountName: string; opening: number; lines: LedgerEntry[]; totals: { debit: number; credit: number; final: number } }> = [];
+    for (const accId of byAccountIds) {
+      const accLines = filteredLedgerEntries.filter(e => e.accountId === accId);
+      if (accLines.length === 0 && !dateFrom) continue;
+      const meta = ledgerEntries.find(e => e.accountId === accId);
+      let running = openingMap.get(accId) || 0;
+      const recomputed = accLines.map(l => {
+        running = running + (l.debit || 0) - (l.credit || 0);
+        return { ...l, balance: running } as LedgerEntry;
+      });
+      const debit = accLines.reduce((s,l)=> s + (l.debit||0), 0);
+      const credit = accLines.reduce((s,l)=> s + (l.credit||0), 0);
+      const final = recomputed.length>0 ? recomputed[recomputed.length-1].balance : (openingMap.get(accId) || 0);
+      groups.push({
+        accountId: accId,
+        accountCode: meta?.accountCode || '',
+        accountName: meta?.accountName || '',
+        opening: openingMap.get(accId) || 0,
+        lines: recomputed,
+        totals: { debit, credit, final }
+      });
+    }
+    groups.sort((a,b)=> (a.accountCode||'').localeCompare(b.accountCode||''));
+    return groups;
+  })();
 
   const totalDebits = filteredLedgerEntries.reduce(
     (sum, entry) => sum + entry.debit,
@@ -824,134 +863,161 @@ const GeneralLedgerPage: FC = () => {
                   </div>
                 )}
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Asiento
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Documento
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Fecha
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Descripción
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Referencia
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Débito
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Crédito
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Balance
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {ledgerEntries.length === 0 ? (
+                  {!isAllAccounts ? (
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
                         <tr>
-                          <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
-                            <div className="flex flex-col items-center">
-                              <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
-                              <p>No hay movimientos para esta cuenta en el período seleccionado</p>
-                            </div>
-                          </td>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asiento</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Documento</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Débito</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Crédito</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Balance</th>
                         </tr>
-                      ) : (
-                        <>
-                          <tr className="bg-gray-50">
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"></td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              Balance inicial
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900"></td>
-                            <td className="px-6 py-4 text-sm text-gray-900"></td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500"></td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                              RD${formatAmount(Math.abs(openingBalance))}
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {ledgerEntries.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                              <div className="flex flex-col items-center">
+                                <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
+                                <p>No hay movimientos para esta cuenta en el período seleccionado</p>
+                              </div>
                             </td>
                           </tr>
-                          {filteredLedgerEntries.length > 0 ? (
-                            filteredLedgerEntries.map((entry) => (
-                              <tr key={entry.id} className="hover:bg-gray-50">
-                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                  <button
-                                    onClick={() => {
-                                      navigate(`/accounting/general-journal?entry=${entry.entryNumber}`);
-                                    }}
-                                    className="text-blue-600 hover:text-blue-900 hover:underline"
-                                    title="Ver/Editar asiento"
-                                  >
-                                    {entry.entryNumber}
-                                  </button>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                  {getEntryDocumentType(entry)}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                  {formatDate(entry.date)}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-gray-900">
-                                  {entry.description}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                  {entry.reference}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                  {entry.debit > 0
-                                    ? `RD$${formatAmount(entry.debit)}`
-                                    : '-'}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                  {entry.credit > 0
-                                    ? `RD$${formatAmount(entry.credit)}`
-                                    : '-'}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                  RD${formatAmount(Math.abs(entry.balance))}
+                        ) : (
+                          <>
+                            <tr className="bg-gray-50">
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"></td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Balance inicial</td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900"></td>
+                              <td className="px-6 py-4 text-sm text-gray-900"></td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">RD${formatAmount(Math.abs(openingBalance))}</td>
+                            </tr>
+                            {filteredLedgerEntries.length > 0 ? (
+                              filteredLedgerEntries.map((entry) => (
+                                <tr key={entry.id} className="hover:bg-gray-50">
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                    <button
+                                      onClick={() => { navigate(`/accounting/general-journal?entry=${entry.entryNumber}`); }}
+                                      className="text-blue-600 hover:text-blue-900 hover:underline"
+                                      title="Ver/Editar asiento"
+                                    >
+                                      {entry.entryNumber}
+                                    </button>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{getEntryDocumentType(entry)}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatDate(entry.date)}</td>
+                                  <td className="px-6 py-4 text-sm text-gray-900">{entry.description}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{entry.debit > 0 ? `RD$${formatAmount(entry.debit)}` : '-'}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{entry.credit > 0 ? `RD$${formatAmount(entry.credit)}` : '-'}</td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">RD${formatAmount(Math.abs(entry.balance))}</td>
+                                </tr>
+                              ))
+                            ) : (
+                              <tr>
+                                <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                                  <div className="flex flex-col items-center">
+                                    <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
+                                    <p>No hay movimientos para esta cuenta en el período seleccionado</p>
+                                  </div>
                                 </td>
                               </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td colSpan={8} className="px-6 py-8 text-center text-gray-500">
-                                <div className="flex flex-col items-center">
-                                  <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
-                                  <p>No hay movimientos para esta cuenta en el período seleccionado</p>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </>
+                            )}
+                          </>
+                        )}
+                      </tbody>
+                      {ledgerEntries.length > 0 && (
+                        <tfoot className="bg-gray-50">
+                          <tr>
+                            <td colSpan={4} className="px-6 py-3 text-right font-medium text-gray-900">Totales:</td>
+                            <td className="px-6 py-3 font-bold text-gray-900">RD${formatAmount(totalDebits)}</td>
+                            <td className="px-6 py-3 font-bold text-gray-900">RD${formatAmount(totalCredits)}</td>
+                            <td className="px-6 py-3 font-bold text-gray-900">RD${formatAmount(Math.abs(finalBalance))}</td>
+                          </tr>
+                        </tfoot>
                       )}
-                    </tbody>
-                    {ledgerEntries.length > 0 && (
-                      <tfoot className="bg-gray-50">
+                    </table>
+                  ) : (
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
                         <tr>
-                          <td colSpan={5} className="px-6 py-3 text-right font-medium text-gray-900">
-                            Totales:
-                          </td>
-                          <td className="px-6 py-3 font-bold text-gray-900">
-                            RD${formatAmount(totalDebits)}
-                          </td>
-                          <td className="px-6 py-3 font-bold text-gray-900">
-                            RD${formatAmount(totalCredits)}
-                          </td>
-                          <td className="px-6 py-3 font-bold text-gray-900">
-                            RD${formatAmount(Math.abs(finalBalance))}
-                          </td>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Asiento</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Documento</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Débito</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Crédito</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Balance</th>
                         </tr>
-                      </tfoot>
-                    )}
-                  </table>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {groupedAll.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                              <div className="flex flex-col items-center">
+                                <i className="ri-file-list-line text-4xl text-gray-300 mb-2"></i>
+                                <p>No hay movimientos en el período seleccionado</p>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          groupedAll.map(group => (
+                            <Fragment key={group.accountId}>
+                              <tr key={`hdr-${group.accountId}`} className="bg-gray-100">
+                                <td colSpan={7} className="px-6 py-3 text-sm font-semibold text-gray-900">
+                                  {group.accountCode} - {group.accountName}
+                                </td>
+                              </tr>
+                              <tr className="bg-gray-50">
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"></td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">Saldo inicial</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900"></td>
+                                <td className="px-6 py-4 text-sm text-gray-900"></td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">-</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">RD${formatAmount(Math.abs(group.opening))}</td>
+                              </tr>
+                              {group.lines.length > 0 ? (
+                                group.lines.map(line => (
+                                  <tr key={line.id} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                      <button
+                                        onClick={() => { navigate(`/accounting/general-journal?entry=${line.entryNumber}`); }}
+                                        className="text-blue-600 hover:text-blue-900 hover:underline"
+                                        title="Ver/Editar asiento"
+                                      >
+                                        {line.entryNumber}
+                                      </button>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{getEntryDocumentType(line)}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{formatDate(line.date)}</td>
+                                    <td className="px-6 py-4 text-sm text-gray-900">{line.description}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{line.debit > 0 ? `RD$${formatAmount(line.debit)}` : '-'}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{line.credit > 0 ? `RD$${formatAmount(line.credit)}` : '-'}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">RD${formatAmount(Math.abs(line.balance))}</td>
+                                  </tr>
+                                ))
+                              ) : (
+                                <tr>
+                                  <td colSpan={7} className="px-6 py-4 text-sm text-gray-500">Sin movimientos en el período.</td>
+                                </tr>
+                              )}
+                              <tr className="bg-gray-100">
+                                <td colSpan={4} className="px-6 py-3 text-right font-medium text-gray-900">Totales de la cuenta:</td>
+                                <td className="px-6 py-3 font-bold text-gray-900">RD${formatAmount(group.totals.debit)}</td>
+                                <td className="px-6 py-3 font-bold text-gray-900">RD${formatAmount(group.totals.credit)}</td>
+                                <td className="px-6 py-3 font-bold text-gray-900">RD${formatAmount(Math.abs(group.totals.final))}</td>
+                              </tr>
+                            </Fragment>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               </div>
 
